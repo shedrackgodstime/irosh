@@ -7,7 +7,10 @@ use std::fmt;
 
 pub use portable_pty::PtySize;
 
-use crate::error::{ClientError, IroshError, Result};
+use crate::error::Result;
+
+#[cfg(unix)]
+use crate::error::{ClientError, IroshError};
 
 /// Declarative PTY request options for an SSH session.
 ///
@@ -290,6 +293,33 @@ pub fn map_sig(signal: russh::Sig) -> Option<libc::c_int> {
         russh::Sig::TERM => Some(libc::SIGTERM),
         russh::Sig::USR1 => Some(libc::SIGUSR1),
         russh::Sig::Custom(_) => None,
+    }
+}
+
+#[cfg(not(unix))]
+/// A wrapper around standard stdin for non-Unix platforms.
+pub struct AsyncStdin {
+    inner: tokio::io::Stdin,
+}
+
+#[cfg(not(unix))]
+impl AsyncStdin {
+    /// Creates a new `AsyncStdin` for non-Unix platforms.
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            inner: tokio::io::stdin(),
+        })
+    }
+}
+
+#[cfg(not(unix))]
+impl tokio::io::AsyncRead for AsyncStdin {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
 

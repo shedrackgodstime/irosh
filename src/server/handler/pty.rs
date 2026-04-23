@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use russh::{ChannelId, server};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
+
+#[cfg(unix)]
+use tracing::error;
 
 use crate::error::{Result, ServerError};
 use crate::server::transfer::ConnectionShellState;
@@ -154,6 +157,7 @@ impl ServerHandler {
         }
         let killer = child.clone_killer();
 
+        #[allow(unused_mut)]
         let mut reader = pair
             .master
             .try_clone_reader()
@@ -440,6 +444,10 @@ impl ServerHandler {
                     }
                 }
             }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (channel, signal);
         }
     }
 }

@@ -41,7 +41,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
     })?
 }
 
-pub(crate) fn configure_live_shell_context(command: &mut Command, pid: u32) {
+pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {
     #[cfg(target_os = "linux")]
     {
         // SAFETY: `pre_exec` is unsafe because it runs in the child process after `fork` but
@@ -49,18 +49,17 @@ pub(crate) fn configure_live_shell_context(command: &mut Command, pid: u32) {
         // `libc::open`, and `libc::close` (used by `File`) are generally considered safe
         // in this context on Linux.
         // We pre-format the paths to avoid allocation inside the `pre_exec` closure.
-        let mnt_ns = format!("/proc/{pid}/ns/mnt");
-        let user_ns = format!("/proc/{pid}/ns/user");
+        let mnt_ns = format!("/proc/{_pid}/ns/mnt");
+        let user_ns = format!("/proc/{_pid}/ns/user");
 
         unsafe {
-            command.pre_exec(move || {
+            _command.pre_exec(move || {
                 join_linux_namespace(&mnt_ns, "/proc/self/ns/mnt", libc::CLONE_NEWNS)?;
                 join_linux_namespace(&user_ns, "/proc/self/ns/user", libc::CLONE_NEWUSER)?;
                 Ok(())
             });
         }
     }
-    let _ = pid;
 }
 
 #[cfg(target_os = "linux")]

@@ -210,12 +210,12 @@ impl Session {
 
         persist_temp_file(&temp_path, local).await?;
 
-        if let Some(mode) = expected_mode {
+        if let Some(_mode) = expected_mode {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 let _ =
-                    tokio::fs::set_permissions(local, std::fs::Permissions::from_mode(mode)).await;
+                    tokio::fs::set_permissions(local, std::fs::Permissions::from_mode(_mode)).await;
             }
         }
 
@@ -332,13 +332,13 @@ impl Session {
                         drop(dest);
                         persist_temp_file(&temp_path, &local_path).await?;
 
-                        if let Some(mode) = header.mode {
+                        if let Some(_mode) = header.mode {
                             #[cfg(unix)]
                             {
                                 use std::os::unix::fs::PermissionsExt;
                                 let _ = tokio::fs::set_permissions(
                                     &local_path,
-                                    std::fs::Permissions::from_mode(mode),
+                                    std::fs::Permissions::from_mode(_mode),
                                 )
                                 .await;
                             }
