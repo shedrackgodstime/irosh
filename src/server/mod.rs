@@ -15,32 +15,14 @@ use tracing::{info, warn};
 use crate::config::{SecurityConfig, StateConfig};
 use crate::error::Result;
 use crate::server::handler::ServerHandler;
-use crate::server::side_streams::spawn_metadata_and_transfer_acceptor;
-use crate::server::startup::{bind_server, inspect_server};
-pub(crate) use crate::server::transfer::ConnectionShellState;
+use crate::server::startup::bind_server;
 use crate::transport::stream::IrohDuplex;
 
-/// Builder-style configuration for [`Server::bind`] and [`Server::inspect`].
-///
-/// `ServerOptions` carries the state directory, host-key policy, optional
-/// shared secret, and any pre-authorized client keys that should be trusted
-/// immediately at startup.
-///
-/// # Example
-///
-/// ```no_run
-/// # use std::error::Error;
-/// use irosh::{SecurityConfig, ServerOptions, StateConfig};
-///
-/// # fn main() -> Result<(), Box<dyn Error>> {
-/// let options = ServerOptions::new(StateConfig::new("/tmp/irosh-server".into()))
-///     .security(SecurityConfig::default())
-///     .secret("shared-secret");
-/// # let _ = options;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+use self::side_streams::spawn_metadata_and_transfer_acceptor;
+use self::transfer::ConnectionShellState;
+
+/// Configuration options for the irosh server.
+#[derive(Clone, Debug)]
 pub struct ServerOptions {
     state: StateConfig,
     security: SecurityConfig,
@@ -49,7 +31,7 @@ pub struct ServerOptions {
 }
 
 impl ServerOptions {
-    /// Creates server options anchored at a concrete state directory.
+    /// Creates a new server options set with a specific state directory.
     pub fn new(state: StateConfig) -> Self {
         Self {
             state,
@@ -59,21 +41,15 @@ impl ServerOptions {
         }
     }
 
-    /// Replaces the server security policy.
+    /// Configures the security policy for host key trust.
     pub fn security(mut self, security: SecurityConfig) -> Self {
         self.security = security;
         self
     }
 
-    /// Sets the optional shared secret used to derive the transport ALPN.
+    /// Configures an optional shared secret for stealth connections.
     pub fn secret(mut self, secret: impl Into<String>) -> Self {
         self.secret = Some(secret.into());
-        self
-    }
-
-    /// Adds a pre-authorized client public key.
-    pub fn authorized_key(mut self, key: russh::keys::ssh_key::PublicKey) -> Self {
-        self.authorized_keys.push(key);
         self
     }
 
@@ -108,24 +84,28 @@ use serde::{Deserialize, Serialize};
 /// The connection details required for clients to reach this server.
 ///
 /// `ServerReady` is returned by [`Server::bind`] and [`Server::inspect`]. It is
-/// intended for callers that need to display or persist the ticket, node ID,
-/// and host key information associated with a server instance.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// used to generate the connection ticket.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerReady {
-    endpoint_id: String,
-    ticket: crate::transport::ticket::Ticket,
-    relay_urls: Vec<String>,
-    direct_addresses: Vec<String>,
-    host_key_openssh: String,
+    /// The unique Iroh node ID of the server.
+    pub endpoint_id: String,
+    /// The connection ticket containing relay and addressing information.
+    pub ticket: crate::transport::ticket::Ticket,
+    /// The list of relay server URLs.
+    pub relay_urls: Vec<String>,
+    /// The list of directly reachable IP addresses.
+    pub direct_addresses: Vec<String>,
+    /// The OpenSSH formatted host public key.
+    pub host_key_openssh: String,
 }
 
 impl ServerReady {
-    /// Returns the public endpoint node identifier.
+    /// Returns the unique Iroh node identifier.
     pub fn endpoint_id(&self) -> &str {
         &self.endpoint_id
     }
 
-    /// Returns the connection ticket clients should dial.
+    /// Returns the connection ticket for this server.
     pub fn ticket(&self) -> &crate::transport::ticket::Ticket {
         &self.ticket
     }
@@ -157,6 +137,8 @@ pub struct Server {
     security: SecurityConfig,
     state: StateConfig,
     secret: Option<String>,
+    shutdown_tx: tokio::sync::mpsc::Sender<()>,
+    shutdown_rx: tokio::sync::mpsc::Receiver<()>,
 }
 
 impl fmt::Debug for Server {
@@ -174,45 +156,40 @@ impl fmt::Debug for Server {
 #[derive(Clone, Debug)]
 pub struct ServerShutdown {
     endpoint: iroh::Endpoint,
+    shutdown_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl ServerShutdown {
     /// Closes the underlying Iroh endpoint and stops accepting new connections.
-    pub async fn close(&self) {
+    pub async fn close(self) {
+        let _ = self.shutdown_tx.send(()).await;
         self.endpoint.close().await;
     }
 }
 
 impl Server {
-    /// Inspects the server state and returns identity information without starting the network.
+    /// Inspects the server's readiness details without binding to the network.
     ///
-    /// This is useful for diagnostics, background-service integrations, or
-    /// retrieving server identity material without entering the accept loop.
+    /// This is useful for pre-generating connection tickets before the server
+    /// is fully operational.
     ///
     /// # Errors
     ///
-    /// Returns an error if identity state cannot be loaded or if the ready-state
-    /// information cannot be assembled from local state.
-    pub async fn inspect(options: ServerOptions) -> Result<ServerReady> {
-        inspect_server(&options).await
+    /// Returns an error if the server identity cannot be loaded or created.
+    pub async fn inspect(options: &ServerOptions) -> Result<ServerReady> {
+        startup::inspect_server(options).await
     }
 
-    /// Initializes the server, allocates identity keys, and binds the Iroh network endpoint.
+    /// Binds the server to the Iroh networking stack and prepares for execution.
     ///
-    /// This method prepares the server but does not start accepting
-    /// connections. Call [`Server::run`] on the returned `Server` to enter the
-    /// accept loop.
-    ///
-    /// # Example
+    /// This method starts the underlying Iroh endpoint, which might involve
+    /// hole-punching and relay negotiation.
     ///
     /// ```no_run
-    /// # use std::error::Error;
-    /// use irosh::{Server, ServerOptions, StateConfig};
-    ///
-    /// # async fn run() -> Result<(), Box<dyn Error>> {
-    /// let (ready, server) =
-    ///     Server::bind(ServerOptions::new(StateConfig::new("/tmp/irosh-server".into()))).await?;
-    ///
+    /// # use irosh::{Server, ServerOptions, StateConfig};
+    /// # async fn example() -> irosh::error::Result<()> {
+    /// let state = StateConfig::new("./state".into());
+    /// let (ready, server) = Server::bind(ServerOptions::new(state)).await?;
     /// let _ticket = ready.ticket().to_string();
     /// let _server = server;
     /// # Ok(())
@@ -231,6 +208,7 @@ impl Server {
     pub fn shutdown_handle(&self) -> ServerShutdown {
         ServerShutdown {
             endpoint: self.endpoint.clone(),
+            shutdown_tx: self.shutdown_tx.clone(),
         }
     }
 
@@ -244,69 +222,109 @@ impl Server {
     /// Returns an error only if the outer server loop fails before entering its
     /// normal shutdown path. Individual session failures are logged and do not
     /// stop the accept loop.
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(mut self) -> Result<()> {
+        use tokio::task::JoinSet;
         info!("Server actively listening for connections.");
 
-        while let Some(incoming) = self.endpoint.accept().await {
-            let mut accepting = match incoming.accept() {
-                Ok(accepting) => accepting,
-                Err(err) => {
-                    warn!("Incoming connection rejected before ALPN exchange: {err}");
-                    continue;
-                }
-            };
+        let mut sessions = JoinSet::new();
 
-            let alpn = match accepting.alpn().await {
-                Ok(alpn) => alpn,
-                Err(err) => {
-                    warn!("Failed ALPN read: {}", err);
-                    continue;
+        loop {
+            tokio::select! {
+                biased;
+                _ = self.shutdown_rx.recv() => {
+                    tracing::debug!("Server received explicit shutdown signal.");
+                    break;
                 }
-            };
+                incoming = self.endpoint.accept() => {
+                    let Some(incoming) = incoming else {
+                        tracing::debug!("Server endpoint closed, no more incoming connections.");
+                        break;
+                    };
 
-            if alpn != crate::transport::iroh::derive_alpn(self.secret.as_deref()) {
-                warn!(
-                    "Ignoring unexpected ALPN: {}",
-                    String::from_utf8_lossy(&alpn)
-                );
-                continue;
+                    tracing::debug!("Server accepted new incoming connection");
+                    let mut accepting = match incoming.accept() {
+                        Ok(accepting) => accepting,
+                        Err(err) => {
+                            warn!("Incoming connection rejected before ALPN exchange: {err}");
+                            continue;
+                        }
+                    };
+
+                    let alpn = match accepting.alpn().await {
+                        Ok(alpn) => alpn,
+                        Err(err) => {
+                            warn!("Failed ALPN read: {}", err);
+                            continue;
+                        }
+                    };
+
+                    if alpn != crate::transport::iroh::derive_alpn(self.secret.as_deref()) {
+                        warn!(
+                            "Ignoring unexpected ALPN: {}",
+                            String::from_utf8_lossy(&alpn)
+                        );
+                        continue;
+                    }
+
+                    let conn = match accepting.await {
+                        Ok(conn) => conn,
+                        Err(err) => {
+                            warn!("P2P connection handshake failed: {}", err);
+                            continue;
+                        }
+                    };
+
+                    tracing::debug!("P2P connection established: {:?}", conn.remote_id());
+
+                    let (send, recv) = match conn.accept_bi().await {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            warn!("Failed to establish bi-directional stream: {}", err);
+                            continue;
+                        }
+                    };
+
+                    info!("Established bi-directional SSH stream over Irosh");
+
+                    let shell_state = ConnectionShellState::new();
+                    spawn_metadata_and_transfer_acceptor(conn, shell_state.clone());
+
+                    let stream = IrohDuplex::new(send, recv);
+                    let handler = ServerHandler::new(
+                        self.authorized_clients.clone(),
+                        self.security,
+                        self.state.clone(),
+                        shell_state,
+                    );
+
+                    let config = self.config.clone();
+                    sessions.spawn(async move {
+                        tracing::debug!("Starting SSH session task");
+                        if let Err(err) = server::run_stream(config, stream, handler).await {
+                            warn!("Server session error: {:?}", err);
+                        }
+                        tracing::debug!("SSH session task finished");
+                    });
+                }
+                Some(res) = sessions.join_next(), if !sessions.is_empty() => {
+                    if let Err(err) = res {
+                        warn!("SSH session task panicked or failed: {:?}", err);
+                    }
+                }
             }
+        }
 
-            let conn = match accepting.await {
-                Ok(conn) => conn,
-                Err(err) => {
-                    warn!("P2P connection handshake failed: {}", err);
-                    continue;
-                }
-            };
-
-            let (send, recv) = match conn.accept_bi().await {
-                Ok(pair) => pair,
-                Err(err) => {
-                    warn!("Failed to establish bi-directional stream: {}", err);
-                    continue;
-                }
-            };
-
-            info!("Established bi-directional SSH stream over Irosh");
-
-            let shell_state = ConnectionShellState::new();
-            spawn_metadata_and_transfer_acceptor(conn, shell_state.clone());
-
-            let stream = IrohDuplex::new(send, recv);
-            let handler = ServerHandler::new(
-                self.authorized_clients.clone(),
-                self.security,
-                self.state.clone(),
-                shell_state,
-            );
-
-            let config = self.config.clone();
-            tokio::spawn(async move {
-                if let Err(err) = server::run_stream(config, stream, handler).await {
-                    warn!("Server session error: {:?}", err);
-                }
-            });
+        tracing::debug!(
+            "Server loop exiting, waiting for {} sessions to finish",
+            sessions.len()
+        );
+        while let Some(res) = sessions.join_next().await {
+            if let Err(err) = res {
+                warn!(
+                    "SSH session task panicked or failed during shutdown: {:?}",
+                    err
+                );
+            }
         }
 
         self.endpoint.close().await;

@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
         if let Some(secret) = args.secret.clone() {
             options = options.secret(secret);
         }
-        let ready = irosh::Server::inspect(options).await?;
+        let ready = irosh::Server::inspect(&options).await?;
         print_identity_snapshot(&ready);
         return Ok(());
     }
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
                 if let Some(secret) = args.secret {
                     options = options.secret(secret);
                 }
-                let ready = Server::inspect(options).await?;
+                let ready = Server::inspect(&options).await?;
                 print_info_snapshot(&ready);
 
                 // Add a small service hint.

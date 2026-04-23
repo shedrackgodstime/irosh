@@ -11,7 +11,7 @@ mod helpers;
 mod state;
 
 pub(crate) use state::ConnectionShellState;
-pub(super) use state::{LiveShellContext, resolve_remote_path};
+pub(super) use state::{ShellContext, resolve_remote_path};
 
 pub(crate) async fn handle_transfer_stream(
     send: iroh::endpoint::SendStream,
@@ -19,9 +19,11 @@ pub(crate) async fn handle_transfer_stream(
     shell_state: ConnectionShellState,
 ) -> Result<()> {
     let mut stream = IrohDuplex::new(send, recv);
+    let context = ShellContext::from_state(&shell_state);
+
     match read_next_frame(&mut stream).await {
         Ok(TransferFrame::PutRequest(request)) => {
-            if let Err(err) = files::handle_put_request(&mut stream, request, shell_state).await {
+            if let Err(err) = files::handle_put_request(&mut stream, request, context).await {
                 warn!("Put transfer handler failed: {}", err);
                 let _ = write_transfer_error(
                     &mut stream,
@@ -32,7 +34,7 @@ pub(crate) async fn handle_transfer_stream(
             Ok(())
         }
         Ok(TransferFrame::GetRequest(request)) => {
-            if let Err(err) = files::handle_get_request(&mut stream, request, shell_state).await {
+            if let Err(err) = files::handle_get_request(&mut stream, request, context).await {
                 warn!("Get transfer handler failed: {}", err);
                 let _ = write_transfer_error(
                     &mut stream,
@@ -43,9 +45,7 @@ pub(crate) async fn handle_transfer_stream(
             Ok(())
         }
         Ok(TransferFrame::CwdRequest(_)) => {
-            if let Err(err) =
-                control::handle_cwd_request(&mut stream, shell_state.shell_pid()).await
-            {
+            if let Err(err) = control::handle_cwd_request(&mut stream, context).await {
                 warn!("Cwd request handler failed: {}", err);
                 let _ = write_transfer_error(
                     &mut stream,
@@ -56,9 +56,7 @@ pub(crate) async fn handle_transfer_stream(
             Ok(())
         }
         Ok(TransferFrame::ExistsRequest(req)) => {
-            if let Err(err) =
-                control::handle_exists_request(&mut stream, req, shell_state.shell_pid()).await
-            {
+            if let Err(err) = control::handle_exists_request(&mut stream, req, context).await {
                 warn!("Exists request handler failed: {}", err);
                 let _ = write_transfer_error(
                     &mut stream,

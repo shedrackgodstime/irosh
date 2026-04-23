@@ -13,6 +13,7 @@ pub(crate) async fn handle_get_command(
     transfer_context: &TransferContext,
     remote: &str,
     local: Option<&str>,
+    recursive: bool,
 ) -> Result<()> {
     let remote_path = resolve_remote_source_path(session, remote).await?;
     let remote_name = remote_path
@@ -31,7 +32,7 @@ pub(crate) async fn handle_get_command(
     let interactive_progress = std::io::stdout().is_terminal();
     let mut last_percent = None;
     match session
-        .get_file_with_progress(&remote_path, &local_path, |progress| {
+        .get_with_progress(&remote_path, &local_path, recursive, move |progress| {
             if !interactive_progress {
                 return;
             }

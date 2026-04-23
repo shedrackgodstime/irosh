@@ -5,7 +5,7 @@ use tokio::process::{Child, Command};
 use crate::error::{Result, ServerError};
 use crate::transport::transfer::{TransferFailure, TransferFailureCode};
 
-use super::{LiveShellContext, resolve_remote_path};
+use super::{ShellContext, resolve_remote_path};
 
 pub(super) struct PreparedPutDestination {
     pub(super) final_arg: String,
@@ -13,17 +13,17 @@ pub(super) struct PreparedPutDestination {
 }
 
 pub(super) async fn prepare_put_destination(
-    shell: LiveShellContext,
+    context: ShellContext,
     raw_path: &str,
 ) -> Result<Option<PreparedPutDestination>> {
     let dest_path = resolve_remote_path(raw_path)?;
     let final_arg = dest_path.display().to_string();
 
-    if !shell.path_missing(&final_arg).await? {
+    if !context.path_missing(&final_arg).await? {
         return Ok(None);
     }
 
-    if !shell
+    if !context
         .create_dir_all(dest_path.parent().unwrap_or(Path::new(".")))
         .await?
     {
@@ -64,7 +64,7 @@ pub(super) fn atomic_rename_failure(path: &str) -> TransferFailure {
 }
 
 pub(super) async fn spawn_upload_helper(
-    shell: LiveShellContext,
+    context: ShellContext,
     dest: &str,
 ) -> Result<tokio::process::Child> {
     let mut upload_cmd = Command::new("sh");
@@ -75,7 +75,7 @@ pub(super) async fn spawn_upload_helper(
         .arg(dest)
         .stdin(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    shell.configure(&mut upload_cmd);
+    context.configure(&mut upload_cmd);
 
     upload_cmd.spawn().map_err(|e| {
         ServerError::TransferFailed {
@@ -86,7 +86,7 @@ pub(super) async fn spawn_upload_helper(
 }
 
 pub(super) async fn probe_download_size(
-    shell: LiveShellContext,
+    context: ShellContext,
     source_path: &Path,
 ) -> Result<std::result::Result<u64, TransferFailure>> {
     let helper_source = source_path.display().to_string();
@@ -98,7 +98,7 @@ pub(super) async fn probe_download_size(
         .arg("sh")
         .arg(&helper_source)
         .stderr(std::process::Stdio::piped());
-    shell.configure(&mut size_probe_cmd);
+    context.configure(&mut size_probe_cmd);
 
     let size_probe = size_probe_cmd
         .output()
@@ -110,9 +110,9 @@ pub(super) async fn probe_download_size(
         return Ok(Err(TransferFailure::new(
             TransferFailureCode::HelperFailed,
             format!(
-                "preflight failed: {}; shell_pid={}; requested={}; helper_arg={}",
+                "preflight failed: {}; context={:?}; requested={}; helper_arg={}",
                 String::from_utf8_lossy(&size_probe.stderr).trim(),
-                shell.pid(),
+                context,
                 source_path.display(),
                 helper_source
             ),
@@ -129,7 +129,7 @@ pub(super) async fn probe_download_size(
 }
 
 pub(super) async fn spawn_download_helper(
-    shell: LiveShellContext,
+    context: ShellContext,
     source_path: &Path,
 ) -> Result<(Child, String)> {
     let helper_source = source_path.display().to_string();
@@ -139,7 +139,7 @@ pub(super) async fn spawn_download_helper(
     download_cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    shell.configure(&mut download_cmd);
+    context.configure(&mut download_cmd);
 
     let child = download_cmd
         .spawn()

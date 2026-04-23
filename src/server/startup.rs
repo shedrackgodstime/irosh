@@ -55,6 +55,8 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
         ..Default::default()
     });
 
+    let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel(1);
+
     Ok((
         startup,
         Server {
@@ -64,6 +66,8 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
             security: options.security_config(),
             state: options.state().clone(),
             secret: options.secret.clone(),
+            shutdown_tx,
+            shutdown_rx,
         },
     ))
 }

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex as StdMutex, MutexGuard};
 
 use russh::keys::ssh_key::PublicKey;
 use russh::{Channel, ChannelId, server};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
 use crate::error::Result;
@@ -109,6 +109,7 @@ impl server::Handler for ServerHandler {
         _user: &str,
         key: &russh::keys::ssh_key::PublicKey,
     ) -> std::result::Result<server::Auth, Self::Error> {
+        debug!("auth_publickey request");
         self.authenticate_client(key)
     }
 
@@ -117,6 +118,10 @@ impl server::Handler for ServerHandler {
         channel: Channel<server::Msg>,
         _session: &mut server::Session,
     ) -> std::result::Result<bool, Self::Error> {
+        debug!(
+            "channel_open_session request for channel {:?}",
+            channel.id()
+        );
         self.lock_channels().entry(channel.id()).or_default();
         Ok(true)
     }
@@ -132,6 +137,7 @@ impl server::Handler for ServerHandler {
         _modes: &[(russh::Pty, u32)],
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!("pty_request for channel {:?}", channel);
         self.set_channel_pty(
             channel,
             term,
@@ -147,6 +153,10 @@ impl server::Handler for ServerHandler {
         variable_value: &str,
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!(
+            "env_request for channel {:?}: {}={}",
+            channel, variable_name, variable_value
+        );
         self.record_env(channel, variable_name, variable_value, session)
     }
 
@@ -155,6 +165,7 @@ impl server::Handler for ServerHandler {
         channel: ChannelId,
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!("shell_request for channel {:?}", channel);
         self.start_command(channel, session, None)?;
         Ok(())
     }
@@ -166,6 +177,7 @@ impl server::Handler for ServerHandler {
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
         let command = String::from_utf8_lossy(data).trim().to_string();
+        debug!("exec_request for channel {:?}: {}", channel, command);
         self.start_command(channel, session, Some(&command))?;
         Ok(())
     }
@@ -176,6 +188,11 @@ impl server::Handler for ServerHandler {
         data: &[u8],
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!(
+            "data received for channel {:?}: {} bytes",
+            channel,
+            data.len()
+        );
         self.write_channel_data(channel, data);
         Ok(())
     }
@@ -189,6 +206,7 @@ impl server::Handler for ServerHandler {
         pix_height: u32,
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!("window_change_request for channel {:?}", channel);
         self.resize_channel(
             channel, col_width, row_height, pix_width, pix_height, session,
         )
@@ -199,6 +217,7 @@ impl server::Handler for ServerHandler {
         channel: ChannelId,
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!("channel_eof for channel {:?}", channel);
         self.close_channel_writer(channel);
         Ok(())
     }
@@ -208,6 +227,7 @@ impl server::Handler for ServerHandler {
         channel: ChannelId,
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!("channel_close for channel {:?}", channel);
         self.close_channel(channel);
         Ok(())
     }
@@ -218,6 +238,7 @@ impl server::Handler for ServerHandler {
         signal: russh::Sig,
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        debug!("signal request for channel {:?}: {:?}", channel, signal);
         self.forward_signal(channel, signal);
         Ok(())
     }

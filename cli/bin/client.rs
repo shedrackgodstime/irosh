@@ -244,15 +244,16 @@ async fn drive_session(mut session: Session) -> Result<()> {
             event = session.next_event() => {
                 let Some(event) = event? else { break; };
                 match event {
-                    SessionEvent::Stdout(data) => {
+                    SessionEvent::Data(data) => {
                         stdout.write_all(&data).await?;
                         stdout.flush().await?;
                     }
-                    SessionEvent::Stderr(data) => {
+                    SessionEvent::ExtendedData(data, _) => {
                         stderr.write_all(&data).await?;
                         stderr.flush().await?;
                     }
                     SessionEvent::ExitStatus(_) | SessionEvent::Closed => break,
+                    _ => {}
                 }
             }
         }

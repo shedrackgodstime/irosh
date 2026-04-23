@@ -44,30 +44,43 @@ impl ConnectionShellState {
     }
 }
 
+/// The context in which a remote operation (like file transfer) is executed.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct LiveShellContext {
-    pid: u32,
+pub(crate) enum ShellContext {
+    /// An operation tied to a live interactive shell process.
+    /// On Linux, this allows joining the shell's namespaces.
+    Live { pid: u32 },
+    /// An operation executed in the server's own process context.
+    Stateless,
 }
 
-impl LiveShellContext {
-    pub(super) fn from_state(shell_state: &ConnectionShellState) -> Option<Self> {
-        shell_state.shell_pid().map(|pid| Self { pid })
+impl ShellContext {
+    /// Returns the context from the current connection state.
+    pub(super) fn from_state(shell_state: &ConnectionShellState) -> Self {
+        match shell_state.shell_pid() {
+            Some(pid) => Self::Live { pid },
+            None => Self::Stateless,
+        }
     }
 
-    pub(super) fn from_pid(pid: Option<u32>) -> Option<Self> {
-        pid.map(|pid| Self { pid })
-    }
-
-    pub(super) fn pid(self) -> u32 {
-        self.pid
-    }
-
+    /// Configures a command to run within this context.
     pub(super) fn configure(self, command: &mut Command) {
-        configure_live_shell_context(command, self.pid);
+        if let Self::Live { pid } = self {
+            configure_live_shell_context(command, pid);
+        }
     }
 
+    /// Resolves the current working directory for this context.
     pub(super) async fn cwd(self) -> Result<PathBuf> {
-        resolve_process_cwd(self.pid).await
+        match self {
+            Self::Live { pid } => resolve_process_cwd(pid).await,
+            Self::Stateless => server_home_dir().ok_or_else(|| {
+                ServerError::ShellError {
+                    details: "could not determine server home directory".to_string(),
+                }
+                .into()
+            }),
+        }
     }
 
     pub(super) async fn path_exists(self, path: &str) -> Result<bool> {

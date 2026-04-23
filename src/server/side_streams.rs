@@ -14,9 +14,11 @@ pub(crate) fn spawn_metadata_and_transfer_acceptor(
     shell_state: ConnectionShellState,
 ) {
     tokio::spawn(async move {
+        tracing::debug!("Side-stream acceptor started");
         let accept = tokio::time::timeout(METADATA_ACCEPT_TIMEOUT, connection.accept_bi()).await;
 
         let Ok(Ok((send, recv))) = accept else {
+            tracing::debug!("Side-stream acceptor: metadata stream accept failed or timed out");
             return;
         };
 
@@ -27,6 +29,7 @@ pub(crate) fn spawn_metadata_and_transfer_acceptor(
         .await;
 
         let Ok(Ok(())) = request else {
+            tracing::debug!("Side-stream acceptor: metadata request failed or timed out");
             return;
         };
 
@@ -34,14 +37,33 @@ pub(crate) fn spawn_metadata_and_transfer_acceptor(
         if let Err(err) = write_metadata(&mut metadata_stream, &metadata).await {
             warn!("Metadata stream failed: {}", err);
         }
+        tracing::debug!("Side-stream acceptor: metadata exchange complete");
 
-        while let Ok((send, recv)) = connection.accept_bi().await {
-            let shell_state = shell_state.clone();
-            tokio::spawn(async move {
-                if let Err(err) = handle_transfer_stream(send, recv, shell_state).await {
-                    warn!("Transfer stream failed: {}", err);
+        loop {
+            tokio::select! {
+                biased;
+                _ = connection.closed() => {
+                    tracing::debug!("Side-stream acceptor: connection closed");
+                    break;
                 }
-            });
+                res = connection.accept_bi() => {
+                    match res {
+                        Ok((send, recv)) => {
+                            let shell_state = shell_state.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = handle_transfer_stream(send, recv, shell_state).await {
+                                    warn!("Transfer stream failed: {}", err);
+                                }
+                            });
+                        }
+                        Err(err) => {
+                            tracing::debug!("Side-stream acceptor: accept_bi failed: {}", err);
+                            break;
+                        }
+                    }
+                }
+            }
         }
+        tracing::debug!("Side-stream acceptor finished");
     });
 }

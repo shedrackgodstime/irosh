@@ -19,25 +19,26 @@ async fn session_state_transitions_from_authenticated_to_shell_ready_to_closed()
 async fn exec_emits_stdout_and_close_events() {
     let server_state = temp_state_dir("server-exec");
     let client_state = temp_state_dir("client-exec");
-    let (mut session, server_task) = connect_test_session(&server_state, &client_state).await;
+    let (session, server_task) = connect_test_session(&server_state, &client_state).await;
 
-    session.exec("printf exec-ok").await.unwrap();
+    let mut channel = session.handle.channel_open_session().await.unwrap();
+    channel.exec(true, "printf exec-ok").await.unwrap();
 
     let mut stdout = Vec::new();
     loop {
-        let Some(event) = session.next_event().await.unwrap() else {
+        let Some(msg) = channel.wait().await else {
             break;
         };
-        match event {
-            SessionEvent::Stdout(data) => stdout.extend_from_slice(&data),
-            SessionEvent::Closed => break,
-            SessionEvent::Stderr(_) | SessionEvent::ExitStatus(_) => {}
+        match msg {
+            ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+            ChannelMsg::Close => break,
+            _ => {}
         }
     }
 
     let stdout = String::from_utf8(stdout).unwrap();
     assert!(stdout.contains("exec-ok"), "unexpected stdout: {stdout}");
-    assert_eq!(session.state(), SessionState::Closed);
 
+    let _ = session.close().await;
     let _ = server_task.await.unwrap();
 }

@@ -12,89 +12,56 @@ use russh::ChannelMsg;
 use russh::client;
 
 pub use self::connect::{Client, ClientOptions};
+pub use crate::SessionState;
+pub use crate::session::pty::PtyOptions;
 
 use crate::error::{ClientError, Result};
-use crate::session::{PtyOptions, PtySize, SessionState};
+use crate::session::pty::PtySize;
 
-/// An active, authenticated irosh session.
-///
-/// `Session` is the main runtime handle returned by [`Client::connect`]. It
-/// owns the SSH session channel together with the underlying Iroh connection
-/// and endpoint state required for the lifetime of that session.
-///
-/// Callers drive the remote session explicitly through methods like
-/// [`Session::request_pty`], [`Session::start_shell`], [`Session::exec`],
-/// [`Session::send`], and [`Session::next_event`].
-///
-/// Cleanup should preferably happen through [`Session::disconnect`] or
-/// [`Session::close`] instead of relying on drop.
-///
-/// # Warning
-///
-/// Dropping a `Session` while it still owns an active `iroh::Endpoint` may
-/// trigger a synchronous close of the underlying Iroh transport, which can
-/// block the async runtime depending on the driver. Always prefer explicit
-/// shutdown.
+/// A high-level SSH session over Iroh transport.
 pub struct Session {
-    pub(crate) handle: client::Handle<handler::ClientHandler>,
-    pub(crate) channel: russh::Channel<client::Msg>,
-    pub(crate) connection: Option<iroh::endpoint::Connection>,
-    pub(crate) endpoint: Option<iroh::Endpoint>,
-    pub(crate) remote_metadata: Option<crate::transport::metadata::PeerMetadata>,
-    pub(crate) state: SessionState,
+    handle: client::Handle<handler::ClientHandler>,
+    channel: russh::Channel<russh::client::Msg>,
+    #[allow(dead_code)]
+    connection: Option<iroh::endpoint::Connection>,
+    #[allow(dead_code)]
+    endpoint: Option<iroh::Endpoint>,
+    remote_metadata: Option<crate::transport::metadata::PeerMetadata>,
+    state: SessionState,
 }
 
 impl fmt::Debug for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Session")
-            .field("has_connection", &self.connection.is_some())
-            .field("has_endpoint", &self.endpoint.is_some())
-            .field("has_remote_metadata", &self.remote_metadata.is_some())
             .field("state", &self.state)
+            .field("has_metadata", &self.remote_metadata.is_some())
             .finish()
     }
 }
 
-/// Library-owned session events surfaced to callers.
-///
-/// These events are produced by [`Session::next_event`] and provide a stable
-/// library surface instead of exposing raw `russh` channel messages.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionEvent {
-    /// Standard output bytes produced by the remote side.
-    Stdout(Vec<u8>),
-    /// Standard error bytes produced by the remote side.
-    Stderr(Vec<u8>),
-    /// Process exit status reported by the remote side.
-    ExitStatus(u32),
-    /// Notification that the remote side closed the session channel.
-    Closed,
+/// Represents the output of a remote command execution.
+#[derive(Debug, Clone, Default)]
+pub struct ExecOutput {
+    /// The captured stdout bytes.
+    pub stdout: Vec<u8>,
+    /// The captured stderr bytes.
+    pub stderr: Vec<u8>,
+    /// The remote process exit status.
+    pub exit_status: u32,
 }
 
-/// Progress information for a file transfer.
-///
-/// This is a lightweight snapshot value used by the transfer APIs and CLI
-/// integration code to report progress without exposing transport internals.
+/// Progress state for an ongoing file transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferProgress {
-    transferred: u64,
-    total: u64,
+    /// Bytes successfully transferred so far.
+    pub transferred: u64,
+    /// Total expected size in bytes.
+    pub total: u64,
 }
 
 impl TransferProgress {
-    /// Creates a new transfer progress snapshot.
-    pub fn new(transferred: u64, total: u64) -> Self {
+    pub(crate) fn new(transferred: u64, total: u64) -> Self {
         Self { transferred, total }
-    }
-
-    /// Returns the number of bytes transferred so far.
-    pub fn transferred(&self) -> u64 {
-        self.transferred
-    }
-
-    /// Returns the expected total number of bytes for the transfer.
-    pub fn total(&self) -> u64 {
-        self.total
     }
 
     /// Returns the completion percentage clamped to `0..=100`.
@@ -126,17 +93,6 @@ impl Session {
     ///
     /// Returns an error if the request cannot be sent or the remote SSH server rejects
     /// the PTY request.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::error::Error;
-    /// # use irosh::{Session, PtyOptions, session::default_pty_size};
-    /// # async fn example(mut session: Session) -> Result<(), Box<dyn Error>> {
-    /// session.request_pty(PtyOptions::new("xterm-256color", default_pty_size())).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub async fn request_pty(&mut self, options: PtyOptions) -> Result<()> {
         let size = options.size();
         self.channel
@@ -150,26 +106,16 @@ impl Session {
                 options.modes_slice(),
             )
             .await
-            .map_err(|e| ClientError::PtyRequestFailed { source: e }.into())
+            .map_err(|e| ClientError::PtyRequestFailed { source: e })?;
+        Ok(())
     }
 
-    /// Requests the default interactive shell and marks the session as shell-ready.
+    /// Transitions the session to a live interactive shell.
     ///
     /// # Errors
     ///
-    /// Returns an error if the request cannot be sent or the remote SSH server rejects
-    /// the shell request.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::error::Error;
-    /// # use irosh::Session;
-    /// # async fn example(mut session: Session) -> Result<(), Box<dyn Error>> {
-    /// session.start_shell().await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Returns an error if the shell request cannot be sent or is rejected by
+    /// the remote peer.
     pub async fn start_shell(&mut self) -> Result<()> {
         self.channel
             .request_shell(true)
@@ -180,20 +126,6 @@ impl Session {
     }
 
     /// Requests execution of a single remote command.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::error::Error;
-    /// # use irosh::{Client, ClientOptions, StateConfig, Ticket};
-    /// # async fn run() -> Result<(), Box<dyn Error>> {
-    /// # let options = ClientOptions::new(StateConfig::new("/tmp/irosh-client".into()));
-    /// # let target: Ticket = "endpoint...".parse()?;
-    /// # let mut session = Client::connect(&options, target).await?;
-    /// session.exec("uname -a").await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     ///
     /// # Errors
     ///
@@ -206,6 +138,45 @@ impl Session {
             .map_err(|e| ClientError::ExecFailed { source: e })?;
         self.state = SessionState::ShellReady;
         Ok(())
+    }
+
+    /// Requests execution of a single remote command and captures its output.
+    ///
+    /// This method will block until the command completes or the session is closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command fails to start or the session is lost.
+    pub async fn capture_exec(&mut self, command: &str) -> Result<ExecOutput> {
+        // Open a NEW channel for every exec request.
+        // This is standard SSH behavior and avoids conflicting with the shell channel.
+        let mut channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|e| ClientError::ChannelOpenFailed { source: e })?;
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|e| ClientError::ExecFailed { source: e })?;
+
+        let mut output = ExecOutput::default();
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Data { data }) => {
+                    output.stdout.extend_from_slice(&data);
+                }
+                Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                    output.stderr.extend_from_slice(&data);
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                    output.exit_status = exit_status;
+                }
+                Some(ChannelMsg::Close) | None => break,
+                _ => {}
+            }
+        }
+        Ok(output)
     }
 
     /// Sends raw input bytes to the remote session.
@@ -250,54 +221,34 @@ impl Session {
             .map_err(|e| ClientError::WindowChangeFailed { source: e }.into())
     }
 
-    /// Waits for the next SSH channel message from the remote side.
+    /// Waits for the next session event from the remote peer.
     ///
-    /// This translates raw SSH channel traffic into library-owned
-    /// [`SessionEvent`] values.
+    /// This returns `None` if the session was closed gracefully.
     ///
     /// # Errors
     ///
-    /// Returns an error if waiting on the underlying SSH channel fails.
+    /// Returns an error if the underlying transport or SSH channel fails.
     pub async fn next_event(&mut self) -> Result<Option<SessionEvent>> {
-        loop {
-            let Some(message) = self.channel.wait().await else {
+        match self.channel.wait().await {
+            Some(msg) => Ok(Some(SessionEvent::from(msg))),
+            None => {
                 self.state = SessionState::Closed;
-                return Ok(None);
-            };
-
-            match message {
-                ChannelMsg::Data { data } => return Ok(Some(SessionEvent::Stdout(data.to_vec()))),
-                ChannelMsg::ExtendedData { data, .. } => {
-                    return Ok(Some(SessionEvent::Stderr(data.to_vec())));
-                }
-                ChannelMsg::ExitStatus { exit_status } => {
-                    return Ok(Some(SessionEvent::ExitStatus(exit_status)));
-                }
-                ChannelMsg::Eof | ChannelMsg::Close => {
-                    self.state = SessionState::Closed;
-                    return Ok(Some(SessionEvent::Closed));
-                }
-                _ => {}
+                Ok(None)
             }
         }
     }
 
-    /// Disconnects the SSH session and closes the underlying endpoint.
-    ///
-    /// Prefer calling this explicitly rather than relying on drop for cleanup.
+    /// Disconnects the session and closes all underlying transport streams.
     ///
     /// # Errors
     ///
-    /// Returns an error if the SSH disconnect request cannot be sent.
+    /// Returns an error if the disconnect signal cannot be sent.
     pub async fn disconnect(&mut self) -> Result<()> {
+        let _ = self.channel.close().await;
         self.handle
-            .disconnect(russh::Disconnect::ByApplication, "", "English")
+            .disconnect(russh::Disconnect::ByApplication, "", "en-US")
             .await
             .map_err(|e| ClientError::DisconnectFailed { source: e })?;
-        if let Some(endpoint) = self.endpoint.as_ref() {
-            endpoint.close().await;
-        }
-        self.connection = None;
         self.state = SessionState::Closed;
         Ok(())
     }
@@ -309,5 +260,52 @@ impl Session {
     /// Returns any error produced by [`Session::disconnect`].
     pub async fn close(mut self) -> Result<()> {
         self.disconnect().await
+    }
+}
+
+/// Events that can occur during an active SSH session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEvent {
+    /// Raw data received from remote stdout.
+    Data(Vec<u8>),
+    /// Raw data received from remote stderr or other extended streams.
+    ExtendedData(Vec<u8>, u32),
+    /// The remote process has exited with the given status code.
+    ExitStatus(u32),
+    /// The remote process was terminated by a signal.
+    ExitSignal {
+        /// Signal name (e.g. "TERM", "KILL").
+        signal: String,
+        /// Whether a core dump was generated.
+        core_dumped: bool,
+        /// Human-readable error message.
+        error_message: String,
+        /// Language tag for the error message.
+        lang_tag: String,
+    },
+    /// The remote session has been closed.
+    Closed,
+}
+
+impl From<ChannelMsg> for SessionEvent {
+    fn from(msg: ChannelMsg) -> Self {
+        match msg {
+            ChannelMsg::Data { data } => Self::Data(data.to_vec()),
+            ChannelMsg::ExtendedData { data, ext } => Self::ExtendedData(data.to_vec(), ext),
+            ChannelMsg::ExitStatus { exit_status } => Self::ExitStatus(exit_status),
+            ChannelMsg::ExitSignal {
+                signal_name,
+                core_dumped,
+                error_message,
+                lang_tag,
+            } => Self::ExitSignal {
+                signal: format!("{:?}", signal_name),
+                core_dumped,
+                error_message: error_message.to_string(),
+                lang_tag: lang_tag.to_string(),
+            },
+            ChannelMsg::Close => Self::Closed,
+            _ => Self::Closed,
+        }
     }
 }

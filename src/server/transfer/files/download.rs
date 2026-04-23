@@ -7,28 +7,15 @@ use crate::transport::transfer::{
 use tokio::io::AsyncReadExt;
 
 use crate::server::transfer::helpers::{probe_download_size, spawn_download_helper};
-use crate::server::transfer::{ConnectionShellState, LiveShellContext, resolve_remote_path};
+use crate::server::transfer::{ShellContext, resolve_remote_path};
 
 pub(crate) async fn handle_get_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::GetRequest,
-    shell_state: ConnectionShellState,
+    context: ShellContext,
 ) -> Result<()> {
-    let Some(shell) = LiveShellContext::from_state(&shell_state) else {
-        write_transfer_error(
-            stream,
-            &TransferFailure::new(
-                TransferFailureCode::RemoteShellUnavailable,
-                "no live shell process",
-            ),
-        )
-        .await
-        .map_err(TransportError::from)?;
-        return Ok(());
-    };
-
     let source_path = resolve_remote_path(&request.path)?;
-    let expected_size = match probe_download_size(shell, &source_path).await? {
+    let expected_size = match probe_download_size(context, &source_path).await? {
         Ok(size) => size,
         Err(failure) => {
             write_transfer_error(stream, &failure)
@@ -38,7 +25,7 @@ pub(crate) async fn handle_get_request(
         }
     };
 
-    let (mut child, helper_source) = spawn_download_helper(shell, &source_path).await?;
+    let (mut child, helper_source) = spawn_download_helper(context, &source_path).await?;
 
     let mut stdout = child
         .stdout
@@ -85,9 +72,9 @@ pub(crate) async fn handle_get_request(
             &TransferFailure::new(
                 TransferFailureCode::HelperFailed,
                 format!(
-                    "{}; shell_pid={}; requested={}; helper_arg={}",
+                    "{}; context={:?}; requested={}; helper_arg={}",
                     String::from_utf8_lossy(&output.stderr).trim(),
-                    shell.pid(),
+                    context,
                     source_path.display(),
                     helper_source
                 ),

@@ -50,7 +50,7 @@ async fn connect_test_session(
             host_key_policy: HostKeyPolicy::Tofu,
         },
         server_state.clone(),
-        crate::server::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await

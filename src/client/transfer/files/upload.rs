@@ -8,6 +8,47 @@ use crate::transport::transfer::{
 };
 
 impl Session {
+    /// Uploads one local file or directory to the remote peer.
+    ///
+    /// If `local` is a directory, it will be uploaded recursively.
+    pub async fn put(
+        &mut self,
+        local: impl AsRef<std::path::Path>,
+        remote: impl AsRef<std::path::Path>,
+        recursive: bool,
+    ) -> Result<()> {
+        self.put_with_progress(local, remote, recursive, |_| {})
+            .await
+    }
+
+    /// Uploads one local file or directory with progress reporting.
+    pub async fn put_with_progress<F>(
+        &mut self,
+        local: impl AsRef<std::path::Path>,
+        remote: impl AsRef<std::path::Path>,
+        recursive: bool,
+        on_progress: F,
+    ) -> Result<()>
+    where
+        F: FnMut(TransferProgress) + Clone + Send + 'static,
+    {
+        let local = local.as_ref();
+        let remote = remote.as_ref();
+
+        if local.is_dir() {
+            if !recursive {
+                return Err(ClientError::TransferTargetInvalid {
+                    reason: "source is a directory, but recursive flag not set",
+                }
+                .into());
+            }
+            self.put_dir_with_progress(local, remote, on_progress).await
+        } else {
+            self.put_file_with_progress(local, remote, on_progress)
+                .await
+        }
+    }
+
     /// Uploads one local file to the remote peer on a separate authenticated stream.
     pub async fn put_file(
         &mut self,
@@ -155,5 +196,47 @@ impl Session {
             }
             .into()),
         }
+    }
+
+    /// Uploads a directory recursively to the remote peer.
+    pub async fn put_dir_with_progress<F>(
+        &mut self,
+        local: impl AsRef<std::path::Path>,
+        remote: impl AsRef<std::path::Path>,
+        on_progress: F,
+    ) -> Result<()>
+    where
+        F: FnMut(TransferProgress) + Clone + Send + 'static,
+    {
+        let local_root = local.as_ref();
+        let remote_root = remote.as_ref();
+
+        let mut entries = Vec::new();
+        let walk = walkdir::WalkDir::new(local_root);
+
+        for entry in walk {
+            let entry = entry.map_err(|e| ClientError::FileIo {
+                operation: "walk local directory",
+                path: local_root.to_path_buf(),
+                source: e.into(),
+            })?;
+            if entry.file_type().is_file() {
+                let relative = entry.path().strip_prefix(local_root).map_err(|_| {
+                    ClientError::TransferTargetInvalid {
+                        reason: "failed to resolve relative path during directory walk",
+                    }
+                })?;
+                entries.push((entry.path().to_path_buf(), remote_root.join(relative)));
+            }
+        }
+
+        // For now, we transfer them sequentially.
+        for (local_path, remote_path) in entries {
+            // We use a fresh progress callback for each file.
+            self.put_file_with_progress(&local_path, &remote_path, on_progress.clone())
+                .await?;
+        }
+
+        Ok(())
     }
 }

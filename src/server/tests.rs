@@ -50,7 +50,7 @@ async fn server_options_builder_retains_state_security_secret_and_keys() {
             host_key_policy: HostKeyPolicy::AcceptAll,
         })
         .secret("shared-secret")
-        .authorized_key(authorized_key.clone());
+        .authorized_keys(vec![authorized_key.clone()]);
 
     assert_eq!(options.state().root(), state.root());
     assert_eq!(

@@ -20,7 +20,7 @@ async fn publickey_auth_round_trip_succeeds_over_duplex_stream() {
             host_key_policy: crate::config::HostKeyPolicy::Tofu,
         },
         server_state.clone(),
-        crate::server::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
@@ -78,7 +78,7 @@ async fn publickey_auth_is_rejected_for_untrusted_client_key() {
             host_key_policy: crate::config::HostKeyPolicy::Tofu,
         },
         server_state.clone(),
-        crate::server::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
@@ -145,7 +145,7 @@ async fn connect_stream_fails_on_server_key_mismatch() {
             host_key_policy: crate::config::HostKeyPolicy::Tofu,
         },
         server_state.clone(),
-        crate::server::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await

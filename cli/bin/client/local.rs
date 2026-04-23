@@ -126,36 +126,61 @@ async fn run_local_command(
 ) -> Result<InputOutcome> {
     let cleaned = strip_ansi(command);
     let trimmed = cleaned.trim();
-    let mut parts = trimmed.split_whitespace();
-    let keyword = parts.next().unwrap_or_default();
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    if parts.is_empty() {
+        return Ok(InputOutcome::Continue);
+    }
+    let keyword = parts[0];
 
     match keyword {
         ":put" => {
-            let Some(local) = parts.next() else {
+            let mut recursive = false;
+            let mut args = Vec::new();
+            for arg in &parts[1..] {
+                if *arg == "-r" || *arg == "--recursive" {
+                    recursive = true;
+                } else {
+                    args.push(*arg);
+                }
+            }
+
+            if args.is_empty() {
                 stdout
-                    .write_all(b"Usage: :put <local> [remote]\r\n")
+                    .write_all(b"Usage: :put [-r] <local> [remote]\r\n")
                     .await?;
                 stdout.flush().await?;
                 return Ok(InputOutcome::Continue);
-            };
-            let remote = parts.next();
-            handle_put_command(session, stdout, transfer_context, local, remote).await?;
+            }
+            let local = args[0];
+            let remote = args.get(1).copied();
+            handle_put_command(session, stdout, transfer_context, local, remote, recursive).await?;
         }
         ":get" => {
-            let Some(remote) = parts.next() else {
+            let mut recursive = false;
+            let mut args = Vec::new();
+            for arg in &parts[1..] {
+                if *arg == "-r" || *arg == "--recursive" {
+                    recursive = true;
+                } else {
+                    args.push(*arg);
+                }
+            }
+
+            if args.is_empty() {
                 stdout
-                    .write_all(b"Usage: :get <remote> [local]\r\n")
+                    .write_all(b"Usage: :get [-r] <remote> [local]\r\n")
                     .await?;
                 stdout.flush().await?;
                 return Ok(InputOutcome::Continue);
-            };
-            let local = parts.next();
-            handle_get_command(session, stdout, transfer_context, remote, local).await?;
+            }
+            let remote = args[0];
+            let local = args.get(1).copied();
+            handle_get_command(session, stdout, transfer_context, remote, local, recursive).await?;
         }
         ":help" => {
             stdout
                 .write_all(
-                    b"Local client commands:\r\n  :pwd\r\n  :ls [path]\r\n  :cd <path>\r\n  :put <local> [remote]\r\n  :get <remote> [local]\r\n  :paths\r\n  :disconnect\r\n  :help\r\n",
+                    b"Local client commands:\r\n  :pwd\r\n  :ls [path]\r\n  :cd <path>\r\n  :put [-r] <local> [remote]\r\n  :get [-r] <remote> [local]\r\n  :paths\r\n  :disconnect\r\n  :help\r\n",
                 )
                 .await?;
         }
@@ -165,7 +190,7 @@ async fn run_local_command(
                 .await?;
         }
         ":ls" => {
-            let raw = parts.next();
+            let raw = parts.get(1);
             let path = match raw {
                 Some(value) => resolve_local_input_path(&transfer_context.local_root, value),
                 None => transfer_context.local_root.clone(),
@@ -188,7 +213,7 @@ async fn run_local_command(
             }
         }
         ":cd" => {
-            let Some(raw) = parts.next() else {
+            let Some(raw) = parts.get(1) else {
                 stdout.write_all(b"Usage: :cd <path>\r\n").await?;
                 stdout.flush().await?;
                 return Ok(InputOutcome::Continue);

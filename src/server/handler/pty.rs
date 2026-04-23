@@ -3,12 +3,14 @@ use std::io::{Read, Write};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use russh::{ChannelId, server};
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::error::{Result, ServerError};
 use crate::session::pty::{default_pty_size, pty_size};
 
 use super::ServerHandler;
+
+use tokio_util::sync::CancellationToken;
 
 #[derive(Default)]
 pub(super) struct ChannelState {
@@ -24,6 +26,7 @@ struct RunningPty {
     pid: Option<u32>,
     #[cfg(unix)]
     pgid: Option<libc::pid_t>,
+    shutdown: CancellationToken,
 }
 
 #[derive(Clone)]
@@ -65,6 +68,11 @@ impl ServerHandler {
         session: &mut server::Session,
         command: Option<&str>,
     ) -> Result<()> {
+        tracing::debug!(
+            "start_command called for channel {:?}, command: {:?}",
+            channel,
+            command
+        );
         let mut channels = self.lock_channels();
         let state_entry = channels.entry(channel).or_default();
         if state_entry.process.is_some() {
@@ -113,6 +121,7 @@ impl ServerHandler {
         let pid = child.process_id();
         self.shell_state.set_shell_pid(pid);
         let killer = child.clone_killer();
+
         let mut reader = pair
             .master
             .try_clone_reader()
@@ -125,10 +134,26 @@ impl ServerHandler {
             .map_err(|e| ServerError::ShellError {
                 details: format!("failed to take PTY writer: {e}"),
             })?;
+
+        #[cfg(unix)]
+        let maybe_fd = pair.master.as_raw_fd();
+
+        #[cfg(unix)]
+        if let Some(fd) = maybe_fd {
+            // SAFETY: `fd` is a valid file descriptor from `portable_pty`.
+            // Setting it to non-blocking is required for `AsyncFd`.
+            unsafe {
+                let flags = libc::fcntl(fd, libc::F_GETFL);
+                libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            }
+        }
+
         let handle = session.handle();
-        let runtime = tokio::runtime::Handle::current();
         let channels_ref = self.channels.clone();
         let shell_state = self.shell_state.clone();
+
+        let shutdown = CancellationToken::new();
+        let task_shutdown = shutdown.clone();
 
         state_entry.process = Some(RunningPty {
             master: pair.master,
@@ -137,6 +162,7 @@ impl ServerHandler {
             pid,
             #[cfg(unix)]
             pgid,
+            shutdown,
         });
 
         session
@@ -146,32 +172,129 @@ impl ServerHandler {
                 details: e.to_string(),
             })?;
 
-        tokio::task::spawn_blocking(move || {
-            let mut buf = [0u8; 8192];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let data = buf[..n].to_vec();
-                        let _ = runtime.block_on(handle.data(channel, data.into()));
+        tokio::spawn(async move {
+            tracing::debug!("PTY reader task started for channel {:?}", channel);
+
+            #[cfg(unix)]
+            if let Some(fd) = maybe_fd {
+                use tokio::io::unix::AsyncFd;
+
+                tracing::debug!("PTY reader using FD {:?} for channel {:?}", fd, channel);
+
+                // We wrap the MasterPty's raw FD in an AsyncFd to perform
+                // non-blocking reads that are integrated with the Tokio reactor.
+                struct RawFdWrapper(std::os::unix::io::RawFd);
+                impl std::os::unix::io::AsRawFd for RawFdWrapper {
+                    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+                        self.0
                     }
+                }
+
+                let async_fd = match AsyncFd::new(RawFdWrapper(fd)) {
+                    Ok(fd) => Some(fd),
                     Err(err) => {
-                        error!("PTY read error on channel {:?}: {}", channel, err);
-                        break;
+                        tracing::error!("Failed to create AsyncFd for PTY reader: {}", err);
+                        None
+                    }
+                };
+
+                if let Some(async_fd) = async_fd {
+                    let mut buf = [0u8; 8192];
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = task_shutdown.cancelled() => {
+                                tracing::debug!("PTY reader task cancelled for channel {:?}", channel);
+                                return;
+                            }
+                            res = async_fd.readable() => {
+                                match res {
+                                    Ok(mut guard) => {
+                                        match reader.read(&mut buf) {
+                                            Ok(0) => {
+                                                tracing::debug!("PTY reader received EOF for channel {:?}", channel);
+                                                break;
+                                            }
+                                            Ok(n) => {
+                                                guard.retain_ready();
+                                                let data = buf[..n].to_vec();
+                                                tracing::debug!("PTY reader read {} bytes from channel {:?}", n, channel);
+                                                if let Err(err) = handle.data(channel, data.into()).await {
+                                                    tracing::error!("PTY reader failed to send {} bytes to channel {:?}: {:?}", n, channel, err);
+                                                    break;
+                                                }
+                                                tracing::debug!("PTY reader sent {} bytes to channel {:?}", n, channel);
+                                            }
+                                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                                guard.clear_ready();
+                                            }
+                                            Err(err) => {
+                                                tracing::error!("PTY read error on channel {:?}: {}", channel, err);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        tracing::error!("AsyncFd error on channel {:?}: {}", channel, err);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            let exit_status = child
-                .wait()
-                .ok()
-                .map(|status| status.exit_code())
-                .unwrap_or(255);
-            runtime.block_on(async {
-                let _ = handle.exit_status_request(channel, exit_status).await;
-                let _ = handle.eof(channel).await;
-                let _ = handle.close(channel).await;
-            });
+            #[cfg(not(unix))]
+            {
+                // Fallback for non-unix platforms.
+                let mut reader = reader;
+                let handle = handle.clone();
+                let task_shutdown = task_shutdown.clone();
+
+                tokio::task::spawn_blocking(move || {
+                    let mut buf = [0u8; 8192];
+                    let runtime = tokio::runtime::Handle::current();
+                    loop {
+                        if task_shutdown.is_cancelled() {
+                            break;
+                        }
+                        match reader.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                let data = buf[..n].to_vec();
+                                if runtime.block_on(handle.data(channel, data.into())).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                })
+                .await
+                .ok();
+            }
+
+            tracing::debug!("PTY reader task waiting for child process {:?}...", pid);
+            let exit_status = tokio::task::spawn_blocking(move || {
+                child
+                    .wait()
+                    .ok()
+                    .map(|status| status.exit_code())
+                    .unwrap_or(255)
+            })
+            .await
+            .unwrap_or(255);
+
+            tracing::debug!(
+                "PTY reader task finishing for channel {:?} with exit code {}",
+                channel,
+                exit_status
+            );
+            let _ = handle.exit_status_request(channel, exit_status).await;
+            let _ = handle.eof(channel).await;
+            let _ = handle.close(channel).await;
+
             shell_state.clear_shell_pid_if_matches(pid);
 
             let mut channels = match channels_ref.lock() {
@@ -188,7 +311,7 @@ impl ServerHandler {
     }
 
     pub(super) fn record_env(
-        &self,
+        &mut self,
         channel: ChannelId,
         variable_name: &str,
         variable_value: &str,
@@ -248,6 +371,7 @@ impl ServerHandler {
         if let Some(mut state_entry) = channels.remove(&channel)
             && let Some(mut process) = state_entry.process.take()
         {
+            process.shutdown.cancel();
             self.shell_state.clear_shell_pid_if_matches(process.pid);
             process.writer.take();
             let _ = process.killer.kill();

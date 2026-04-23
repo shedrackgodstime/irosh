@@ -14,6 +14,7 @@ pub(crate) async fn handle_put_command(
     transfer_context: &TransferContext,
     local: &str,
     remote: Option<&str>,
+    recursive: bool,
 ) -> Result<()> {
     let local_path = transfer_context.resolve_local_source(local);
     if !local_path.exists() {
@@ -41,7 +42,7 @@ pub(crate) async fn handle_put_command(
     let interactive_progress = std::io::stdout().is_terminal();
     let mut last_percent = None;
     match session
-        .put_file_with_progress(&local_path, &remote_path, |progress| {
+        .put_with_progress(&local_path, &remote_path, recursive, move |progress| {
             if !interactive_progress {
                 return;
             }
