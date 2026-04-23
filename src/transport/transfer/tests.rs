@@ -7,6 +7,7 @@ async fn put_request_round_trip_succeeds() {
         path: "/tmp/file.txt".to_string(),
         size: 42,
         mode: None,
+        recursive: false,
     };
 
     let (mut client, mut server) = tokio::io::duplex(2048);
@@ -21,6 +22,7 @@ async fn put_request_round_trip_succeeds() {
             path: "/tmp/file.txt".to_string(),
             size: 42,
             mode: None,
+            recursive: false,
         }
     );
 }
@@ -29,6 +31,7 @@ async fn put_request_round_trip_succeeds() {
 async fn get_request_round_trip_succeeds() {
     let request = GetRequest {
         path: "/var/log/syslog".to_string(),
+        recursive: false,
     };
 
     let (mut client, mut server) = tokio::io::duplex(2048);
@@ -40,7 +43,8 @@ async fn get_request_round_trip_succeeds() {
     assert_eq!(
         decoded,
         GetRequest {
-            path: "/var/log/syslog".to_string()
+            path: "/var/log/syslog".to_string(),
+            recursive: false,
         }
     );
 }
@@ -250,6 +254,7 @@ async fn transfer_rejects_unexpected_kind() {
             &mut client,
             &GetRequest {
                 path: "/tmp/remote".to_string(),
+                recursive: false,
             },
         )
         .await
@@ -259,6 +264,44 @@ async fn transfer_rejects_unexpected_kind() {
     writer.await.unwrap();
     let err = read_put_request(&mut server).await.unwrap_err();
     assert!(matches!(err, TransferError::UnexpectedKind { .. }));
+}
+
+#[tokio::test]
+async fn recursive_entry_frames_round_trip_succeeds() {
+    let header = EntryHeader {
+        path: "subdir/file.txt".to_string(),
+        size: 1024,
+        mode: Some(0o644),
+        is_dir: false,
+    };
+    let complete = EntryComplete;
+
+    let (mut client, mut server) = tokio::io::duplex(2048);
+
+    // Test EntryHeader
+    let write_h = tokio::spawn(async move { write_new_entry(&mut client, &header).await });
+    let read_h = tokio::spawn(async move { read_next_frame(&mut server).await });
+
+    write_h.await.unwrap().unwrap();
+    let decoded_h = read_h.await.unwrap().unwrap();
+    assert_eq!(
+        decoded_h,
+        TransferFrame::NewEntry(EntryHeader {
+            path: "subdir/file.txt".to_string(),
+            size: 1024,
+            mode: Some(0o644),
+            is_dir: false,
+        })
+    );
+
+    // Test EntryComplete
+    let (mut client, mut server) = tokio::io::duplex(2048);
+    let write_c = tokio::spawn(async move { write_entry_complete(&mut client, &complete).await });
+    let read_c = tokio::spawn(async move { read_next_frame(&mut server).await });
+
+    write_c.await.unwrap().unwrap();
+    let decoded_c = read_c.await.unwrap().unwrap();
+    assert_eq!(decoded_c, TransferFrame::EntryComplete(EntryComplete));
 }
 
 #[tokio::test]

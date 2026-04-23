@@ -38,7 +38,7 @@ if ($args -contains "help" -or $args -contains "-h" -or $args -contains "/?") {
 # --- Configuration ---
 $Repo = "shedrackgodstime/irosh"
 
-Write-Host "`n🚀 Installing irosh P2P SSH Suite for Windows..." -ForegroundColor Cyan
+Write-Host "`n[*] Installing irosh P2P SSH Suite for Windows..." -ForegroundColor Cyan
 Write-Host "--------------------------------------------------" -ForegroundColor Blue
 
 # --- 1. Detect Environment ---
@@ -48,19 +48,19 @@ if ($Arch -eq "AMD64") {
 } elseif ($Arch -eq "ARM64") {
     $TargetArch = "aarch64"
 } else {
-    Write-Error "❌ Error: Unsupported Architecture: $Arch"
+    Write-Error "[-] Error: Unsupported Architecture: $Arch"
 }
 
 $AssetName = "irosh-$TargetArch-pc-windows-msvc.tar.gz"
 $ReleaseUrl = "https://api.github.com/repos/$Repo/releases/latest"
 
 # --- 2. Resolve Latest Version ---
-Write-Host "📡 Fetching latest release info..."
+Write-Host "[*] Fetching latest release info..."
 $ReleaseInfo = Invoke-RestMethod -Uri $ReleaseUrl
 $DownloadUrl = ($ReleaseInfo.assets | Where-Object { $_.name -eq $AssetName }).browser_download_url
 
 if (-not $DownloadUrl) {
-    Write-Error "❌ Error: Could not find asset $AssetName in the latest release."
+    Write-Error "[-] Error: Could not find asset $AssetName in the latest release."
 }
 
 # --- 3. Secure Download & Unpack ---
@@ -68,10 +68,10 @@ $TmpDir = Join-Path $env:TEMP "irosh-install-$(Get-Random)"
 New-Item -ItemType Directory -Path $TmpDir | Out-Null
 $ZipPath = Join-Path $TmpDir "irosh.tar.gz"
 
-Write-Host "📥 Downloading $AssetName..."
+Write-Host "[+] Downloading $AssetName..."
 Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
 
-Write-Host "📦 Unpacking binaries..."
+Write-Host "[*] Unpacking binaries..."
 tar -xzf $ZipPath -C $TmpDir
 
 # --- 4. Smart Installation ---
@@ -82,21 +82,21 @@ if (-not (Test-Path $InstallDir)) {
 
 if ($Mode -eq "server") {
     Copy-Item (Join-Path $TmpDir "irosh-server.exe") $InstallDir -Force
-    Write-Host "✅ Installed irosh-server to $InstallDir" -ForegroundColor Green
+    Write-Host "[+] Installed irosh-server to $InstallDir" -ForegroundColor Green
 } elseif ($Mode -eq "client") {
     Copy-Item (Join-Path $TmpDir "irosh-client.exe") $InstallDir -Force
-    Write-Host "✅ Installed irosh-client to $InstallDir" -ForegroundColor Green
+    Write-Host "[+] Installed irosh-client to $InstallDir" -ForegroundColor Green
 } else {
     Copy-Item (Join-Path $TmpDir "irosh.exe") $InstallDir -Force
     Copy-Item (Join-Path $TmpDir "irosh-server.exe") $InstallDir -Force
     Copy-Item (Join-Path $TmpDir "irosh-client.exe") $InstallDir -Force
-    Write-Host "✅ Installed irosh Suite (Manager, Server & Client) to $InstallDir" -ForegroundColor Green
+    Write-Host "[+] Installed irosh Suite (Manager, Server & Client) to $InstallDir" -ForegroundColor Green
 }
 
 # Add to User PATH if not already there
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($UserPath -notlike "*$InstallDir*") {
-    Write-Host "⚙️ Adding $InstallDir to User PATH..." -ForegroundColor Yellow
+    Write-Host "[*] Adding $InstallDir to User PATH..." -ForegroundColor Yellow
     $NewPath = "$UserPath;$InstallDir"
     [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
     $env:Path = "$env:Path;$InstallDir"
@@ -105,20 +105,54 @@ if ($UserPath -notlike "*$InstallDir*") {
 # --- 5. Clean up ---
 Remove-Item $TmpDir -Recurse -Force
 
-# --- 6. Optional Service Setup ---
+# --- 6. Optional Firewall Rules (Requires Admin) ---
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($isAdmin) {
+    Write-Host "[*] Registering firewall rules for P2P connectivity..." -ForegroundColor Yellow
+    
+    $ServerExe = Join-Path $InstallDir "irosh-server.exe"
+    $ClientExe = Join-Path $InstallDir "irosh-client.exe"
+    $ManagerExe = Join-Path $InstallDir "irosh.exe"
+
+    # We use -ErrorAction SilentlyContinue to avoid noise if rules already exist
+    if (Test-Path $ServerExe) {
+        New-NetFirewallRule -DisplayName "Irosh Server (UDP-In)" -Direction Inbound -Action Allow -Protocol UDP -Program $ServerExe -ErrorAction SilentlyContinue | Out-Null
+    }
+    if (Test-Path $ClientExe) {
+        New-NetFirewallRule -DisplayName "Irosh Client (UDP-In)" -Direction Inbound -Action Allow -Protocol UDP -Program $ClientExe -ErrorAction SilentlyContinue | Out-Null
+    }
+    if (Test-Path $ManagerExe) {
+        New-NetFirewallRule -DisplayName "Irosh Manager (UDP-In)" -Direction Inbound -Action Allow -Protocol UDP -Program $ManagerExe -ErrorAction SilentlyContinue | Out-Null
+    }
+} else {
+    Write-Host "[i] Info: Skipping firewall registration (Not running as Administrator)." -ForegroundColor Gray
+}
+
+# --- 7. Optional Service Setup ---
 if ($Service) {
     if ($Mode -ne "client") {
-        Write-Host "⚙️ Setting up background service..." -ForegroundColor Yellow
+        Write-Host "[*] Setting up background service..." -ForegroundColor Yellow
         Start-Process (Join-Path $InstallDir "irosh-server.exe") -ArgumentList "service", "install" -Wait -NoNewWindow
     } else {
-        Write-Host "⚠️ Ignoring -Service flag (not installing server binary)." -ForegroundColor Red
+        Write-Host "[!] Ignoring -Service flag (not installing server binary)." -ForegroundColor Red
     }
 }
 
-# --- 6. Success & Guidance ---
-Write-Host "`n✅ Success! irosh has been installed to $InstallDir" -ForegroundColor Green
+# --- 8. Success & Identity Preview ---
+Write-Host "`n[+] Success! irosh has been installed to $InstallDir" -ForegroundColor Green
 Write-Host "--------------------------------------------------" -ForegroundColor Blue
-Write-Host "👉 To start your server, run: irosh-server --simple"
-Write-Host "👉 To list saved peers:      irosh list"
-Write-Host "👉 To uninstall:              iwr irosh.pages.dev/uninstall-ps | iex"
-Write-Host "👉 Restart your terminal to refresh the PATH.`n"
+
+# Initialize and show identity
+if (Test-Path (Join-Path $InstallDir "irosh.exe")) {
+    try {
+        & (Join-Path $InstallDir "irosh.exe") identity | Out-String | Write-Host -ForegroundColor Cyan
+    } catch {
+        # Ignore identity errors during install
+    }
+}
+
+Write-Host "`n * To start your server, run: irosh-server --simple"
+Write-Host " * To list saved peers:      irosh list"
+Write-Host " * To uninstall:              iwr irosh.pages.dev/uninstall-ps | iex"
+Write-Host " * Restart your terminal to refresh the PATH.`n"

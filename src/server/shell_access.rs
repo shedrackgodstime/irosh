@@ -44,13 +44,18 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
 pub(crate) fn configure_live_shell_context(command: &mut Command, pid: u32) {
     #[cfg(target_os = "linux")]
     {
+        // SAFETY: `pre_exec` is unsafe because it runs in the child process after `fork` but
+        // before `exec`. We must only use async-signal-safe functions. `libc::setns`,
+        // `libc::open`, and `libc::close` (used by `File`) are generally considered safe
+        // in this context on Linux.
+        // We pre-format the paths to avoid allocation inside the `pre_exec` closure.
+        let mnt_ns = format!("/proc/{pid}/ns/mnt");
+        let user_ns = format!("/proc/{pid}/ns/user");
+
         unsafe {
             command.pre_exec(move || {
-                let ns_path = format!("/proc/{pid}/ns/mnt");
-                let _ = join_linux_namespace(&ns_path, libc::CLONE_NEWNS);
-
-                let ns_path = format!("/proc/{pid}/ns/user");
-                let _ = join_linux_namespace(&ns_path, libc::CLONE_NEWUSER);
+                join_linux_namespace(&mnt_ns, "/proc/self/ns/mnt", libc::CLONE_NEWNS)?;
+                join_linux_namespace(&user_ns, "/proc/self/ns/user", libc::CLONE_NEWUSER)?;
                 Ok(())
             });
         }
@@ -59,15 +64,18 @@ pub(crate) fn configure_live_shell_context(command: &mut Command, pid: u32) {
 }
 
 #[cfg(target_os = "linux")]
-fn join_linux_namespace(ns_path: &str, nstype: i32) -> std::io::Result<()> {
+fn join_linux_namespace(ns_path: &str, self_path: &str, nstype: i32) -> std::io::Result<()> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
-    if namespace_matches_current(ns_path)? {
+    if namespace_matches(ns_path, self_path)? {
         return Ok(());
     }
 
     let fd = File::open(ns_path)?;
+    // SAFETY: The file descriptor is valid as it was just opened. `nstype` is a valid
+    // namespace type constant from libc. Joining a namespace is a privileged operation
+    // that the child process must be authorized to perform.
     let res = unsafe { libc::setns(fd.as_raw_fd(), nstype) };
     if res != 0 {
         return Err(std::io::Error::last_os_error());
@@ -76,9 +84,9 @@ fn join_linux_namespace(ns_path: &str, nstype: i32) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn namespace_matches_current(ns_path: &str) -> std::io::Result<bool> {
+fn namespace_matches(ns_path: &str, self_path: &str) -> std::io::Result<bool> {
     use std::os::linux::fs::MetadataExt;
     let target = std::fs::metadata(ns_path)?;
-    let current = std::fs::metadata("/proc/self/ns/mnt")?;
+    let current = std::fs::metadata(self_path)?;
     Ok(target.st_ino() == current.st_ino())
 }

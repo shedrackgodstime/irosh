@@ -17,6 +17,10 @@ pub(crate) async fn handle_put_request(
     request: crate::transport::transfer::PutRequest,
     context: ShellContext,
 ) -> Result<()> {
+    if request.recursive {
+        return handle_recursive_put_request(stream, request, context).await;
+    }
+
     let prepared = match prepare_put_destination(context, &request.path).await? {
         Some(prepared) => prepared,
         None => {
@@ -141,4 +145,111 @@ pub(crate) async fn handle_put_request(
         .await
         .map_err(TransportError::from)?;
     Ok(())
+}
+
+async fn handle_recursive_put_request(
+    stream: &mut IrohDuplex,
+    request: crate::transport::transfer::PutRequest,
+    context: ShellContext,
+) -> Result<()> {
+    let dest_root = context.resolve_path(&request.path).await?;
+    context.create_dir_all(&dest_root).await?;
+
+    write_put_ready(
+        stream,
+        &TransferReady {
+            size: 0,
+            mode: None,
+        },
+    )
+    .await
+    .map_err(TransportError::from)?;
+
+    let mut total_received = 0u64;
+    loop {
+        match read_next_frame(stream)
+            .await
+            .map_err(TransportError::from)?
+        {
+            TransferFrame::NewEntry(header) => {
+                let entry_path = dest_root.join(&header.path);
+                if header.is_dir {
+                    context.create_dir_all(&entry_path).await?;
+                    if let Some(mode) = header.mode {
+                        context.chmod(&entry_path.display().to_string(), mode).await;
+                    }
+                } else {
+                    if let Some(parent) = entry_path.parent() {
+                        context.create_dir_all(parent).await?;
+                    }
+                    let mut child =
+                        spawn_upload_helper(context, &entry_path.display().to_string()).await?;
+                    let mut stdin =
+                        child
+                            .stdin
+                            .take()
+                            .ok_or_else(|| ServerError::TransferFailed {
+                                details: "upload helper stdin unavailable".to_string(),
+                            })?;
+
+                    let mut file_received = 0u64;
+                    loop {
+                        match read_next_frame(stream)
+                            .await
+                            .map_err(TransportError::from)?
+                        {
+                            TransferFrame::PutChunk(chunk) => {
+                                file_received += chunk.len() as u64;
+                                stdin.write_all(&chunk).await.map_err(|e| {
+                                    ServerError::TransferFailed {
+                                        details: format!("failed to write to upload helper: {e}"),
+                                    }
+                                })?;
+                            }
+                            TransferFrame::EntryComplete(_) => break,
+                            other => {
+                                return Err(ServerError::TransferFailed {
+                                    details: format!(
+                                        "unexpected frame during recursive entry stream: {other:?}"
+                                    ),
+                                }
+                                .into());
+                            }
+                        }
+                    }
+                    total_received += file_received;
+                    drop(stdin);
+                    let _ = child.wait().await;
+
+                    if let Some(mode) = header.mode {
+                        context.chmod(&entry_path.display().to_string(), mode).await;
+                    }
+                }
+            }
+            TransferFrame::PutComplete(complete) => {
+                write_put_complete(
+                    stream,
+                    &TransferComplete {
+                        size: total_received,
+                    },
+                )
+                .await
+                .map_err(TransportError::from)?;
+                let _ = complete;
+                return Ok(());
+            }
+            TransferFrame::Error(e) => {
+                return Err(ServerError::TransferFailed {
+                    details: e.to_string(),
+                }
+                .into());
+            }
+            other => {
+                return Err(ServerError::TransferFailed {
+                    details: format!("unexpected frame during recursive upload: {other:?}"),
+                }
+                .into());
+            }
+        }
+    }
 }

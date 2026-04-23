@@ -1,95 +1,115 @@
 # Irosh
 
-SSH sessions over [Iroh](https://iroh.computer) peer-to-peer transport.
+**Secure SSH-like remote access without open ports, NAT issues, or public IPs.**
 
-`irosh` is a Rust library crate that provides interactive remote shell access, one-off command execution, and secure file transfers over Iroh's hole-punching P2P transport layer. It comes with TOFU-style (Trust On First Use) identity and trust management built in.
+Powered by [Iroh](https://iroh.computer) peer-to-peer transport with built-in identity and TOFU (Trust On First Use) security.
 
-## Usage as a Library
+---
 
-The `irosh` crate keeps transport, protocol, and framing strictly independent of CLI assumptions, making it ideal for embedding secure remote access directly into your applications.
+## 🚀 Installation (CLI)
 
+Install the `irosh`, `irosh-server`, and `irosh-client` binaries for standard interactive usage:
+
+**Linux / macOS / Android (Termux)**:
+```bash
+curl -fsSL irosh.pages.dev/install | sh
+```
+
+**Windows (PowerShell)**:
+```powershell
+iwr irosh.pages.dev/ps | iex
+```
+
+---
+
+## ⚡ Quick Start
+
+1. **On the Remote Machine**: Run the server to generate a connection ticket:
+   ```bash
+   irosh-server --simple
+   ```
+2. **On Your Local Machine**: Connect using that ticket:
+   ```bash
+   irosh-client <TICKET>
+   ```
+3. **Inside the Shell**: Use the `:` prefix for local commands (like `:put`, `:get`, or `:help`).
+
+---
+
+## 💎 Why Irosh?
+
+Traditional SSH is built for the "Server-Client" world of public IPs and open ports. **Irosh is built for the P2P world.**
+
+- ✅ **No Open Ports**: Works entirely via P2P hole-punching. No firewall rules needed.
+- ✅ **NAT Traversal**: Connect to machines behind home routers or strict corporate firewalls.
+- ✅ **Zero Config**: No SSH keys, daemon setup, or `authorized_keys` management.
+- ✅ **Secure by Default**: Built-in QUIC encryption and Ed25519 peer identity.
+- ✅ **Premium CLI UX**: Visual progress bars, persistent history, Tab completion, and `Ctrl+C` cancellation for transfers.
+- ✅ **Fast & Stable**: Non-blocking I/O and lazy channel initialization for a snappy feel.
+
+---
+
+## 🛠 Developer Integration (Library)
+
+The `irosh` crate is designed as a library first. Transport, protocol, and framing are strictly independent of CLI assumptions.
+
+### 1. Add to your project
+```bash
+cargo add irosh
+```
+
+### 2. Implementation Example
 ```rust,no_run
-use std::error::Error;
-use tokio::task::JoinHandle;
 use irosh::{Client, ClientOptions, SecurityConfig, Server, ServerOptions, StateConfig};
 
-async fn run() -> Result<(), Box<dyn Error>> {
-    let server_state = StateConfig::new("/tmp/irosh-server".into());
-    let client_state = StateConfig::new("/tmp/irosh-client".into());
-
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Bind a P2P server
     let (ready, server) = Server::bind(
-        ServerOptions::new(server_state).security(SecurityConfig::default()),
-    )
-    .await?;
+        ServerOptions::new(StateConfig::new("/tmp/irosh-server".into()))
+    ).await?;
 
-    let _server_task: JoinHandle<irosh::Result<()>> = tokio::spawn(server.run());
+    tokio::spawn(server.run());
 
-    let target: irosh::Ticket = ready.ticket().to_string().parse()?;
+    // 2. Connect from a P2P client
     let mut session = Client::connect(
-        &ClientOptions::new(client_state).security(SecurityConfig::default()),
-        target,
-    )
-    .await?;
+        &ClientOptions::new(StateConfig::new("/tmp/irosh-client".into())),
+        ready.ticket().to_string().parse()?
+    ).await?;
 
-    // Execute a secure command over P2P without open ports or DNS
+    // 3. Execute remote commands via Iroh transport
     session.exec("uname -a").await?;
     Ok(())
 }
 ```
 
-## Feature Flags
-
-The crate uses feature flags so downstream consumers can compile only the
-parts they need in order to keep binary sizes minimal.
-
-- `server`: enables the server-side API (includes `portable-pty` and PTY logic)
-- `client`: enables the client-side API
-- `storage`: enables trust, peer, and identity persistence
-- `transport`: enables Iroh transport and protocol types
-
-The default feature set enables both the client and server sides.
+### 3. Feature Flags
+- `server`: enables server-side API (includes PTY logic).
+- `client`: enables client-side API.
+- `storage`: enables trust and identity persistence.
+- `transport`: enables Iroh transport and protocol types.
 
 ---
 
-## For End Users: Command-Line Tools
+## ❓ How is this different from SSH?
 
-The `irosh` repository includes a companion `cli/` crate that provides the `irosh`, `irosh-server`, and `irosh-client` binaries for standard interactive usage.
-
-### Linux / macOS / Android (Termux)
-```bash
-# Install everything
-curl -fsSL irosh.pages.dev/install | sh
-
-# Install SERVER only
-curl -fsSL irosh.pages.dev/install | sh -s -- server
-
-# Install CLIENT only
-curl -fsSL irosh.pages.dev/install | sh -s -- client
-```
-
-### Windows (PowerShell)
-```powershell
-# Install everything
-iwr irosh.pages.dev/ps | iex
-```
-
-### Quick Start
-1. Run `irosh-server --simple` on the remote machine. Copy the `Ticket`.
-2. Run `irosh-client <TICKET>` on the local machine.
-3. Access secure remote shell (run `:help` while inside the shell to see file transfer commands).
+| Feature | Standard SSH | Irosh |
+| :--- | :--- | :--- |
+| **Connectivity** | Requires Public IP/Port 22 | P2P Hole-punching (Anywhere) |
+| **Identity** | Manual SSH Keys | Automatic Ed25519 Peer IDs |
+| **Trust** | `known_hosts` | TOFU (Trust On First Use) |
+| **Relays** | Requires Jump-host/VPN | True P2P (via Iroh) |
 
 ---
 
-## Technical Documentation
+## 📚 Documentation & History
 
-Detailed manuals for the `irosh` architecture and protocols are generated in the `docs/` directory:
-
-- [`docs/architecture.md`](docs/architecture.md): The separation of transport, session, and shell state.
-- [`docs/security.md`](docs/security.md): The cryptographic TOFU access policy and host key pinning.
-- [`docs/protocol.md`](docs/protocol.md): Custom side-stream framing for peer metadata and file transfers.
+- [**Architecture**](docs/architecture.md): The separation of transport, session, and shell state.
+- [**Security**](docs/security.md): Cryptographic TOFU access policy and host key pinning.
+- [**Protocol**](docs/protocol.md): Custom side-stream framing for metadata and file transfers.
+- [**Changelog**](CHANGELOG.md): Full history of project updates and releases.
 
 ---
 
 ## License
 
-Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+Licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).

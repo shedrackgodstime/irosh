@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use russh::{ChannelId, server};
-use tracing::warn;
+use tracing::{debug, error, info, warn};
 
 use crate::error::{Result, ServerError};
+use crate::server::transfer::ConnectionShellState;
 use crate::session::pty::{default_pty_size, pty_size};
 
 use super::ServerHandler;
@@ -27,6 +29,29 @@ struct RunningPty {
     #[cfg(unix)]
     pgid: Option<libc::pid_t>,
     shutdown: CancellationToken,
+}
+
+struct CleanupGuard {
+    channel: ChannelId,
+    pid: u32,
+    shell_state: ConnectionShellState,
+    channels: Arc<StdMutex<HashMap<ChannelId, ChannelState>>>,
+}
+
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        debug!("Performing PTY cleanup for channel {:?}", self.channel);
+        self.shell_state.clear_shell_pid_if_matches(Some(self.pid));
+
+        let mut channels = match self.channels.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("server channel state mutex poisoned during cleanup; recovering");
+                poisoned.into_inner()
+            }
+        };
+        channels.remove(&self.channel);
+    }
 }
 
 #[derive(Clone)]
@@ -68,10 +93,9 @@ impl ServerHandler {
         session: &mut server::Session,
         command: Option<&str>,
     ) -> Result<()> {
-        tracing::debug!(
+        debug!(
             "start_command called for channel {:?}, command: {:?}",
-            channel,
-            command
+            channel, command
         );
         let mut channels = self.lock_channels();
         let state_entry = channels.entry(channel).or_default();
@@ -120,10 +144,10 @@ impl ServerHandler {
             })?;
         let pid = child.process_id();
         if command.is_none() {
-            tracing::info!("Registering PRIMARY shell PID {:?} for session state", pid);
+            info!("Registering PRIMARY shell PID {:?} for session state", pid);
             self.shell_state.set_shell_pid(pid);
         } else {
-            tracing::debug!(
+            debug!(
                 "Exec command PID {:?} started (not registering as primary session PID)",
                 pid
             );
@@ -183,13 +207,19 @@ impl ServerHandler {
             })?;
 
         tokio::spawn(async move {
-            tracing::debug!("PTY reader task started for channel {:?}", channel);
+            debug!("PTY reader task started for channel {:?}", channel);
+            let _guard = CleanupGuard {
+                channel,
+                pid: pid.unwrap_or(0),
+                shell_state,
+                channels: channels_ref,
+            };
 
             #[cfg(unix)]
             if let Some(fd) = maybe_fd {
                 use tokio::io::unix::AsyncFd;
 
-                tracing::debug!("PTY reader using FD {:?} for channel {:?}", fd, channel);
+                debug!("PTY reader using FD {:?} for channel {:?}", fd, channel);
 
                 // We wrap the MasterPty's raw FD in an AsyncFd to perform
                 // non-blocking reads that are integrated with the Tokio reactor.
@@ -203,7 +233,7 @@ impl ServerHandler {
                 let async_fd = match AsyncFd::new(RawFdWrapper(fd)) {
                     Ok(fd) => Some(fd),
                     Err(err) => {
-                        tracing::error!("Failed to create AsyncFd for PTY reader: {}", err);
+                        error!("Failed to create AsyncFd for PTY reader: {}", err);
                         None
                     }
                 };
@@ -214,7 +244,7 @@ impl ServerHandler {
                         tokio::select! {
                             biased;
                             _ = task_shutdown.cancelled() => {
-                                tracing::debug!("PTY reader task cancelled for channel {:?}", channel);
+                                debug!("PTY reader task cancelled for channel {:?}", channel);
                                 return;
                             }
                             res = async_fd.readable() => {
@@ -222,30 +252,30 @@ impl ServerHandler {
                                     Ok(mut guard) => {
                                         match reader.read(&mut buf) {
                                             Ok(0) => {
-                                                tracing::debug!("PTY reader received EOF for channel {:?}", channel);
+                                                debug!("PTY reader received EOF for channel {:?}", channel);
                                                 break;
                                             }
                                             Ok(n) => {
                                                 guard.retain_ready();
                                                 let data = buf[..n].to_vec();
-                                                tracing::debug!("PTY reader read {} bytes from channel {:?}", n, channel);
+                                                debug!("PTY reader read {} bytes from channel {:?}", n, channel);
                                                 if let Err(err) = handle.data(channel, data.into()).await {
-                                                    tracing::error!("PTY reader failed to send {} bytes to channel {:?}: {:?}", n, channel, err);
+                                                    error!("PTY reader failed to send {} bytes to channel {:?}: {:?}", n, channel, err);
                                                     break;
                                                 }
-                                                tracing::debug!("PTY reader sent {} bytes to channel {:?}", n, channel);
+                                                debug!("PTY reader sent {} bytes to channel {:?}", n, channel);
                                             }
                                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                                 guard.clear_ready();
                                             }
                                             Err(err) => {
-                                                tracing::error!("PTY read error on channel {:?}: {}", channel, err);
+                                                error!("PTY read error on channel {:?}: {}", channel, err);
                                                 break;
                                             }
                                         }
                                     }
                                     Err(err) => {
-                                        tracing::error!("AsyncFd error on channel {:?}: {}", channel, err);
+                                        error!("AsyncFd error on channel {:?}: {}", channel, err);
                                         break;
                                     }
                                 }
@@ -285,7 +315,7 @@ impl ServerHandler {
                 .ok();
             }
 
-            tracing::debug!("PTY reader task waiting for child process {:?}...", pid);
+            debug!("PTY reader task waiting for child process {:?}...", pid);
             let exit_status = tokio::task::spawn_blocking(move || {
                 child
                     .wait()
@@ -296,25 +326,29 @@ impl ServerHandler {
             .await
             .unwrap_or(255);
 
-            tracing::debug!(
+            debug!(
                 "PTY reader task finishing for channel {:?} with exit code {}",
-                channel,
-                exit_status
+                channel, exit_status
             );
-            let _ = handle.exit_status_request(channel, exit_status).await;
-            let _ = handle.eof(channel).await;
-            let _ = handle.close(channel).await;
 
-            shell_state.clear_shell_pid_if_matches(pid);
-
-            let mut channels = match channels_ref.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => {
-                    warn!("server channel state mutex poisoned; recovering inner state");
-                    poisoned.into_inner()
-                }
-            };
-            channels.remove(&channel);
+            if let Err(e) = handle.exit_status_request(channel, exit_status).await {
+                warn!(
+                    "Failed to send exit status {} for channel {:?}: {:?}",
+                    exit_status, channel, e
+                );
+            }
+            if let Err(e) = handle.eof(channel).await {
+                debug!(
+                    "Failed to send EOF for channel {:?}: {:?} (likely already closed)",
+                    channel, e
+                );
+            }
+            if let Err(e) = handle.close(channel).await {
+                debug!(
+                    "Failed to send close for channel {:?}: {:?} (likely already closed)",
+                    channel, e
+                );
+            }
         });
 
         Ok(())

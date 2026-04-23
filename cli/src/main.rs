@@ -37,6 +37,8 @@ enum Commands {
     },
     /// Inspect the trust store (known host keys).
     Trust,
+    /// Show the local Peer ID and identity information.
+    Identity,
 }
 
 fn main() -> Result<()> {
@@ -113,6 +115,12 @@ fn main() -> Result<()> {
             }
             Err(e) => eprintln!("❌ Failed to read trust store: {}", e),
         },
+        Commands::Identity => {
+            let secret = storage::load_secret_key(&state).context("failed to load identity")?;
+            let public = secret.public();
+            println!("🆔 Your Peer ID: {}", public);
+            println!("📂 State Directory: {}", state.root().display());
+        }
     }
 
     Ok(())

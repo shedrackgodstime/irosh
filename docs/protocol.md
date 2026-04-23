@@ -31,17 +31,13 @@ When a user initiates a local `:put` or `:get` command, the client opens a new b
 
 File transfers use a chunked protocol to handle massive files without memory exhaustion.
 
-### Upload Protocol (`:put`)
-1. **Client -> Server**: `PutRequest` (JSON payload with remote destination path and file size).
-2. **Server -> Client**: `PutReady` (Aanck to proceed, or an `Error` frame if the target exists/is denied).
-3. **Client -> Server**: Continuous stream of `Chunk` frames (Raw binary).
-4. **Client -> Server**: `TransferComplete` (Signaling EOF).
+### Recursive Transfers (`-r`)
+For directory transfers, the protocol wraps file data in hierarchical entry markers:
+1. **EntryStart**: Sent before a new file or directory entry, containing the relative name and metadata.
+2. **Chunk**: One or more frames containing the file contents (skipped for directories).
+3. **EntryEnd**: Sent after an entry is fully transmitted.
 
-### Download Protocol (`:get`)
-1. **Client -> Server**: `GetRequest` (JSON payload with the requested remote path).
-2. **Server -> Client**: `GetReady` (Contains the probed file size, or an `Error` frame if missing).
-3. **Server -> Client**: Continuous stream of `Chunk` frames (Raw binary).
-4. **Server -> Client**: `TransferComplete` (Signaling EOF).
+This recursive nesting allows entire directory trees to be streamed over a single side-channel with atomic integrity.
 
 ### Concurrency and Integrity
 By isolating file chunks to ephemeral side-streams, the library ensures that an interrupted `CTRL-C` transfer does not crash the interactive SSH shell or leave binary garbage on the screen. Transfer streams automatically reap themselves upon TCP disconnect or EOF.

@@ -28,6 +28,8 @@ const KIND_CWD_REQUEST: u8 = 10;
 const KIND_CWD_RESPONSE: u8 = 11;
 const KIND_EXISTS_REQUEST: u8 = 12;
 const KIND_EXISTS_RESPONSE: u8 = 13;
+const KIND_NEW_ENTRY: u8 = 14;
+const KIND_ENTRY_COMPLETE: u8 = 15;
 
 fn validate_payload_limit(kind: u8, payload_len: usize) -> Result<(), TransferError> {
     let max_len = match kind {
@@ -85,6 +87,8 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
             | KIND_CWD_RESPONSE
             | KIND_EXISTS_REQUEST
             | KIND_EXISTS_RESPONSE
+            | KIND_NEW_ENTRY
+            | KIND_ENTRY_COMPLETE
     ) {
         return Err(TransferError::UnsupportedKind(kind));
     }
@@ -291,6 +295,20 @@ pub async fn read_exists_response<R: AsyncRead + Unpin>(
     read_json_frame(reader, KIND_EXISTS_RESPONSE).await
 }
 
+pub async fn write_new_entry<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    header: &crate::transport::transfer::EntryHeader,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_NEW_ENTRY, header).await
+}
+
+pub async fn write_entry_complete<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    complete: &crate::transport::transfer::EntryComplete,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_ENTRY_COMPLETE, complete).await
+}
+
 /// Reads and decodes the next transfer frame from the stream.
 pub async fn read_next_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -317,6 +335,10 @@ pub async fn read_next_frame<R: AsyncRead + Unpin>(
             &payload,
         )?)),
         KIND_EXISTS_RESPONSE => Ok(TransferFrame::ExistsResponse(serde_json::from_slice(
+            &payload,
+        )?)),
+        KIND_NEW_ENTRY => Ok(TransferFrame::NewEntry(serde_json::from_slice(&payload)?)),
+        KIND_ENTRY_COMPLETE => Ok(TransferFrame::EntryComplete(serde_json::from_slice(
             &payload,
         )?)),
         KIND_ERROR => Ok(TransferFrame::Error(serde_json::from_slice(&payload)?)),

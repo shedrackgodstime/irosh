@@ -21,6 +21,21 @@ impl Session {
     }
 
     /// Downloads one remote file or directory with progress reporting.
+    ///
+    /// This method manages the entire download lifecycle:
+    /// 1. Connects a dedicated P2P side-stream for the transfer.
+    /// 2. Performs a handshake and determines the expected size and mode.
+    /// 3. Streams the remote data (recursively if `recursive` is true).
+    /// 4. Atomic persistence: Data is written to a temporary file first and
+    ///    only moved to the final destination upon successful completion.
+    ///
+    /// The `on_progress` closure is invoked periodically as bytes are read
+    /// from the transport stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails, the remote path is not found,
+    /// or if the local filesystem prevents writing the data.
     pub async fn get_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -92,6 +107,7 @@ impl Session {
             &mut stream,
             &crate::transport::transfer::GetRequest {
                 path: remote.display().to_string(),
+                recursive: false,
             },
         )
         .await
@@ -211,7 +227,7 @@ impl Session {
         &mut self,
         remote: impl AsRef<std::path::Path>,
         local: impl AsRef<std::path::Path>,
-        on_progress: F,
+        mut on_progress: F,
     ) -> Result<()>
     where
         F: FnMut(TransferProgress) + Clone + Send + 'static,
@@ -219,65 +235,134 @@ impl Session {
         let remote_root = remote.as_ref();
         let local_root = local.as_ref();
 
-        // 1. List remote files recursively.
-        let remote_root_str = remote_root.display().to_string();
-        // Use an extremely robust command to isolate output.
-        let find_cmd = format!(
-            "cd \"{}\" && echo 'IROSH_LIST_START' && find . -type f && echo 'IROSH_LIST_END'",
-            remote_root_str
-        );
+        let mut stream = self
+            .open_transfer_stream("recursive download unavailable")
+            .await?;
 
-        let output = self.capture_exec(&find_cmd).await?;
-        if output.exit_status != 0 {
-            return Err(ClientError::DownloadFailed {
-                details: format!(
-                    "failed to list remote directory: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-            }
-            .into());
-        }
+        // 1. Send recursive GetRequest
+        crate::transport::transfer::write_get_request(
+            &mut stream,
+            &crate::transport::transfer::GetRequest {
+                path: remote_root.display().to_string(),
+                recursive: true,
+            },
+        )
+        .await
+        .map_err(TransportError::from)?;
 
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-
-        // Find markers.
-        let list_part = if let Some(start) = stdout_str.find("IROSH_LIST_START") {
-            let start = stdout_str[start..]
-                .find('\n')
-                .map(|i| start + i + 1)
-                .unwrap_or(start);
-            if let Some(end) = stdout_str.find("IROSH_LIST_END") {
-                let end = stdout_str[..end].rfind('\n').unwrap_or(end);
-                if end > start {
-                    &stdout_str[start..end]
-                } else {
-                    ""
+        // 2. Expect GetReady
+        match read_next_frame(&mut stream)
+            .await
+            .map_err(TransportError::from)?
+        {
+            TransferFrame::GetReady(_) => {}
+            TransferFrame::Error(details) => {
+                return Err(ClientError::TransferRejected {
+                    details: details.to_string(),
                 }
-            } else {
-                ""
+                .into());
             }
-        } else {
-            ""
-        };
-
-        let files: Vec<String> = list_part
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|line| line.starts_with("./") && line.len() > 2)
-            .collect();
-
-        for mut rel_path_str in files {
-            // Strip the leading "./"
-            rel_path_str = rel_path_str[2..].to_string();
-
-            let remote_file_path = remote_root.join(&rel_path_str);
-            let local_file_path = local_root.join(&rel_path_str);
-
-            self.get_file_with_progress(remote_file_path, &local_file_path, on_progress.clone())
-                .await?;
+            other => {
+                return Err(ClientError::DownloadFailed {
+                    details: format!("unexpected preflight frame: {other:?}"),
+                }
+                .into());
+            }
         }
 
-        Ok(())
+        let mut total_received = 0u64;
+        loop {
+            match read_next_frame(&mut stream)
+                .await
+                .map_err(TransportError::from)?
+            {
+                TransferFrame::NewEntry(header) => {
+                    let local_path = local_root.join(&header.path);
+                    if header.is_dir {
+                        tokio::fs::create_dir_all(&local_path).await.map_err(|e| {
+                            ClientError::FileIo {
+                                operation: "create local directory",
+                                path: local_path.clone(),
+                                source: e,
+                            }
+                        })?;
+                    } else {
+                        if let Some(parent) = local_path.parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+
+                        let temp_path = temp_transfer_path(&local_path);
+                        let mut dest = tokio::fs::File::create(&temp_path).await.map_err(|e| {
+                            ClientError::FileIo {
+                                operation: "create temp download file",
+                                path: temp_path.clone(),
+                                source: e,
+                            }
+                        })?;
+
+                        loop {
+                            match read_next_frame(&mut stream)
+                                .await
+                                .map_err(TransportError::from)?
+                            {
+                                TransferFrame::GetChunk(chunk) => {
+                                    dest.write_all(&chunk).await.map_err(|e| {
+                                        ClientError::FileIo {
+                                            operation: "write to temp download file",
+                                            path: temp_path.clone(),
+                                            source: e,
+                                        }
+                                    })?;
+                                    total_received += chunk.len() as u64;
+                                    on_progress(TransferProgress::new(total_received, 0));
+                                }
+                                TransferFrame::EntryComplete(_) => break,
+                                other => {
+                                    let _ = tokio::fs::remove_file(&temp_path).await;
+                                    return Err(ClientError::DownloadFailed {
+                                        details: format!(
+                                            "unexpected frame during recursive download stream: {other:?}"
+                                        ),
+                                    }
+                                    .into());
+                                }
+                            }
+                        }
+                        dest.flush().await.ok();
+                        drop(dest);
+                        persist_temp_file(&temp_path, &local_path).await?;
+
+                        if let Some(mode) = header.mode {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                let _ = tokio::fs::set_permissions(
+                                    &local_path,
+                                    std::fs::Permissions::from_mode(mode),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+                TransferFrame::GetComplete(complete) => {
+                    let _ = complete;
+                    return Ok(());
+                }
+                TransferFrame::Error(details) => {
+                    return Err(ClientError::TransferRejected {
+                        details: details.to_string(),
+                    }
+                    .into());
+                }
+                other => {
+                    return Err(ClientError::DownloadFailed {
+                        details: format!("unexpected frame during recursive download: {other:?}"),
+                    }
+                    .into());
+                }
+            }
+        }
     }
 
     /// Best-effort check if a remote path is a directory.

@@ -9,13 +9,14 @@ mod transfer;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use irosh::session::{RawTerminal, current_terminal_size};
+use indicatif::{ProgressBar, ProgressStyle};
+use irosh::session::{AsyncStdin, RawTerminal, current_terminal_size};
 use irosh::{
     Client, ClientOptions, PtyOptions, SecurityConfig, Session, SessionEvent, StateConfig,
 };
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*, reload};
 
 use crate::commands::{
@@ -137,8 +138,17 @@ async fn main() -> Result<()> {
     let target = Client::parse_target(options.state(), target_str)?;
 
     // 4. Connect.
-    println!("📡 Dialing P2P node...");
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈")
+            .template("{spinner:.cyan} {msg}")?,
+    );
+    pb.set_message("Dialing P2P node...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
     let session_res = Client::connect(&options, target).await;
+    pb.finish_and_clear();
 
     let mut session = match session_res {
         Ok(s) => s,
@@ -210,14 +220,25 @@ async fn main() -> Result<()> {
 
     tracing::info!("Driving session loop");
     // 7. Drive the session.
-    drive_session(session).await?;
+    let res = drive_session(session).await;
 
+    // 8. Cleanup.
+    for t in tunnels {
+        t.abort();
+    }
+
+    res?;
     Ok(())
 }
 
 async fn drive_session(mut session: Session) -> Result<()> {
     tracing::debug!("drive_session started");
+    #[cfg(unix)]
+    let mut stdin = AsyncStdin::new()?;
+
+    #[cfg(not(unix))]
     let mut stdin = tokio::io::stdin();
+
     let mut stdout = tokio::io::stdout();
     let mut stderr = tokio::io::stderr();
     let mut buf = vec![0u8; 4096];
@@ -270,6 +291,7 @@ async fn drive_session(mut session: Session) -> Result<()> {
                             let outcome = process_stdin_chunk(
                                 &mut session,
                                 &mut stdout,
+                                &mut stdin,
                                 &buf[..n],
                                 &mut state,
                             )
@@ -321,6 +343,13 @@ async fn drive_session(mut session: Session) -> Result<()> {
                             }
                             SessionEvent::Closed => {
                                 tracing::info!("Remote session closed");
+                                stdout
+                                    .write_all(
+                                        "\r\n🔒 Session closed. Returning to local shell...\r\n"
+                                            .as_bytes(),
+                                    )
+                                    .await?;
+                                stdout.flush().await?;
                                 break;
                             }
                             SessionEvent::Ignore => {
@@ -340,5 +369,6 @@ async fn drive_session(mut session: Session) -> Result<()> {
 
     tracing::info!("Disconnecting session");
     let _ = session.disconnect().await;
+
     Ok(())
 }

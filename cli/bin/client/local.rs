@@ -60,12 +60,16 @@ pub(super) struct LocalSessionState<'a> {
     pub(super) history: &'a mut crate::support::CommandHistory,
 }
 
-pub(super) async fn process_stdin_chunk(
+pub(super) async fn process_stdin_chunk<S>(
     session: &mut Session,
     stdout: &mut tokio::io::Stdout,
+    stdin: &mut S,
     chunk: &[u8],
     state: &mut LocalSessionState<'_>,
-) -> Result<InputOutcome> {
+) -> Result<InputOutcome>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
     for &byte in chunk {
         // If we are currently buffering a local command (started with ':').
         if let Some(buffer) = state.local_command.as_mut() {
@@ -86,6 +90,7 @@ pub(super) async fn process_stdin_chunk(
                         let outcome = match run_local_command(
                             session,
                             stdout,
+                            stdin,
                             &command,
                             state.transfer_context,
                         )
@@ -103,6 +108,8 @@ pub(super) async fn process_stdin_chunk(
                         if matches!(outcome, InputOutcome::Disconnect) {
                             return Ok(outcome);
                         }
+                        // Nudge the remote shell to re-print the prompt.
+                        let _ = session.send(b"\r").await;
                     }
                     8 | 127 => {
                         if buffer.len() > 1 {
@@ -240,12 +247,16 @@ pub(super) async fn process_stdin_chunk(
     Ok(InputOutcome::Continue)
 }
 
-async fn run_local_command(
+async fn run_local_command<S>(
     session: &mut Session,
     stdout: &mut tokio::io::Stdout,
+    stdin: &mut S,
     command: &str,
     transfer_context: &mut TransferContext,
-) -> Result<InputOutcome> {
+) -> Result<InputOutcome>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
     let cleaned = strip_ansi(command);
     let trimmed = cleaned.trim();
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -275,7 +286,16 @@ async fn run_local_command(
             }
             let local = args[0];
             let remote = args.get(1).copied();
-            handle_put_command(session, stdout, transfer_context, local, remote, recursive).await?;
+            handle_put_command(
+                session,
+                stdout,
+                stdin,
+                transfer_context,
+                local,
+                remote,
+                recursive,
+            )
+            .await?;
         }
         ":get" => {
             let mut recursive = false;
@@ -297,14 +317,42 @@ async fn run_local_command(
             }
             let remote = args[0];
             let local = args.get(1).copied();
-            handle_get_command(session, stdout, transfer_context, remote, local, recursive).await?;
+            handle_get_command(
+                session,
+                stdout,
+                stdin,
+                transfer_context,
+                remote,
+                local,
+                recursive,
+            )
+            .await?;
         }
-        ":help" => {
-            stdout
-                .write_all(
-                    b"Local client commands:\r\n  :pwd\r\n  :ls [path]\r\n  :cd <path>\r\n  :put [-r] <local> [remote]\r\n  :get [-r] <remote> [local]\r\n  :paths\r\n  :disconnect\r\n  :help\r\n",
-                )
-                .await?;
+        ":help" | ":?" => {
+            let help_text = r#"
+📡 Irosh Local Commands:
+  :pwd                    Print the current local working directory.
+  :ls [path]              List files in the local directory.
+  :cd <path>              Change the local working directory.
+  :paths                  Show both local and remote transfer roots.
+  :disconnect             Close the P2P session and exit.
+  :help, :?               Show this help menu.
+
+📂 File Transfers:
+  :put [-r] <src> [dst]   Upload a file or directory to the remote peer.
+  :get [-r] <src> [dst]   Download a file or directory from the remote peer.
+
+💡 Options & Examples:
+  -r, --recursive         Transfer an entire directory recursively.
+  
+  Example: :put -r ./assets /tmp/assets
+  Example: :get notes.txt ./backup.txt
+
+(Tip: Use Tab completion for local paths in :put)
+"#;
+            // Convert to CRLF for raw terminal compatibility
+            let formatted = help_text.replace("\n", "\r\n");
+            stdout.write_all(formatted.as_bytes()).await?;
         }
         ":pwd" => {
             stdout
@@ -405,7 +453,7 @@ async fn run_local_command(
         _ => {
             stdout
                 .write_all(
-                    b"Unknown local command. Type ':help' for available client commands.\r\n",
+                    b"Unknown local command. Type ':help' or ':?' for available client commands.\r\n",
                 )
                 .await?;
         }

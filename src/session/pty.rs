@@ -166,6 +166,107 @@ pub fn current_terminal_size() -> PtySize {
     default_pty_size()
 }
 
+#[cfg(unix)]
+/// A truly non-blocking asynchronous stdin reader for Unix terminals.
+///
+/// This avoids the background threads used by `tokio::io::stdin()` and
+/// ensures the process can exit immediately without waiting for a final newline.
+pub struct AsyncStdin {
+    inner: tokio::io::unix::AsyncFd<std::io::Stdin>,
+    original_flags: libc::c_int,
+}
+
+#[cfg(unix)]
+impl AsyncStdin {
+    /// Creates a new `AsyncStdin` by setting the global stdin to non-blocking mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stdin file descriptor cannot be manipulated.
+    pub fn new() -> Result<Self> {
+        use std::os::unix::io::AsRawFd;
+        let fd = std::io::stdin().as_raw_fd();
+
+        // SAFETY: We are performing standard fcntl operations to enable non-blocking I/O.
+        // We capture the original flags to ensure they can be restored on drop.
+        unsafe {
+            let original_flags = libc::fcntl(fd, libc::F_GETFL);
+            if original_flags == -1 {
+                return Err(IroshError::Client(ClientError::TerminalIo {
+                    source: std::io::Error::last_os_error(),
+                }));
+            }
+            if libc::fcntl(fd, libc::F_SETFL, original_flags | libc::O_NONBLOCK) == -1 {
+                return Err(IroshError::Client(ClientError::TerminalIo {
+                    source: std::io::Error::last_os_error(),
+                }));
+            }
+            Ok(Self {
+                inner: tokio::io::unix::AsyncFd::new(std::io::stdin())?,
+                original_flags,
+            })
+        }
+    }
+
+    /// Attempts to read data from stdin into the provided buffer.
+    pub async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::Read;
+        loop {
+            let mut guard = self.inner.readable_mut().await?;
+            match guard.try_io(|inner| inner.get_mut().read(buf)) {
+                Ok(result) => return result,
+                Err(_would_block) => continue,
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl tokio::io::AsyncRead for AsyncStdin {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        use std::io::Read;
+        let self_mut = self.get_mut();
+        loop {
+            let mut guard = match self_mut.inner.poll_read_ready(cx) {
+                std::task::Poll::Ready(Ok(g)) => g,
+                std::task::Poll::Ready(Err(e)) => return std::task::Poll::Ready(Err(e)),
+                std::task::Poll::Pending => return std::task::Poll::Pending,
+            };
+
+            match guard.try_io(|inner| {
+                let mut b = vec![0u8; buf.remaining()];
+                match inner.get_ref().read(&mut b) {
+                    Ok(n) => {
+                        buf.put_slice(&b[..n]);
+                        Ok(n)
+                    }
+                    Err(e) => Err(e),
+                }
+            }) {
+                Ok(Ok(_)) => return std::task::Poll::Ready(Ok(())),
+                Ok(Err(e)) => return std::task::Poll::Ready(Err(e)),
+                Err(_would_block) => continue,
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for AsyncStdin {
+    fn drop(&mut self) {
+        use std::os::unix::io::AsRawFd;
+        let fd = std::io::stdin().as_raw_fd();
+        // SAFETY: Best-effort restoration of the original stdin flags.
+        unsafe {
+            let _ = libc::fcntl(fd, libc::F_SETFL, self.original_flags);
+        }
+    }
+}
+
 #[cfg(not(unix))]
 /// Probes the physical terminal size. On non-Unix, defaults are returned.
 pub fn current_terminal_size() -> PtySize {

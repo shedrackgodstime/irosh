@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "irosh"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Shedrack Godstime <shedrackgodstime@gmail.com>"]
@@ -24,17 +24,13 @@ server    = ["transport", "storage", "dep:russh", "dep:portable-pty"]
 client    = ["transport", "storage", "dep:russh"]
 storage   = ["dep:serde", "dep:serde_json"]
 transport = ["dep:iroh", "dep:iroh-tickets"]
-discovery = ["transport"]
 
 [dependencies]
 # iroh: core P2P transport, endpoint management, hole-punching.
-iroh = { version = "0.97.0", optional = true, features = ["address-lookup-mdns"] }
+iroh = { version = "0.97.0", optional = true }
 
 # iroh-tickets: handling the official human-readable tickets (endpoint...).
 iroh-tickets = { version = "0.4.0", optional = true }
-
-# iroh-gossip: pub/sub protocol for peer list synchronization.
-iroh-gossip = { version = "0.97.0", optional = true }
 
 # portable-pty: cross-platform PTY allocation and process spawning.
 portable-pty = { version = "0.9.0", optional = true }
@@ -91,3 +87,10 @@ targets = [
     "x86_64-apple-darwin",
     "x86_64-pc-windows-msvc",
 ]
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
+panic = "abort"     # Abort on panic for smaller binaries
+strip = true        # Strip symbols from binary

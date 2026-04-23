@@ -66,6 +66,35 @@ pub async fn load_or_generate_identity(state: &StateConfig) -> Result<NodeIdenti
         })?
 }
 
+/// Loads the local Iroh secret key from storage.
+///
+/// Unlike `load_or_generate_identity`, this will NOT generate a new key if it's missing.
+///
+/// # Errors
+///
+/// Returns an error if the secret file does not exist or is invalid.
+pub fn load_secret_key(state: &StateConfig) -> Result<SecretKey> {
+    let path = state.root().join(SECRET_KEY_FILE);
+    if !path.exists() {
+        return Err(StorageError::FileRead {
+            path,
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "node secret not found"),
+        }
+        .into());
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|source| StorageError::FileRead {
+        path: path.clone(),
+        source,
+    })?;
+    let key = SecretKey::from_str(raw.trim()).map_err(|e| StorageError::NodeSecretInvalid {
+        path: path.clone(),
+        details: e.to_string(),
+        source: Box::new(e),
+    })?;
+    Ok(key)
+}
+
 fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<NodeIdentity> {
     ensure_key_dir(state)?;
 

@@ -13,12 +13,16 @@ pub struct PutRequest {
     pub path: String,
     pub size: u64,
     pub mode: Option<u32>,
+    #[serde(default)]
+    pub recursive: bool,
 }
 
 /// A download request from client to server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetRequest {
     pub path: String,
+    #[serde(default)]
+    pub recursive: bool,
 }
 
 /// A ready response that includes the expected file size.
@@ -28,24 +32,47 @@ pub struct TransferReady {
     pub mode: Option<u32>,
 }
 
+/// A header for a new entry in a recursive transfer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EntryHeader {
+    pub path: String,
+    pub size: u64,
+    pub mode: Option<u32>,
+    pub is_dir: bool,
+}
+
+/// A marker for the end of an entry's data in a recursive transfer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EntryComplete;
+
 /// A transfer completion marker.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransferComplete {
     pub size: u64,
 }
 
-/// A terminal transfer error.
+/// Specific codes indicating why a file transfer was terminated or rejected.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TransferFailureCode {
+    /// The remote machine does not have a live shell available to determine CWD.
     RemoteShellUnavailable,
+    /// The upload target already exists on the remote filesystem.
     TargetAlreadyExists,
+    /// The provided transfer path is invalid or malformed.
     PathInvalid,
+    /// Failed to create a directory on the remote filesystem.
     CreateDirectoryFailed,
+    /// The received byte count does not match the expected file size.
     SizeMismatch,
+    /// An unexpected protocol frame kind was received.
     UnexpectedFrame,
+    /// An external helper (like `tar`) failed during the transfer.
     HelperFailed,
+    /// Failed to atomically move the temporary file to its final destination.
     AtomicRenameFailed,
+    /// The remote server explicitly rejected the transfer request.
     Rejected,
+    /// An unrecoverable internal error occurred in the transfer engine.
     Internal,
 }
 
@@ -102,7 +129,7 @@ pub struct CwdResponse {
     pub path: String,
 }
 
-/// A request to check if a remote path exists.
+/// An request to check if a remote path exists.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExistsRequest {
     pub path: String,
@@ -129,18 +156,27 @@ pub enum TransferFrame {
     CwdResponse(CwdResponse),
     ExistsRequest(ExistsRequest),
     ExistsResponse(ExistsResponse),
+    NewEntry(EntryHeader),
+    EntryComplete(EntryComplete),
     Error(TransferFailure),
 }
 
-/// Error type for transfer framing and parsing.
+/// Low-level errors occurring during transfer framing, parsing, or transport I/O.
 #[derive(Debug)]
 pub enum TransferError {
+    /// A standard library I/O error.
     Io(std::io::Error),
+    /// The stream header does not match the expected magic bytes.
     InvalidMagic,
+    /// The remote peer is using an incompatible protocol version.
     UnsupportedVersion(u8),
+    /// An unknown or unhandled frame kind was received.
     UnsupportedKind(u8),
+    /// Received a frame kind that was invalid for the current state.
     UnexpectedKind { expected: u8, actual: u8 },
+    /// The received control payload exceeds the maximum allowed size.
     PayloadTooLarge(usize),
+    /// Failed to parse or serialize a JSON control payload.
     Json(serde_json::Error),
 }
 
