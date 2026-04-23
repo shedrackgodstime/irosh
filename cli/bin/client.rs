@@ -71,6 +71,14 @@ struct Args {
     #[arg(long)]
     peers: bool,
 
+    /// Local port forwarding (e.g. 8080:localhost:80)
+    #[arg(
+        short = 'L',
+        long = "forward",
+        value_name = "LOCAL:REMOTE_HOST:REMOTE_PORT"
+    )]
+    forward: Vec<String>,
+
     /// Enable verbose network logging to stderr.
     #[arg(short, long)]
     verbose: bool,
@@ -155,15 +163,52 @@ async fn main() -> Result<()> {
     if stdin_is_tty && stdout_is_tty {
         let size = current_terminal_size();
         let term = std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string());
+        tracing::info!("Requesting PTY size={:?} term={}", size, term);
         session.request_pty(PtyOptions::new(term, size)).await?;
     }
 
+    tracing::info!("Starting remote shell");
     session.start_shell().await?;
 
-    if stdin_is_tty && stdout_is_tty {
+    // 6.5 Setup Port Forwarding.
+    let mut tunnels = Vec::new();
+    for f in &args.forward {
+        tracing::info!("Setting up tunnel: {}", f);
+        let parts: Vec<&str> = f.split(':').collect();
+        if parts.len() != 3 {
+            eprintln!(
+                "Invalid forward specification: {}. Use LOCAL_PORT:REMOTE_HOST:REMOTE_PORT",
+                f
+            );
+            continue;
+        }
+        let local_port: u16 = parts[0].parse().context("Invalid local port")?;
+        let remote_host = parts[1].to_string();
+        let remote_port: u32 = parts[2].parse().context("Invalid remote port")?;
+
+        let local_addr = format!("127.0.0.1:{}", local_port);
+        match session
+            .local_forward(&local_addr, remote_host.clone(), remote_port)
+            .await
+        {
+            Ok((handle, bound_addr)) => {
+                println!(
+                    "🔗 Forwarding {} -> {}:{}",
+                    bound_addr, remote_host, remote_port
+                );
+                tunnels.push(handle);
+            }
+            Err(e) => {
+                eprintln!("Failed to start forward for {}: {}", f, e);
+            }
+        }
+    }
+
+    if stdin_is_tty && stdout_is_tty && !args.verbose {
         suppress_interactive_logs(&filter_handle);
     }
 
+    tracing::info!("Driving session loop");
     // 7. Drive the session.
     drive_session(session).await?;
 
@@ -171,6 +216,7 @@ async fn main() -> Result<()> {
 }
 
 async fn drive_session(mut session: Session) -> Result<()> {
+    tracing::debug!("drive_session started");
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut stderr = tokio::io::stderr();
@@ -184,6 +230,10 @@ async fn drive_session(mut session: Session) -> Result<()> {
             std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
         ),
     };
+    let mut input_state = crate::local::LocalInputState::Normal;
+
+    let history_path = dirs::home_dir().map(|p| p.join(".irosh").join("client_history"));
+    let mut history = crate::support::CommandHistory::new(history_path);
 
     #[cfg(unix)]
     let mut sigwinch = if interactive {
@@ -203,20 +253,29 @@ async fn drive_session(mut session: Session) -> Result<()> {
             res = stdin.read(&mut buf) => {
                 match res? {
                     0 => {
+                        tracing::debug!("stdin EOF");
                         session.eof().await?;
                         break;
                     }
                     n => {
+                        tracing::debug!("stdin read {} bytes", n);
                         if interactive {
+                            let mut state = crate::local::LocalSessionState {
+                                pending_line: &mut pending_line,
+                                local_command: &mut local_command,
+                                transfer_context: &mut transfer_context,
+                                input_state: &mut input_state,
+                                history: &mut history,
+                            };
                             let outcome = process_stdin_chunk(
                                 &mut session,
                                 &mut stdout,
                                 &buf[..n],
-                                &mut pending_line,
-                                &mut local_command,
-                                &mut transfer_context,
-                            ).await?;
+                                &mut state,
+                            )
+                            .await?;
                             if matches!(outcome, InputOutcome::Disconnect) {
+                                tracing::info!("Client requested disconnect via local command");
                                 break;
                             }
                         } else {
@@ -237,28 +296,49 @@ async fn drive_session(mut session: Session) -> Result<()> {
                 #[cfg(not(unix))]
                 std::future::pending::<()>().await;
             } => {
+                tracing::debug!("window resize detected");
                 let size = current_terminal_size();
                 let _ = session.resize(size).await;
             }
             // Read from remote channel and push to local stdout/stderr.
             event = session.next_event() => {
-                let Some(event) = event? else { break; };
-                match event {
-                    SessionEvent::Data(data) => {
-                        stdout.write_all(&data).await?;
-                        stdout.flush().await?;
+                match event? {
+                    Some(event) => {
+                        match event {
+                            SessionEvent::Data(data) => {
+                                tracing::debug!("Remote Data: {} bytes", data.len());
+                                stdout.write_all(&data).await?;
+                                stdout.flush().await?;
+                            }
+                            SessionEvent::ExtendedData(data, ext) => {
+                                tracing::debug!("Remote ExtendedData ({}): {} bytes", ext, data.len());
+                                stderr.write_all(&data).await?;
+                                stderr.flush().await?;
+                            }
+                            SessionEvent::ExitStatus(code) => {
+                                tracing::info!("Remote process exited with status {}", code);
+                                // Don't break immediately, wait for Closed
+                            }
+                            SessionEvent::Closed => {
+                                tracing::info!("Remote session closed");
+                                break;
+                            }
+                            SessionEvent::Ignore => {
+                                tracing::debug!("Ignoring internal session event");
+                            }
+                            _ => {}
+                        }
                     }
-                    SessionEvent::ExtendedData(data, _) => {
-                        stderr.write_all(&data).await?;
-                        stderr.flush().await?;
+                    None => {
+                        tracing::info!("Session event stream ended (None)");
+                        break;
                     }
-                    SessionEvent::ExitStatus(_) | SessionEvent::Closed => break,
-                    _ => {}
                 }
             }
         }
     }
 
+    tracing::info!("Disconnecting session");
     let _ = session.disconnect().await;
     Ok(())
 }

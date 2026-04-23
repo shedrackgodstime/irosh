@@ -6,15 +6,15 @@ use crate::transport::transfer::{
 };
 use tokio::io::AsyncReadExt;
 
+use crate::server::transfer::ShellContext;
 use crate::server::transfer::helpers::{probe_download_size, spawn_download_helper};
-use crate::server::transfer::{ShellContext, resolve_remote_path};
 
 pub(crate) async fn handle_get_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::GetRequest,
     context: ShellContext,
 ) -> Result<()> {
-    let source_path = resolve_remote_path(&request.path)?;
+    let source_path = context.resolve_path(&request.path).await?;
     let expected_size = match probe_download_size(context, &source_path).await? {
         Ok(size) => size,
         Err(failure) => {

@@ -191,7 +191,10 @@ pub fn load_all_authorized_clients(state: &StateConfig) -> Result<Vec<PublicKey>
         })?;
 
         for entry in entries {
-            let entry = entry.map_err(|source| StorageError::DirectoryEntryRead { source })?;
+            let entry = entry.map_err(|source| StorageError::DirectoryEntryRead {
+                path: clients_dir.clone(),
+                source,
+            })?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "pub") {
                 if let Ok(key) = PublicKey::read_openssh_file(&path) {
@@ -330,7 +333,10 @@ fn read_trust_dir(dir: &Path) -> Result<Vec<TrustRecord>> {
     })?;
 
     for entry in entries {
-        let entry = entry.map_err(|source| StorageError::DirectoryEntryRead { source })?;
+        let entry = entry.map_err(|source| StorageError::DirectoryEntryRead {
+            path: dir.to_path_buf(),
+            source,
+        })?;
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "pub") {
             records.push(inspect_public_key_record(path)?);

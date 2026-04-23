@@ -23,13 +23,22 @@ impl ConnectionShellState {
     }
 
     pub(crate) fn set_shell_pid(&self, pid: Option<u32>) {
-        *self.lock_shell_pid() = pid;
+        let mut guard = self.lock_shell_pid();
+        tracing::info!("Connection state update: Shell PID registered as {:?}", pid);
+        *guard = pid;
     }
 
     pub(crate) fn clear_shell_pid_if_matches(&self, pid: Option<u32>) {
         let mut guard = self.lock_shell_pid();
         if *guard == pid {
+            tracing::info!("Connection state update: Clearing shell PID {:?}", pid);
             *guard = None;
+        } else {
+            tracing::debug!(
+                "Not clearing shell PID; current={:?}, requested_clear={:?}",
+                *guard,
+                pid
+            );
         }
     }
 
@@ -57,9 +66,16 @@ pub(crate) enum ShellContext {
 impl ShellContext {
     /// Returns the context from the current connection state.
     pub(super) fn from_state(shell_state: &ConnectionShellState) -> Self {
-        match shell_state.shell_pid() {
-            Some(pid) => Self::Live { pid },
-            None => Self::Stateless,
+        let pid = shell_state.shell_pid();
+        match pid {
+            Some(pid) => {
+                tracing::info!("Transfer context: Live (shell PID {})", pid);
+                Self::Live { pid }
+            }
+            None => {
+                tracing::info!("Transfer context: Stateless (no active shell PID)");
+                Self::Stateless
+            }
         }
     }
 
@@ -73,13 +89,22 @@ impl ShellContext {
     /// Resolves the current working directory for this context.
     pub(super) async fn cwd(self) -> Result<PathBuf> {
         match self {
-            Self::Live { pid } => resolve_process_cwd(pid).await,
-            Self::Stateless => server_home_dir().ok_or_else(|| {
-                ServerError::ShellError {
+            Self::Live { pid } => {
+                let path = resolve_process_cwd(pid).await?;
+                tracing::debug!(
+                    "Resolved live shell CWD for PID {}: {}",
+                    pid,
+                    path.display()
+                );
+                Ok(path)
+            }
+            Self::Stateless => {
+                let home = server_home_dir().ok_or_else(|| ServerError::ShellError {
                     details: "could not determine server home directory".to_string(),
-                }
-                .into()
-            }),
+                })?;
+                tracing::debug!("Resolved stateless CWD (home): {}", home.display());
+                Ok(home)
+            }
         }
     }
 
@@ -154,31 +179,46 @@ impl ShellContext {
     }
 }
 
-pub(crate) fn resolve_remote_path(raw: &str) -> Result<PathBuf> {
-    if raw.trim().is_empty() {
-        return Err(ServerError::TransferFailed {
-            details: "transfer path is empty".to_string(),
-        }
-        .into());
-    }
-    let path = Path::new(raw);
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else if raw == "~" {
-        server_home_dir().ok_or_else(|| {
-            ServerError::ShellError {
-                details: "could not determine server home directory for ~ expansion".to_string(),
+impl ShellContext {
+    /// Resolves a raw remote path string into an absolute PathBuf.
+    ///
+    /// If the path is relative, it is resolved against the current working
+    /// directory of this context (either the live shell's CWD or the server home).
+    pub(crate) async fn resolve_path(self, raw: &str) -> Result<PathBuf> {
+        if raw.trim().is_empty() {
+            return Err(ServerError::TransferFailed {
+                details: "transfer path is empty".to_string(),
             }
-            .into()
-        })
-    } else if let Some(home_relative) = raw.strip_prefix("~/") {
-        let home = server_home_dir().ok_or_else(|| ServerError::ShellError {
-            details: "could not determine server home directory for ~/ expansion".to_string(),
-        })?;
-        Ok(home.join(home_relative))
-    } else {
-        let home = server_home_dir().unwrap_or_else(std::env::temp_dir);
-        Ok(home.join(path))
+            .into());
+        }
+
+        let path = Path::new(raw);
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+
+        if raw == "~" {
+            return server_home_dir().ok_or_else(|| {
+                ServerError::ShellError {
+                    details: "could not determine server home directory for ~ expansion"
+                        .to_string(),
+                }
+                .into()
+            });
+        }
+
+        if let Some(home_relative) = raw.strip_prefix("~/") {
+            let home = server_home_dir().ok_or_else(|| ServerError::ShellError {
+                details: "could not determine server home directory for ~/ expansion".to_string(),
+            })?;
+            return Ok(home.join(home_relative));
+        }
+
+        // Relative path: resolve against CWD.
+        let base = self.cwd().await?;
+        let full = base.join(path);
+        tracing::info!("Resolved remote path: '{}' -> '{}'", raw, full.display());
+        Ok(full)
     }
 }
 

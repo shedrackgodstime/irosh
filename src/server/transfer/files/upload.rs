@@ -6,11 +6,11 @@ use crate::transport::transfer::{
 };
 use tokio::io::AsyncWriteExt;
 
+use crate::server::transfer::ShellContext;
 use crate::server::transfer::helpers::{
     PreparedPutDestination, atomic_rename_failure, prepare_put_destination, spawn_upload_helper,
     target_exists_failure,
 };
-use crate::server::transfer::{ShellContext, resolve_remote_path};
 
 pub(crate) async fn handle_put_request(
     stream: &mut IrohDuplex,
@@ -20,7 +20,7 @@ pub(crate) async fn handle_put_request(
     let prepared = match prepare_put_destination(context, &request.path).await? {
         Some(prepared) => prepared,
         None => {
-            let dest_path = resolve_remote_path(&request.path)?;
+            let dest_path = context.resolve_path(&request.path).await?;
             write_transfer_error(stream, &target_exists_failure(&dest_path))
                 .await
                 .map_err(TransportError::from)?;

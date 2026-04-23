@@ -79,6 +79,7 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<NodeIdentit
         SecretKey::from_str(raw.trim()).map_err(|e| StorageError::NodeSecretInvalid {
             path: path.clone(),
             details: e.to_string(),
+            source: Box::new(e),
         })?
     } else {
         let secret_key = SecretKey::generate(&mut rand::rng());

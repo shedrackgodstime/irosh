@@ -1,9 +1,16 @@
-use crate::error::{IroshError, TransportError};
 use iroh::EndpointAddr;
 use iroh_tickets::endpoint::EndpointTicket;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+
+/// Errors that can occur when parsing or manipulating connection tickets.
+#[derive(Debug, thiserror::Error)]
+pub enum TicketError {
+    /// The ticket string format is invalid.
+    #[error("invalid connection ticket format")]
+    InvalidFormat,
+}
 
 /// A high-level representation of an irosh connection ticket.
 ///
@@ -80,7 +87,7 @@ impl fmt::Display for Ticket {
 }
 
 impl FromStr for Ticket {
-    type Err = IroshError;
+    type Err = TicketError;
 
     /// Parses an irosh ticket from either the native endpoint ticket string
     /// format or a legacy JSON endpoint-address form.
@@ -105,12 +112,12 @@ impl FromStr for Ticket {
             }
         }
 
-        Err(TransportError::TicketFormatInvalid.into())
+        Err(TicketError::InvalidFormat)
     }
 }
 
 impl TryFrom<&str> for Ticket {
-    type Error = IroshError;
+    type Error = TicketError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         value.parse()
@@ -118,7 +125,7 @@ impl TryFrom<&str> for Ticket {
 }
 
 impl TryFrom<String> for Ticket {
-    type Error = IroshError;
+    type Error = TicketError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         value.parse()

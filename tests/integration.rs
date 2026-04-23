@@ -2,6 +2,7 @@ use irosh::config::HostKeyPolicy;
 use irosh::{Client, ClientOptions, SecurityConfig, Server, ServerOptions, StateConfig};
 use std::time::Duration;
 use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Helper to create a temporary state directory for tests.
 fn temp_state(name: &str) -> StateConfig {
@@ -314,6 +315,72 @@ async fn test_recursive_directory_transfer() {
         let _ = fs::remove_dir_all(server_state.root()).await;
         let _ = fs::remove_dir_all(client_state.root()).await;
         println!("[DEBUG] Recursive integration test finished successfully. EXITING NOW.");
+    })
+    .await
+    .expect("Test timed out");
+}
+
+#[tokio::test]
+async fn test_port_forwarding() {
+    init_tracing();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let server_state = temp_state("server-tunnel");
+        let client_state = temp_state("client-tunnel");
+
+        // 1. Start an echo server on the server side to be our tunnel target
+        let echo_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_addr = echo_listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = echo_listener.accept().await {
+                let (mut reader, mut writer) = tokio::io::split(stream);
+                let _ = tokio::io::copy(&mut reader, &mut writer).await;
+            }
+        });
+
+        // 2. Start Irosh Server
+        let server_opts = ServerOptions::new(server_state.clone()).security(SecurityConfig {
+            host_key_policy: HostKeyPolicy::AcceptAll,
+        });
+        let (ready, server) = Server::bind(server_opts).await.unwrap();
+        let ticket = ready.ticket().clone();
+        let shutdown = server.shutdown_handle();
+        let server_handle = tokio::spawn(async move { server.run().await });
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // 3. Connect Irosh Client
+        let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
+            host_key_policy: HostKeyPolicy::AcceptAll,
+        });
+        let session = Client::connect(&client_opts, ticket).await.unwrap();
+
+        // 4. Setup Local Forwarding:
+        // Local (random port) -> Remote Echo Server
+        let (_, bound_addr) = session
+            .local_forward(
+                "127.0.0.1:0",
+                echo_addr.ip().to_string(),
+                echo_addr.port() as u32,
+            )
+            .await
+            .unwrap();
+
+        // 5. Test the tunnel
+        let mut tunnel_stream = tokio::net::TcpStream::connect(bound_addr).await.unwrap();
+        let msg = b"hello tunnel";
+        tunnel_stream.write_all(msg).await.unwrap();
+
+        let mut response = vec![0u8; msg.len()];
+        tunnel_stream.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, msg);
+
+        // 6. Cleanup
+        session.close().await.unwrap();
+        shutdown.close().await;
+        let _ = server_handle.await;
+        let _ = fs::remove_dir_all(server_state.root()).await;
+        let _ = fs::remove_dir_all(client_state.root()).await;
     })
     .await
     .expect("Test timed out");

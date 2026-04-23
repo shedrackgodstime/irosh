@@ -83,8 +83,8 @@ async fn connect_test_session(
 
     (
         Session {
-            handle,
-            channel,
+            handle: Arc::new(handle),
+            channel: Some(channel),
             connection: None,
             endpoint: None,
             remote_metadata: None,

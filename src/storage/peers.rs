@@ -111,7 +111,10 @@ pub fn list_peers(state: &StateConfig) -> Result<Vec<PeerProfile>> {
     })?;
 
     for entry in entries {
-        let entry = entry.map_err(|source| StorageError::DirectoryEntryRead { source })?;
+        let entry = entry.map_err(|source| StorageError::DirectoryEntryRead {
+            path: dir.clone(),
+            source,
+        })?;
         let path = entry.path();
 
         if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {

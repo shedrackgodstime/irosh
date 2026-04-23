@@ -5,7 +5,7 @@ use tokio::process::{Child, Command};
 use crate::error::{Result, ServerError};
 use crate::transport::transfer::{TransferFailure, TransferFailureCode};
 
-use super::{ShellContext, resolve_remote_path};
+use super::ShellContext;
 
 pub(super) struct PreparedPutDestination {
     pub(super) final_arg: String,
@@ -16,7 +16,7 @@ pub(super) async fn prepare_put_destination(
     context: ShellContext,
     raw_path: &str,
 ) -> Result<Option<PreparedPutDestination>> {
-    let dest_path = resolve_remote_path(raw_path)?;
+    let dest_path = context.resolve_path(raw_path).await?;
     let final_arg = dest_path.display().to_string();
 
     if !context.path_missing(&final_arg).await? {
@@ -119,11 +119,17 @@ pub(super) async fn probe_download_size(
         )));
     }
 
-    let expected_size = String::from_utf8_lossy(&size_probe.stdout)
-        .trim()
+    let raw_stdout = String::from_utf8_lossy(&size_probe.stdout);
+    let cleaned: String = raw_stdout.chars().filter(|c| c.is_ascii_digit()).collect();
+    let expected_size = cleaned
         .parse::<u64>()
         .map_err(|e| ServerError::TransferFailed {
-            details: format!("failed to parse download source size: {e}"),
+            details: format!(
+                "failed to parse download source size from raw output '{}' (cleaned to '{}'): {}",
+                raw_stdout.trim(),
+                cleaned,
+                e
+            ),
         })?;
     Ok(Ok(expected_size))
 }

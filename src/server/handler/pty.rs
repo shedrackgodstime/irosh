@@ -119,7 +119,15 @@ impl ServerHandler {
                 details: format!("failed to spawn command in PTY: {e}"),
             })?;
         let pid = child.process_id();
-        self.shell_state.set_shell_pid(pid);
+        if command.is_none() {
+            tracing::info!("Registering PRIMARY shell PID {:?} for session state", pid);
+            self.shell_state.set_shell_pid(pid);
+        } else {
+            tracing::debug!(
+                "Exec command PID {:?} started (not registering as primary session PID)",
+                pid
+            );
+        }
         let killer = child.clone_killer();
 
         let mut reader = pair
@@ -144,7 +152,9 @@ impl ServerHandler {
             // Setting it to non-blocking is required for `AsyncFd`.
             unsafe {
                 let flags = libc::fcntl(fd, libc::F_GETFL);
-                libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                if flags != -1 {
+                    let _ = libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                }
             }
         }
 

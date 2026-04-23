@@ -126,6 +126,53 @@ impl server::Handler for ServerHandler {
         Ok(true)
     }
 
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<server::Msg>,
+        host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut server::Session,
+    ) -> std::result::Result<bool, Self::Error> {
+        info!(
+            "Incoming direct-tcpip request for {}:{}",
+            host_to_connect, port_to_connect
+        );
+
+        let target = format!("{}:{}", host_to_connect, port_to_connect);
+        let stream = match tokio::net::TcpStream::connect(&target).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                warn!(
+                    "Failed to connect to direct-tcpip target {}: {}",
+                    target, err
+                );
+                return Ok(false);
+            }
+        };
+
+        let channel_id = channel.id();
+        let handle = _session.handle();
+
+        tokio::spawn(async move {
+            let (mut reader, mut writer) = tokio::io::split(stream);
+            let (mut channel_reader, mut channel_writer) = tokio::io::split(channel.into_stream());
+
+            let res = tokio::select! {
+                r = tokio::io::copy(&mut reader, &mut channel_writer) => r,
+                w = tokio::io::copy(&mut channel_reader, &mut writer) => w,
+            };
+
+            if let Err(err) = res {
+                debug!("direct-tcpip stream closed with error: {}", err);
+            }
+            let _ = handle.close(channel_id).await;
+        });
+
+        Ok(true)
+    }
+
     async fn pty_request(
         &mut self,
         channel: ChannelId,

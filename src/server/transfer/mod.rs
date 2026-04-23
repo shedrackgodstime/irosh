@@ -11,7 +11,7 @@ mod helpers;
 mod state;
 
 pub(crate) use state::ConnectionShellState;
-pub(super) use state::{ShellContext, resolve_remote_path};
+pub(super) use state::ShellContext;
 
 pub(crate) async fn handle_transfer_stream(
     send: iroh::endpoint::SendStream,

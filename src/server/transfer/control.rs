@@ -4,14 +4,14 @@ use crate::transport::transfer::{
     CwdResponse, ExistsRequest, ExistsResponse, write_cwd_response, write_exists_response,
 };
 
-use super::{ShellContext, resolve_remote_path};
+use super::ShellContext;
 
 pub(super) async fn handle_exists_request(
     stream: &mut IrohDuplex,
     request: ExistsRequest,
     context: ShellContext,
 ) -> Result<()> {
-    let resolved = resolve_remote_path(&request.path)?;
+    let resolved = context.resolve_path(&request.path).await?;
     let path_str = resolved.display().to_string();
 
     let exists = context.path_exists(&path_str).await?;

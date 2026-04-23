@@ -306,9 +306,17 @@ impl Server {
                         tracing::debug!("SSH session task finished");
                     });
                 }
-                Some(res) = sessions.join_next(), if !sessions.is_empty() => {
-                    if let Err(err) = res {
-                        warn!("SSH session task panicked or failed: {:?}", err);
+                res = sessions.join_next(), if !sessions.is_empty() => {
+                    if let Some(res) = res {
+                        match res {
+                            Ok(()) => {},
+                            Err(err) if err.is_cancelled() => {
+                                tracing::debug!("SSH session task was cancelled.");
+                            }
+                            Err(err) => {
+                                warn!("SSH session task panicked or failed: {:?}", err);
+                            }
+                        }
                     }
                 }
             }
@@ -319,11 +327,17 @@ impl Server {
             sessions.len()
         );
         while let Some(res) = sessions.join_next().await {
-            if let Err(err) = res {
-                warn!(
-                    "SSH session task panicked or failed during shutdown: {:?}",
-                    err
-                );
+            match res {
+                Ok(()) => {}
+                Err(err) if err.is_cancelled() => {
+                    tracing::debug!("SSH session task was cancelled during shutdown.");
+                }
+                Err(err) => {
+                    warn!(
+                        "SSH session task panicked or failed during shutdown: {:?}",
+                        err
+                    );
+                }
             }
         }
 
