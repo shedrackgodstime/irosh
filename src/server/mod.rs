@@ -6,11 +6,12 @@ pub(crate) mod side_streams;
 pub(crate) mod startup;
 pub(crate) mod transfer;
 
-use russh::keys::ssh_key::PublicKey;
 use russh::server;
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+use crate::auth::Authenticator;
 
 use crate::config::{SecurityConfig, StateConfig};
 use crate::error::Result;
@@ -22,12 +23,25 @@ use self::side_streams::spawn_metadata_and_transfer_acceptor;
 use self::transfer::ConnectionShellState;
 
 /// Configuration options for the irosh server.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ServerOptions {
     state: StateConfig,
     security: SecurityConfig,
-    secret: Option<String>,
+    pub(crate) secret: Option<String>,
     authorized_keys: Vec<russh::keys::ssh_key::PublicKey>,
+    authenticator: Option<Arc<dyn Authenticator>>,
+}
+
+impl Clone for ServerOptions {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            security: self.security,
+            secret: self.secret.clone(),
+            authorized_keys: self.authorized_keys.clone(),
+            authenticator: self.authenticator.clone(),
+        }
+    }
 }
 
 impl ServerOptions {
@@ -38,6 +52,7 @@ impl ServerOptions {
             security: SecurityConfig::default(),
             secret: None,
             authorized_keys: Vec::new(),
+            authenticator: None,
         }
     }
 
@@ -59,6 +74,18 @@ impl ServerOptions {
         keys: impl IntoIterator<Item = russh::keys::ssh_key::PublicKey>,
     ) -> Self {
         self.authorized_keys = keys.into_iter().collect();
+        self
+    }
+
+    /// Sets a custom authentication backend.
+    ///
+    /// This replaces the default key-only authentication with a pluggable
+    /// backend. See [`crate::auth`] for built-in options.
+    ///
+    /// If not called, the server uses [`crate::auth::KeyOnlyAuth`] with
+    /// the configured security policy (backward compatible).
+    pub fn authenticator(mut self, auth: impl Authenticator) -> Self {
+        self.authenticator = Some(Arc::new(auth));
         self
     }
 
@@ -133,8 +160,7 @@ impl ServerReady {
 pub struct Server {
     endpoint: iroh::Endpoint,
     config: Arc<server::Config>,
-    authorized_clients: Vec<PublicKey>,
-    security: SecurityConfig,
+    authenticator: Arc<dyn Authenticator>,
     state: StateConfig,
     secret: Option<String>,
     shutdown_tx: tokio::sync::mpsc::Sender<()>,
@@ -144,8 +170,7 @@ pub struct Server {
 impl fmt::Debug for Server {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Server")
-            .field("authorized_clients", &self.authorized_clients.len())
-            .field("security", &self.security)
+            .field("authenticator", &self.authenticator)
             .field("state", &self.state)
             .field("has_secret", &self.secret.is_some())
             .finish()
@@ -291,9 +316,7 @@ impl Server {
 
                     let stream = IrohDuplex::new(send, recv);
                     let handler = ServerHandler::new(
-                        self.authorized_clients.clone(),
-                        self.security,
-                        self.state.clone(),
+                        self.authenticator.clone(),
                         shell_state,
                     );
 

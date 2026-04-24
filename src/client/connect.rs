@@ -4,6 +4,7 @@ use std::time::Duration;
 use russh::client;
 
 use crate::SessionState;
+use crate::auth::Credentials;
 use crate::client::{Session, handler::ClientHandler};
 use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
 use crate::error::{ClientError, IroshError, Result};
@@ -20,6 +21,8 @@ pub struct ClientOptions {
     state: StateConfig,
     security: SecurityConfig,
     secret: Option<String>,
+    credentials: Option<Credentials>,
+    prompter: Option<Arc<dyn crate::auth::PasswordPrompter>>,
 }
 
 impl ClientOptions {
@@ -29,6 +32,8 @@ impl ClientOptions {
             state,
             security: SecurityConfig::default(),
             secret: None,
+            credentials: None,
+            prompter: None,
         }
     }
 
@@ -41,6 +46,25 @@ impl ClientOptions {
     /// Configures an optional shared secret for stealth connections.
     pub fn secret(mut self, secret: impl Into<String>) -> Self {
         self.secret = Some(secret.into());
+        self
+    }
+
+    /// Sets username + password credentials for password authentication.
+    ///
+    /// When provided, the client will attempt password authentication
+    /// if public key authentication is rejected by the server.
+    pub fn credentials(mut self, credentials: Credentials) -> Self {
+        self.credentials = Some(credentials);
+        self
+    }
+
+    /// Sets an interactive password prompter callback.
+    ///
+    /// If the server requires a password and explicit credentials were not
+    /// provided (or they failed), the client will invoke this callback
+    /// to prompt the user.
+    pub fn password_prompter(mut self, prompter: impl crate::auth::PasswordPrompter) -> Self {
+        self.prompter = Some(Arc::new(prompter));
         self
     }
 
@@ -62,6 +86,8 @@ impl ClientOptions {
 pub struct Client;
 
 impl Client {
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+    const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
     const METADATA_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
     const METADATA_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
     const DEFAULT_USER: &'static str = "irosh";
@@ -104,11 +130,22 @@ impl Client {
         let endpoint = bind_client_endpoint(identity.secret_key, alpn.clone()).await?;
 
         let connection: iroh::endpoint::Connection =
-            match endpoint.connect(target_addr, &alpn).await {
-                Ok(connection) => connection,
-                Err(err) => {
+            match tokio::time::timeout(Self::CONNECT_TIMEOUT, endpoint.connect(target_addr, &alpn))
+                .await
+            {
+                Ok(Ok(connection)) => connection,
+                Ok(Err(err)) => {
                     endpoint.close().await;
                     return Err(ClientError::ConnectFailed { source: err }.into());
+                }
+                Err(_) => {
+                    endpoint.close().await;
+                    return Err(ClientError::ConnectFailed {
+                        source: iroh::endpoint::ConnectError::from(
+                            iroh::endpoint::ConnectionError::Reset,
+                        ),
+                    }
+                    .into());
                 }
             };
         let mut state = SessionState::TransportConnected;
@@ -132,10 +169,12 @@ impl Client {
             options.security_config(),
             options.state().clone(),
         );
+        let credentials = options.credentials.clone();
+        let prompter = options.prompter.clone();
 
-        let session_result = async {
+        let session_result = tokio::time::timeout(Self::SSH_HANDSHAKE_TIMEOUT, async {
             state = SessionState::SshHandshaking;
-            let mut handle = client::connect_stream(config, stream, handler)
+            let mut handle = client::connect_stream(config, stream, handler.clone())
                 .await
                 .map_err(|e| {
                     let detail = lock_or_recover(&last_disconnect).clone();
@@ -161,13 +200,45 @@ impl Client {
                 .map_err(|e| ClientError::SshNegotiationFailed { source: e })?;
 
             if !matches!(auth_res, client::AuthResult::Success) {
-                return Err(IroshError::AuthenticationFailed);
+                // Public key auth failed. Try password if credentials are provided or prompter is set.
+                let (user, password) = if let Some(ref creds) = credentials {
+                    (creds.user.clone(), creds.password.clone())
+                } else if let Some(ref p) = prompter {
+                    let p_clone = p.clone();
+                    let u = Self::DEFAULT_USER.to_string();
+                    let pw = tokio::task::spawn_blocking(move || p_clone.prompt_password(&u))
+                        .await
+                        .ok()
+                        .flatten();
+                    match pw {
+                        Some(pw) => (Self::DEFAULT_USER.to_string(), pw),
+                        None => return Err(IroshError::AuthenticationFailed),
+                    }
+                } else {
+                    return Err(IroshError::AuthenticationFailed);
+                };
+
+                tracing::debug!("Public key auth rejected, attempting password auth");
+                let pw_res = handle
+                    .authenticate_password(user, password)
+                    .await
+                    .map_err(|e| ClientError::SshNegotiationFailed { source: e })?;
+
+                if !matches!(pw_res, client::AuthResult::Success) {
+                    return Err(IroshError::AuthenticationFailed);
+                }
             }
 
             state = SessionState::Authenticated;
-            Ok(Arc::new(handle))
-        }
-        .await;
+            Ok(Arc::new(tokio::sync::RwLock::new(handle)))
+        })
+        .await
+        .map_err(|_| {
+            IroshError::Client(ClientError::SshNegotiationFailed {
+                source: russh::Error::Disconnect, // Closest error we have for timeout here
+            })
+        })
+        .and_then(|res| res);
 
         match session_result {
             Ok(handle) => {
@@ -204,6 +275,7 @@ impl Client {
 
                 Ok(Session {
                     handle,
+                    handler,
                     channel: None,
                     connection: Some(connection),
                     endpoint: Some(endpoint),

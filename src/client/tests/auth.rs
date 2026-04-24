@@ -14,12 +14,16 @@ async fn publickey_auth_round_trip_succeeds_over_duplex_stream() {
         keys: vec![server_identity.ssh_key],
         ..Default::default()
     });
+    let authenticator: Arc<dyn crate::auth::Authenticator> =
+        Arc::new(crate::auth::KeyOnlyAuth::new(
+            SecurityConfig {
+                host_key_policy: crate::config::HostKeyPolicy::Tofu,
+            },
+            Vec::new(),
+            server_state.clone(),
+        ));
     let server_handler = ServerHandler::new(
-        Vec::new(),
-        SecurityConfig {
-            host_key_policy: crate::config::HostKeyPolicy::Tofu,
-        },
-        server_state.clone(),
+        authenticator,
         crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {
@@ -72,12 +76,16 @@ async fn publickey_auth_is_rejected_for_untrusted_client_key() {
         keys: vec![server_identity.ssh_key],
         ..Default::default()
     });
+    let authenticator: Arc<dyn crate::auth::Authenticator> =
+        Arc::new(crate::auth::KeyOnlyAuth::new(
+            SecurityConfig {
+                host_key_policy: crate::config::HostKeyPolicy::Tofu,
+            },
+            vec![authorized_identity.ssh_key.public_key().clone()],
+            server_state.clone(),
+        ));
     let server_handler = ServerHandler::new(
-        vec![authorized_identity.ssh_key.public_key().clone()],
-        SecurityConfig {
-            host_key_policy: crate::config::HostKeyPolicy::Tofu,
-        },
-        server_state.clone(),
+        authenticator,
         crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {
@@ -139,12 +147,16 @@ async fn connect_stream_fails_on_server_key_mismatch() {
         keys: vec![server_identity.ssh_key],
         ..Default::default()
     });
+    let authenticator: Arc<dyn crate::auth::Authenticator> =
+        Arc::new(crate::auth::KeyOnlyAuth::new(
+            SecurityConfig {
+                host_key_policy: crate::config::HostKeyPolicy::Tofu,
+            },
+            Vec::new(),
+            server_state.clone(),
+        ));
     let server_handler = ServerHandler::new(
-        Vec::new(),
-        SecurityConfig {
-            host_key_policy: crate::config::HostKeyPolicy::Tofu,
-        },
-        server_state.clone(),
+        authenticator,
         crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {

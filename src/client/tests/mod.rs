@@ -44,12 +44,16 @@ async fn connect_test_session(
         keys: vec![server_identity.ssh_key],
         ..Default::default()
     });
+    let authenticator: Arc<dyn crate::auth::Authenticator> =
+        Arc::new(crate::auth::KeyOnlyAuth::new(
+            SecurityConfig {
+                host_key_policy: HostKeyPolicy::Tofu,
+            },
+            Vec::new(),
+            server_state.clone(),
+        ));
     let server_handler = ServerHandler::new(
-        Vec::new(),
-        SecurityConfig {
-            host_key_policy: HostKeyPolicy::Tofu,
-        },
-        server_state.clone(),
+        authenticator,
         crate::server::transfer::ConnectionShellState::new(),
     );
     let server_task = tokio::spawn(async move {
@@ -68,6 +72,7 @@ async fn connect_test_session(
         client_state.clone(),
     );
 
+    let client_handler_clone = client_handler.clone();
     let mut handle = client::connect_stream(client_config, client_stream, client_handler)
         .await
         .unwrap();
@@ -83,7 +88,8 @@ async fn connect_test_session(
 
     (
         Session {
-            handle: Arc::new(handle),
+            handle: Arc::new(tokio::sync::RwLock::new(handle)),
+            handler: client_handler_clone,
             channel: Some(channel),
             connection: None,
             endpoint: None,

@@ -59,8 +59,6 @@ pub(super) struct LocalSessionState<'a> {
     pub(super) transfer_context: &'a mut TransferContext,
     pub(super) input_state: &'a mut LocalInputState,
     pub(super) history: &'a mut crate::support::CommandHistory,
-    pub(super) cursor_pos: &'a mut usize,
-    pub(super) last_visual_len: &'a mut usize,
 }
 
 pub(super) async fn process_stdin_chunk<S>(
@@ -90,8 +88,6 @@ where
                         state.history.reset();
                         *state.local_command = None;
                         state.pending_line.clear();
-                        *state.cursor_pos = 0;
-                        *state.last_visual_len = 0;
                         let outcome = match run_local_command(
                             session,
                             stdout,
@@ -118,23 +114,13 @@ where
                     }
                     8 | 127 => {
                         // Backspace/Delete
-                        if *state.cursor_pos > 0 {
-                            *state.cursor_pos -= 1;
-                            buffer.remove(*state.cursor_pos);
+                        if !buffer.is_empty() {
+                            buffer.pop();
                             if buffer.is_empty() {
                                 // Deleted the leading ':', exit local mode
                                 *state.local_command = None;
-                                stdout.write_all(b"\x08 \x08").await?;
-                                *state.last_visual_len = 0;
-                            } else {
-                                refresh_line(
-                                    stdout,
-                                    buffer,
-                                    *state.cursor_pos,
-                                    state.last_visual_len,
-                                )
-                                .await?;
                             }
+                            stdout.write_all(b"\x08 \x08").await?;
                             stdout.flush().await?;
                         }
                     }
@@ -242,11 +228,8 @@ where
                         }
                     }
                     _ => {
-                        // Regular character: insert at cursor
-                        buffer.insert(*state.cursor_pos, byte);
-                        *state.cursor_pos += 1;
-                        refresh_line(stdout, buffer, *state.cursor_pos, state.last_visual_len)
-                            .await?;
+                        buffer.push(byte);
+                        stdout.write_all(&[byte]).await?;
                         stdout.flush().await?;
                     }
                 },
@@ -261,68 +244,22 @@ where
                 LocalInputState::Bracketed => {
                     *state.input_state = LocalInputState::Normal;
                     let current = String::from_utf8_lossy(buffer).to_string();
-                    match byte {
-                        b'A' => {
-                            // Up arrow: History prev
-                            if let Some(new_cmd) = state.history.up(&current) {
-                                buffer.clear();
-                                buffer.extend_from_slice(new_cmd.as_bytes());
-                                *state.cursor_pos = buffer.len();
-                                refresh_line(
-                                    stdout,
-                                    buffer,
-                                    *state.cursor_pos,
-                                    state.last_visual_len,
-                                )
-                                .await?;
-                            }
-                        }
-                        b'B' => {
-                            // Down arrow: History next
-                            if let Some(new_cmd) = state.history.down() {
-                                buffer.clear();
-                                buffer.extend_from_slice(new_cmd.as_bytes());
-                                *state.cursor_pos = buffer.len();
-                                refresh_line(
-                                    stdout,
-                                    buffer,
-                                    *state.cursor_pos,
-                                    state.last_visual_len,
-                                )
-                                .await?;
-                            }
-                        }
-                        b'C' => {
-                            // Right arrow
-                            if *state.cursor_pos < buffer.len() {
-                                *state.cursor_pos += 1;
-                                stdout.write_all(b"\x1b[C").await?;
-                            }
-                        }
-                        b'D' => {
-                            // Left arrow
-                            if *state.cursor_pos > 0 {
-                                *state.cursor_pos -= 1;
-                                stdout.write_all(b"\x1b[D").await?;
-                            }
-                        }
-                        b'H' | b'1' => {
-                            // Home
-                            *state.cursor_pos = 0;
-                            // Back up the length of the buffer
-                            for _ in 0..buffer.len() {
-                                stdout.write_all(b"\x08").await?;
-                            }
-                        }
-                        b'F' | b'4' => {
-                            // End
-                            *state.cursor_pos = buffer.len();
-                            refresh_line(stdout, buffer, *state.cursor_pos, state.last_visual_len)
-                                .await?;
-                        }
-                        _ => {}
+                    let new_content = match byte {
+                        b'A' => state.history.up(&current), // Up arrow
+                        b'B' => state.history.down(),       // Down arrow
+                        _ => None,
                     };
-                    stdout.flush().await?;
+
+                    if let Some(new_cmd) = new_content {
+                        // Use robust ANSI: Clear entire line and return to start
+                        stdout.write_all(b"\x1b[2K\r").await?;
+                        // Update buffer.
+                        buffer.clear();
+                        buffer.extend_from_slice(new_cmd.as_bytes());
+                        // Print new buffer.
+                        stdout.write_all(buffer).await?;
+                        stdout.flush().await?;
+                    }
                     continue;
                 }
             }
@@ -335,8 +272,6 @@ where
             || state.pending_line.iter().all(|&b| b.is_ascii_whitespace());
         if is_start_of_line && byte == b':' {
             *state.local_command = Some(vec![byte]);
-            *state.cursor_pos = 1;
-            *state.last_visual_len = 1;
             stdout.write_all(b":").await?;
             stdout.flush().await?;
             continue;
@@ -605,34 +540,4 @@ where
 
     stdout.flush().await?;
     Ok(InputOutcome::Continue)
-}
-
-async fn refresh_line(
-    stdout: &mut tokio::io::Stdout,
-    buffer: &[u8],
-    cursor_pos: usize,
-    last_visual_len: &mut usize,
-) -> Result<()> {
-    use unicode_width::UnicodeWidthStr;
-
-    // 1. Move to start of line and clear ONLY what we previously wrote.
-    // We back up exactly 'last_visual_len' times.
-    for _ in 0..*last_visual_len {
-        stdout.write_all(b"\x08").await?;
-    }
-    stdout.write_all(b"\x1b[K").await?; // Clear from here to end of line
-
-    // 2. Print current buffer and update visual length tracking
-    let text = String::from_utf8_lossy(buffer);
-    stdout.write_all(buffer).await?;
-    *last_visual_len = UnicodeWidthStr::width(text.as_ref());
-
-    // 3. Move cursor back to the correct position from the end using visual width
-    let _head = &text[..cursor_pos];
-    let tail = &text[cursor_pos..];
-    let back = UnicodeWidthStr::width(tail);
-    for _ in 0..back {
-        stdout.write_all(b"\x08").await?;
-    }
-    Ok(())
 }

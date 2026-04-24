@@ -30,6 +30,8 @@ const KIND_EXISTS_REQUEST: u8 = 12;
 const KIND_EXISTS_RESPONSE: u8 = 13;
 const KIND_NEW_ENTRY: u8 = 14;
 const KIND_ENTRY_COMPLETE: u8 = 15;
+const KIND_COMPLETION_REQUEST: u8 = 16;
+const KIND_COMPLETION_RESPONSE: u8 = 17;
 
 fn validate_payload_limit(kind: u8, payload_len: usize) -> Result<(), TransferError> {
     let max_len = match kind {
@@ -89,6 +91,8 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
             | KIND_EXISTS_RESPONSE
             | KIND_NEW_ENTRY
             | KIND_ENTRY_COMPLETE
+            | KIND_COMPLETION_REQUEST
+            | KIND_COMPLETION_RESPONSE
     ) {
         return Err(TransferError::UnsupportedKind(kind));
     }
@@ -309,6 +313,20 @@ pub async fn write_entry_complete<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_ENTRY_COMPLETE, complete).await
 }
 
+pub async fn write_completion_request<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    req: &crate::transport::transfer::CompletionRequest,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_COMPLETION_REQUEST, req).await
+}
+
+pub async fn write_completion_response<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    res: &crate::transport::transfer::CompletionResponse,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_COMPLETION_RESPONSE, res).await
+}
+
 /// Reads and decodes the next transfer frame from the stream.
 pub async fn read_next_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -335,6 +353,12 @@ pub async fn read_next_frame<R: AsyncRead + Unpin>(
             &payload,
         )?)),
         KIND_EXISTS_RESPONSE => Ok(TransferFrame::ExistsResponse(serde_json::from_slice(
+            &payload,
+        )?)),
+        KIND_COMPLETION_REQUEST => Ok(TransferFrame::CompletionRequest(serde_json::from_slice(
+            &payload,
+        )?)),
+        KIND_COMPLETION_RESPONSE => Ok(TransferFrame::CompletionResponse(serde_json::from_slice(
             &payload,
         )?)),
         KIND_NEW_ENTRY => Ok(TransferFrame::NewEntry(serde_json::from_slice(&payload)?)),

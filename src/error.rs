@@ -31,6 +31,10 @@ pub enum TransportError {
     /// The provided connection ticket has an invalid format.
     #[error("invalid connection ticket format")]
     TicketFormatInvalid,
+
+    /// A general protocol violation or unexpected message sequence.
+    #[error("protocol violation: {details}")]
+    ProtocolError { details: String },
 }
 
 /// Storage and persistence errors.

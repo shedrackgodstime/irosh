@@ -277,7 +277,9 @@ impl Session {
                 .map_err(TransportError::from)?
             {
                 TransferFrame::NewEntry(header) => {
-                    let local_path = local_root.join(&header.path);
+                    let sanitized_rel =
+                        crate::transport::transfer::sanitize_remote_path(&header.path)?;
+                    let local_path = local_root.join(sanitized_rel);
                     if header.is_dir {
                         tokio::fs::create_dir_all(&local_path).await.map_err(|e| {
                             ClientError::FileIo {

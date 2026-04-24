@@ -141,6 +141,18 @@ pub struct ExistsResponse {
     pub exists: bool,
 }
 
+/// A request for tab completion from the remote server.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompletionRequest {
+    pub path: String,
+}
+
+/// A response containing possible completion matches.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompletionResponse {
+    pub matches: Vec<String>,
+}
+
 /// A decoded transfer frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransferFrame {
@@ -156,6 +168,8 @@ pub enum TransferFrame {
     CwdResponse(CwdResponse),
     ExistsRequest(ExistsRequest),
     ExistsResponse(ExistsResponse),
+    CompletionRequest(CompletionRequest),
+    CompletionResponse(CompletionResponse),
     NewEntry(EntryHeader),
     EntryComplete(EntryComplete),
     Error(TransferFailure),
@@ -178,6 +192,8 @@ pub enum TransferError {
     PayloadTooLarge(usize),
     /// Failed to parse or serialize a JSON control payload.
     Json(serde_json::Error),
+    /// The received path is invalid or contains forbidden components.
+    InvalidPath(String),
 }
 
 impl fmt::Display for TransferError {
@@ -202,6 +218,7 @@ impl fmt::Display for TransferError {
                 write!(f, "transfer payload too large: {} bytes", size)
             }
             TransferError::Json(err) => write!(f, "invalid transfer payload: {}", err),
+            TransferError::InvalidPath(details) => write!(f, "invalid transfer path: {}", details),
         }
     }
 }

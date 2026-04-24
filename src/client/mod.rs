@@ -46,7 +46,8 @@ impl TransferProgress {
 
 /// A high-level SSH session over Iroh transport.
 pub struct Session {
-    pub(crate) handle: Arc<client::Handle<handler::ClientHandler>>,
+    pub(crate) handle: Arc<tokio::sync::RwLock<client::Handle<handler::ClientHandler>>>,
+    pub(super) handler: handler::ClientHandler,
     channel: Option<russh::Channel<russh::client::Msg>>,
     connection: Option<iroh::endpoint::Connection>,
     endpoint: Option<iroh::Endpoint>,
@@ -148,8 +149,8 @@ impl Session {
         &mut self,
     ) -> Result<&mut russh::Channel<russh::client::Msg>> {
         if self.channel.is_none() {
-            let channel = self
-                .handle
+            let handle = self.handle.read().await;
+            let channel = handle
                 .channel_open_session()
                 .await
                 .map_err(|e| ClientError::ChannelOpenFailed { source: e })?;
@@ -171,10 +172,9 @@ impl Session {
     ///
     /// Returns an error if the command fails to start or the session is lost.
     pub async fn capture_exec(&mut self, command: &str) -> Result<ExecOutput> {
-        // Open a NEW channel for every exec request.
         // This is standard SSH behavior and avoids conflicting with the shell channel.
-        let mut channel = self
-            .handle
+        let handle = self.handle.read().await;
+        let mut channel = handle
             .channel_open_session()
             .await
             .map_err(|e| ClientError::ChannelOpenFailed { source: e })?;
@@ -248,6 +248,7 @@ impl Session {
                 let remote_host = remote_host.clone();
 
                 tokio::spawn(async move {
+                    let handle = handle.read().await;
                     let channel = match handle
                         .channel_open_direct_tcpip(
                             &remote_host,
@@ -362,7 +363,8 @@ impl Session {
         if let Some(channel) = self.channel.take() {
             let _ = channel.close().await;
         }
-        self.handle
+        let handle = self.handle.read().await;
+        handle
             .disconnect(russh::Disconnect::ByApplication, "", "en-US")
             .await
             .map_err(|e| ClientError::DisconnectFailed { source: e })?;
@@ -377,6 +379,71 @@ impl Session {
 
         self.state = SessionState::Closed;
         Ok(())
+    }
+
+    /// Requests the remote server to forward a port back to a local address.
+    ///
+    /// This corresponds to the `-R` flag in standard SSH.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request is rejected by the server.
+    pub async fn remote_forward(
+        &self,
+        remote_host: String,
+        remote_port: u32,
+        local_host: String,
+        local_port: u16,
+    ) -> Result<()> {
+        let mut handle = self.handle.write().await;
+        handle
+            .tcpip_forward(remote_host.clone(), remote_port)
+            .await
+            .map_err(|e| ClientError::TunnelFailed {
+                details: format!("server rejected remote forward request: {}", e),
+            })?;
+
+        // Register the tunnel in the handler so we know where to route it
+        // when the server opens a channel back to us.
+        self.handler
+            .register_remote_tunnel(remote_host, remote_port, local_host, local_port);
+
+        Ok(())
+    }
+
+    /// Requests tab completion matches from the remote server for the given path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails or the server rejects the request.
+    pub async fn remote_completion(&mut self, path: &str) -> Result<Vec<String>> {
+        let mut stream = self.open_transfer_stream("completion unavailable").await?;
+
+        crate::transport::transfer::write_completion_request(
+            &mut stream,
+            &crate::transport::transfer::CompletionRequest {
+                path: path.to_string(),
+            },
+        )
+        .await
+        .map_err(crate::error::TransportError::from)?;
+
+        match crate::transport::transfer::read_next_frame(&mut stream)
+            .await
+            .map_err(crate::error::TransportError::from)?
+        {
+            crate::transport::transfer::TransferFrame::CompletionResponse(res) => Ok(res.matches),
+            crate::transport::transfer::TransferFrame::Error(failure) => {
+                Err(ClientError::TransferRejected {
+                    details: failure.to_string(),
+                }
+                .into())
+            }
+            other => Err(ClientError::DownloadFailed {
+                details: format!("unexpected completion frame: {other:?}"),
+            }
+            .into()),
+        }
     }
 
     /// Closes the session, consuming it.

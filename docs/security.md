@@ -31,6 +31,14 @@ Servers must protect against unauthorized remote execution, even if an attacker 
 1. **First Connection**: The first time a new client connects, the server records the client's public identity key in its Authorized Clients list. Depending on the server configuration, this initial connection may be interactively prompted or implicitly accepted.
 2. **Authentication**: All subsequent connections require the client to successfully complete standard `publickey` SSH authentication against the pinned record. Clients presenting unknown keys are rejected with `SessionState::AuthRejected`.
 
+## Authentication Modes & Future Aims
+
+Irosh uses a pluggable authentication architecture via the `Authenticator` trait. Currently, the built-in modes support **Key-Only (TOFU)**, **Shared Password**, and **Combined** logic.
+
+**Future Aim: Per-User System Authentication (PAM)**
+While not currently implemented in the CLI, the architecture is designed to eventually support true per-user logins (e.g., `irosh-client <ticket> --user alice`) backed by the host Operating System's native users (PAM on Linux/macOS). 
+The goal of this future `SystemAuth` backend is to allow Enterprise and multi-user environments to authenticate exactly like traditional `ssh user@host`, where adding a system user immediately grants them access to Irosh without managing virtual passwords or separate `.htpasswd`-style files.
+
 ## Local State and Secrets
 
 All key material is stored on the local filesystem.

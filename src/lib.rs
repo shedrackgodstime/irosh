@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+pub mod auth;
 pub mod config;
 pub mod error;
 
@@ -22,6 +23,8 @@ pub mod session;
 
 pub use config::{SecurityConfig, StateConfig};
 pub use error::{IroshError, Result};
+
+pub use auth::{AuthMethod, Authenticator, Credentials, PasswordPrompter};
 
 #[cfg(feature = "server")]
 pub use server::{Server, ServerOptions, ServerReady, ServerShutdown};

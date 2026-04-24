@@ -63,10 +63,10 @@ async fn resolve_remote_path(
 
     if raw == "." || raw == "./" {
         let cwd = session.remote_cwd().await?;
-        return Ok(match fallback_name {
-            Some(fallback) => normalize_path(cwd.join(fallback)),
-            None => normalize_path(cwd),
-        });
+        let fallback = fallback_name.ok_or_else(|| ClientError::TransferTargetInvalid {
+            reason: "missing fallback file name",
+        })?;
+        return Ok(normalize_path(cwd.join(fallback)));
     }
 
     let path = std::path::Path::new(raw);
@@ -92,10 +92,10 @@ async fn resolve_remote_path(
 
     let cwd = session.remote_cwd().await?;
     if raw.ends_with('/') {
-        Ok(match fallback_name {
-            Some(fallback) => normalize_path(cwd.join(raw).join(fallback)),
-            None => normalize_path(cwd.join(raw)),
-        })
+        let fallback = fallback_name.ok_or_else(|| ClientError::TransferTargetInvalid {
+            reason: "missing fallback file name",
+        })?;
+        Ok(normalize_path(cwd.join(raw).join(fallback)))
     } else {
         Ok(normalize_path(cwd.join(raw)))
     }

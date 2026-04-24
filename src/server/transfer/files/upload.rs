@@ -172,18 +172,27 @@ async fn handle_recursive_put_request(
             .map_err(TransportError::from)?
         {
             TransferFrame::NewEntry(header) => {
-                let entry_path = dest_root.join(&header.path);
+                let full_path = dest_root.join(&header.path);
+                let full_path_str = full_path.display().to_string();
+
                 if header.is_dir {
-                    context.create_dir_all(&entry_path).await?;
+                    context.create_dir_all(&full_path).await?;
                     if let Some(mode) = header.mode {
-                        context.chmod(&entry_path.display().to_string(), mode).await;
+                        context.chmod(&full_path_str, mode).await;
                     }
                 } else {
-                    if let Some(parent) = entry_path.parent() {
-                        context.create_dir_all(parent).await?;
-                    }
-                    let mut child =
-                        spawn_upload_helper(context, &entry_path.display().to_string()).await?;
+                    // Use atomic rename pattern for each file in the recursive stream
+                    let prepared = match prepare_put_destination(context, &full_path_str).await? {
+                        Some(p) => p,
+                        None => {
+                            write_transfer_error(stream, &target_exists_failure(&full_path))
+                                .await
+                                .map_err(TransportError::from)?;
+                            return Ok(()); // Fail whole recursive transfer on collision
+                        }
+                    };
+
+                    let mut child = spawn_upload_helper(context, &prepared.part_arg).await?;
                     let mut stdin =
                         child
                             .stdin
@@ -193,6 +202,7 @@ async fn handle_recursive_put_request(
                             })?;
 
                     let mut file_received = 0u64;
+                    let mut entry_failed = false;
                     loop {
                         match read_next_frame(stream)
                             .await
@@ -200,11 +210,11 @@ async fn handle_recursive_put_request(
                         {
                             TransferFrame::PutChunk(chunk) => {
                                 file_received += chunk.len() as u64;
-                                stdin.write_all(&chunk).await.map_err(|e| {
-                                    ServerError::TransferFailed {
-                                        details: format!("failed to write to upload helper: {e}"),
-                                    }
-                                })?;
+                                if let Err(e) = stdin.write_all(&chunk).await {
+                                    tracing::warn!("Failed to write to upload helper: {}", e);
+                                    entry_failed = true;
+                                    break;
+                                }
                             }
                             TransferFrame::EntryComplete(_) => break,
                             other => {
@@ -217,13 +227,36 @@ async fn handle_recursive_put_request(
                             }
                         }
                     }
-                    total_received += file_received;
                     drop(stdin);
-                    let _ = child.wait().await;
+                    let output = child.wait_with_output().await.map_err(|e| {
+                        ServerError::TransferFailed {
+                            details: format!("waiting for upload helper failed: {e}"),
+                        }
+                    })?;
+
+                    if entry_failed || !output.status.success() {
+                        context.remove_file_if_present(&prepared.part_arg).await;
+                        return Err(ServerError::TransferFailed {
+                            details: "recursive entry upload failed".to_string(),
+                        }
+                        .into());
+                    }
+
+                    // Perform atomic rename
+                    if !context
+                        .rename(&prepared.part_arg, &prepared.final_arg)
+                        .await?
+                    {
+                        return Err(ServerError::TransferFailed {
+                            details: format!("atomic rename failed for {}", prepared.final_arg),
+                        }
+                        .into());
+                    }
 
                     if let Some(mode) = header.mode {
-                        context.chmod(&entry_path.display().to_string(), mode).await;
+                        context.chmod(&prepared.final_arg, mode).await;
                     }
+                    total_received += file_received;
                 }
             }
             TransferFrame::PutComplete(complete) => {

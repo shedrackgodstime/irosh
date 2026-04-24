@@ -323,8 +323,6 @@ async fn drive_session(mut session: Session) -> Result<()> {
         workspace_root: initial_cwd,
     };
     let mut input_state = crate::local::LocalInputState::Normal;
-    let mut cursor_pos = 0usize;
-    let mut last_visual_len = 0usize;
 
     let history_path = dirs::home_dir().map(|p| p.join(".irosh").join("client_history"));
     let mut history = crate::support::CommandHistory::new(history_path);
@@ -360,8 +358,6 @@ async fn drive_session(mut session: Session) -> Result<()> {
                                 transfer_context: &mut transfer_context,
                                 input_state: &mut input_state,
                                 history: &mut history,
-                                cursor_pos: &mut cursor_pos,
-                                last_visual_len: &mut last_visual_len,
                             };
                             let outcome = process_stdin_chunk(
                                 &mut session,
@@ -404,34 +400,11 @@ async fn drive_session(mut session: Session) -> Result<()> {
                         match event {
                             SessionEvent::Data(data) => {
                                 tracing::debug!("Remote Data: {} bytes", data.len());
-                                // Update pending_line to synchronize our local command detection
-                                // with the actual cursor position on the remote side.
-                                for &b in &data {
-                                    if b == b'\n' || b == b'\r' {
-                                        pending_line.clear();
-                                    } else {
-                                        pending_line.push(b);
-                                        // Capped at 1024 bytes to prevent OOM on massive lines
-                                        if pending_line.len() > 1024 {
-                                            pending_line.remove(0);
-                                        }
-                                    }
-                                }
                                 stdout.write_all(&data).await?;
                                 stdout.flush().await?;
                             }
                             SessionEvent::ExtendedData(data, ext) => {
                                 tracing::debug!("Remote ExtendedData ({}): {} bytes", ext, data.len());
-                                for &b in &data {
-                                    if b == b'\n' || b == b'\r' {
-                                        pending_line.clear();
-                                    } else {
-                                        pending_line.push(b);
-                                        if pending_line.len() > 1024 {
-                                            pending_line.remove(0);
-                                        }
-                                    }
-                                }
                                 stderr.write_all(&data).await?;
                                 stderr.flush().await?;
                             }

@@ -15,10 +15,7 @@ impl CommandHistory {
         let mut entries = Vec::new();
         if let Some(ref p) = path {
             if let Ok(content) = fs::read_to_string(p) {
-                // Only load the last 500 lines to keep the client responsive
-                let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-                let start = lines.len().saturating_sub(500);
-                entries = lines[start..].to_vec();
+                entries = content.lines().map(|s| s.to_string()).collect();
             }
         }
 

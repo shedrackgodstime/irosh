@@ -10,6 +10,9 @@ use crate::config::{SecurityConfig, StateConfig};
 use crate::error::IroshError;
 use crate::storage::trust::write_known_server;
 
+/// A registry mapping (remote_host, remote_port) to (local_host, local_port)
+type TunnelRegistry = Arc<StdMutex<std::collections::HashMap<(String, u32), (String, u16)>>>;
+
 /// Handles incoming connection verification events from the SSH server.
 #[derive(Clone)]
 pub struct ClientHandler {
@@ -18,6 +21,7 @@ pub struct ClientHandler {
     last_disconnect: Arc<StdMutex<Option<String>>>,
     security: SecurityConfig,
     state: StateConfig,
+    remote_tunnels: TunnelRegistry,
 }
 
 impl ClientHandler {
@@ -35,6 +39,20 @@ impl ClientHandler {
             last_disconnect,
             security,
             state,
+            remote_tunnels: Arc::new(StdMutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Registers a mapping for an incoming remote port forward.
+    pub(crate) fn register_remote_tunnel(
+        &self,
+        remote_host: String,
+        remote_port: u32,
+        local_host: String,
+        local_port: u16,
+    ) {
+        if let Ok(mut tunnels) = self.remote_tunnels.lock() {
+            tunnels.insert((remote_host, remote_port), (local_host, local_port));
         }
     }
 
@@ -142,5 +160,52 @@ impl client::Handler for ClientHandler {
             DisconnectReason::ReceivedDisconnect(_) => Ok(()),
             DisconnectReason::Error(err) => Err(err),
         }
+    }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let target = {
+            let tunnels = self.remote_tunnels.lock().map_err(|_| {
+                IroshError::Client(crate::error::ClientError::TunnelFailed {
+                    details: "mutex poisoned".to_string(),
+                })
+            })?;
+            // We check for (host, port) match.
+            tunnels
+                .get(&(connected_address.to_string(), connected_port))
+                .or_else(|| {
+                    // Also try with "0.0.0.0" or "localhost" if exact host doesn't match
+                    // but port does.
+                    tunnels
+                        .iter()
+                        .find(|((_, p), _)| *p == connected_port)
+                        .map(|(_, target)| target)
+                })
+                .cloned()
+        };
+
+        if let Some((local_host, local_port)) = target {
+            tokio::spawn(async move {
+                if let Ok(mut stream) =
+                    tokio::net::TcpStream::connect(format!("{}:{}", local_host, local_port)).await
+                {
+                    let mut channel_stream = channel.into_stream();
+                    let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut stream).await;
+                }
+            });
+        } else {
+            warn!(
+                "Received unexpected remote forward request for {}:{}",
+                connected_address, connected_port
+            );
+        }
+        Ok(())
     }
 }

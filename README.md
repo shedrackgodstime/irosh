@@ -42,7 +42,7 @@ Traditional SSH is built for the "Server-Client" world of public IPs and open po
 
 - ✅ **No Open Ports**: Works entirely via P2P hole-punching. No firewall rules needed.
 - ✅ **NAT Traversal**: Connect to machines behind home routers or strict corporate firewalls.
-- ✅ **Zero Config**: No SSH keys, daemon setup, or `authorized_keys` management.
+- ✅ **Flexible Authentication**: Supports zero-config Key/TOFU policies or Shared Password verification (with future aims for true OS System users).
 - ✅ **Secure by Default**: Built-in QUIC encryption and Ed25519 peer identity.
 - ✅ **Premium CLI UX**: Visual progress bars, persistent history, Tab completion, and `Ctrl+C` cancellation for transfers.
 - ✅ **Fast & Stable**: Non-blocking I/O and lazy channel initialization for a snappy feel.

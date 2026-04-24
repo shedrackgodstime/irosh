@@ -66,6 +66,17 @@ pub(crate) async fn handle_transfer_stream(
             }
             Ok(())
         }
+        Ok(TransferFrame::CompletionRequest(req)) => {
+            if let Err(err) = control::handle_completion_request(&mut stream, req, context).await {
+                warn!("Completion request handler failed: {}", err);
+                let _ = write_transfer_error(
+                    &mut stream,
+                    &TransferFailure::new(TransferFailureCode::Internal, best_error_message(&err)),
+                )
+                .await;
+            }
+            Ok(())
+        }
         Ok(other) => {
             write_transfer_error(
                 &mut stream,

@@ -5,38 +5,34 @@ mod pty;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard};
 
-use russh::keys::ssh_key::PublicKey;
 use russh::{Channel, ChannelId, server};
+use russh::{MethodKind, MethodSet};
 use tracing::{debug, info, warn};
 
-use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
-use crate::error::Result;
+use crate::auth::{AuthMethod, Authenticator};
 use crate::server::ConnectionShellState;
-use crate::storage::trust::write_authorized_client;
 
 use self::pty::ChannelState;
 
 #[derive(Clone)]
 pub(crate) struct ServerHandler {
     channels: Arc<StdMutex<HashMap<ChannelId, ChannelState>>>,
-    authorized_clients: Arc<StdMutex<Vec<PublicKey>>>,
-    security: SecurityConfig,
-    state: StateConfig,
+    /// Tracks which channels are being handled via streams (e.g. port forwarding)
+    /// to avoid double-processing in the data() handler.
+    streamed_channels: Arc<StdMutex<std::collections::HashSet<ChannelId>>>,
+    authenticator: Arc<dyn Authenticator>,
     shell_state: ConnectionShellState,
 }
 
 impl ServerHandler {
     pub(crate) fn new(
-        authorized_clients: Vec<PublicKey>,
-        security: SecurityConfig,
-        state: StateConfig,
+        authenticator: Arc<dyn Authenticator>,
         shell_state: ConnectionShellState,
     ) -> Self {
         Self {
             channels: Arc::new(StdMutex::new(HashMap::new())),
-            authorized_clients: Arc::new(StdMutex::new(authorized_clients)),
-            security,
-            state,
+            streamed_channels: Arc::new(StdMutex::new(std::collections::HashSet::new())),
+            authenticator,
             shell_state,
         }
     }
@@ -51,52 +47,21 @@ impl ServerHandler {
         }
     }
 
-    fn lock_authorized_clients(&self) -> MutexGuard<'_, Vec<PublicKey>> {
-        match self.authorized_clients.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                warn!("authorized client state mutex poisoned; recovering inner state");
-                poisoned.into_inner()
+    /// Builds a `MethodSet` of the remaining auth methods after excluding `used`.
+    fn remaining_methods(&self, used: AuthMethod) -> Option<MethodSet> {
+        let supported = self.authenticator.supported_methods();
+        let remaining: Vec<_> = supported.into_iter().filter(|m| *m != used).collect();
+        if remaining.is_empty() {
+            None
+        } else {
+            let mut set = MethodSet::empty();
+            for m in remaining {
+                match m {
+                    AuthMethod::PublicKey => set.push(MethodKind::PublicKey),
+                    AuthMethod::Password => set.push(MethodKind::Password),
+                }
             }
-        }
-    }
-
-    fn authenticate_client(&self, key: &russh::keys::ssh_key::PublicKey) -> Result<server::Auth> {
-        let fingerprint = key
-            .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
-            .to_string();
-
-        if self.security.host_key_policy == HostKeyPolicy::AcceptAll {
-            info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
-            return Ok(server::Auth::Accept);
-        }
-
-        let mut authorized = self.lock_authorized_clients();
-
-        // 1. Check if we already have this key or ANY other keys authorized.
-        if !authorized.is_empty() {
-            if authorized.contains(key) {
-                info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
-                return Ok(server::Auth::Accept);
-            }
-
-            warn!(%fingerprint, "Client key not in authorized list. Rejecting connection.");
-            return Ok(server::Auth::reject());
-        }
-
-        // 2. No authorized keys yet. Check policy for new keys.
-        match self.security.host_key_policy {
-            HostKeyPolicy::Strict => {
-                warn!(%fingerprint, "Strict policy: No pre-authorized keys found. Rejecting connection.");
-                Ok(server::Auth::reject())
-            }
-            HostKeyPolicy::Tofu => {
-                info!(%fingerprint, "Tofu policy: No pre-authorized keys found. Trusting first client.");
-                let _event = write_authorized_client(&self.state, &fingerprint, key)?;
-                authorized.push(key.clone());
-                Ok(server::Auth::Accept)
-            }
-            HostKeyPolicy::AcceptAll => unreachable!(),
+            Some(set)
         }
     }
 }
@@ -106,11 +71,32 @@ impl server::Handler for ServerHandler {
 
     async fn auth_publickey(
         &mut self,
-        _user: &str,
+        user: &str,
         key: &russh::keys::ssh_key::PublicKey,
     ) -> std::result::Result<server::Auth, Self::Error> {
-        debug!("auth_publickey request");
-        self.authenticate_client(key)
+        debug!("auth_publickey request for user '{}'", user);
+        match self.authenticator.check_public_key(user, key)? {
+            true => Ok(server::Auth::Accept),
+            false => Ok(server::Auth::Reject {
+                proceed_with_methods: self.remaining_methods(AuthMethod::PublicKey),
+                partial_success: false,
+            }),
+        }
+    }
+
+    async fn auth_password(
+        &mut self,
+        user: &str,
+        password: &str,
+    ) -> std::result::Result<server::Auth, Self::Error> {
+        debug!("auth_password request for user '{}'", user);
+        match self.authenticator.check_password(user, password)? {
+            true => Ok(server::Auth::Accept),
+            false => Ok(server::Auth::Reject {
+                proceed_with_methods: self.remaining_methods(AuthMethod::Password),
+                partial_success: false,
+            }),
+        }
     }
 
     async fn channel_open_session(
@@ -141,7 +127,7 @@ impl server::Handler for ServerHandler {
         );
 
         let target = format!("{}:{}", host_to_connect, port_to_connect);
-        let stream = match tokio::net::TcpStream::connect(&target).await {
+        let mut stream = match tokio::net::TcpStream::connect(&target).await {
             Ok(stream) => stream,
             Err(err) => {
                 warn!(
@@ -154,19 +140,15 @@ impl server::Handler for ServerHandler {
 
         let channel_id = channel.id();
         let handle = _session.handle();
+        {
+            if let Ok(mut streamed) = self.streamed_channels.lock() {
+                streamed.insert(channel_id);
+            }
+        }
 
         tokio::spawn(async move {
-            let (mut reader, mut writer) = tokio::io::split(stream);
-            let (mut channel_reader, mut channel_writer) = tokio::io::split(channel.into_stream());
-
-            let res = tokio::select! {
-                r = tokio::io::copy(&mut reader, &mut channel_writer) => r,
-                w = tokio::io::copy(&mut channel_reader, &mut writer) => w,
-            };
-
-            if let Err(err) = res {
-                debug!("direct-tcpip stream closed with error: {}", err);
-            }
+            let mut channel_stream = channel.into_stream();
+            let _ = tokio::io::copy_bidirectional(&mut stream, &mut channel_stream).await;
             let _ = handle.close(channel_id).await;
         });
 
@@ -235,6 +217,16 @@ impl server::Handler for ServerHandler {
         data: &[u8],
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
+        // If this channel is being handled by a stream (into_stream),
+        // we MUST NOT consume the data here or the stream will be starved.
+        {
+            if let Ok(streamed) = self.streamed_channels.lock() {
+                if streamed.contains(&channel) {
+                    return Ok(());
+                }
+            }
+        }
+
         debug!(
             "data received for channel {:?}: {} bytes",
             channel,
@@ -275,6 +267,11 @@ impl server::Handler for ServerHandler {
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
         debug!("channel_close for channel {:?}", channel);
+        {
+            if let Ok(mut streamed) = self.streamed_channels.lock() {
+                streamed.remove(&channel);
+            }
+        }
         self.close_channel(channel);
         Ok(())
     }
