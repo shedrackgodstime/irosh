@@ -51,8 +51,8 @@ pub enum Commands {
     /// Manage security trust and authorized keys.
     Trust(commands::trust::TrustArgs),
 
-    /// Show local peer identity and fingerprints.
-    Identity,
+    /// Manage local peer identity (show, rotate).
+    Identity(commands::identity::IdentityArgs),
 
     /// Show current node status and active sessions.
     Status,
@@ -62,6 +62,9 @@ pub enum Commands {
 
     /// Manage background services and system integration.
     System(commands::system::SystemArgs),
+
+    /// Set or update the server's authentication password.
+    Passwd(commands::passwd::PasswdArgs),
 }
 
 #[tokio::main]
@@ -98,8 +101,8 @@ async fn main() -> Result<()> {
             Commands::Trust(trust_args) => {
                 commands::trust::exec(trust_args.clone(), &args).await?;
             }
-            Commands::Identity => {
-                commands::identity::exec(&args).await?;
+            Commands::Identity(identity_args) => {
+                commands::identity::exec(identity_args.clone(), &args).await?;
             }
             Commands::Status => {
                 commands::status::exec(&args).await?;
@@ -109,6 +112,9 @@ async fn main() -> Result<()> {
             }
             Commands::System(system_args) => {
                 commands::system::exec(system_args.clone(), &args).await?;
+            }
+            Commands::Passwd(passwd_args) => {
+                commands::passwd::exec(passwd_args.clone(), &args).await?;
             }
         },
         (None, None) => {

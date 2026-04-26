@@ -1,8 +1,9 @@
 use crate::Args as GlobalArgs;
 use anyhow::{Context, Result};
 use clap::Args;
+use irosh::storage::load_shadow_file;
 use irosh::{SecurityConfig, Server, ServerOptions, StateConfig, config::HostKeyPolicy};
-use tracing::{info, info_span};
+use tracing::{info, info_span, warn};
 
 #[derive(Args, Debug, Clone)]
 pub struct HostArgs {
@@ -69,26 +70,41 @@ pub async fn exec(host_args: HostArgs, global_args: &GlobalArgs) -> Result<()> {
 
     // 3.5 Configure Authentication Backend.
     let mut auth_mode = host_args.auth_mode.to_lowercase();
+    let shadow_hash = load_shadow_file(&state)?;
 
-    // If a password is provided but mode is still default 'key', 
+    if host_args.auth_password.is_some() {
+        warn!("The --auth-password flag is deprecated and insecure. Use 'irosh passwd' instead.");
+    }
+
+    // If a password or shadow hash is provided but mode is still default 'key',
     // automatically switch to 'password' for convenience.
-    if host_args.auth_password.is_some() && auth_mode == "key" {
+    if (host_args.auth_password.is_some() || shadow_hash.is_some()) && auth_mode == "key" {
         auth_mode = "password".to_string();
     }
 
     match auth_mode.as_str() {
         "password" => {
-            let password = host_args
-                .auth_password
-                .context("The --auth-password flag is required when --auth-mode=password")?;
-            options = options.authenticator(irosh::auth::PasswordAuth::new(password));
+            let hash = if let Some(hash) = shadow_hash {
+                hash
+            } else {
+                let password = host_args
+                    .auth_password
+                    .context("No password configured. Run 'irosh passwd' or provide --auth-password (insecure).")?;
+                irosh::auth::hash_password(&password)?
+            };
+            options = options.authenticator(irosh::auth::PasswordAuth::new(hash));
         }
         "combined" => {
-            let password = host_args
-                .auth_password
-                .context("The --auth-password flag is required when --auth-mode=combined")?;
+            let hash = if let Some(hash) = shadow_hash {
+                hash
+            } else {
+                let password = host_args
+                    .auth_password
+                    .context("No password configured. Run 'irosh passwd' or provide --auth-password (insecure).")?;
+                irosh::auth::hash_password(&password)?
+            };
             let key_auth = irosh::auth::KeyOnlyAuth::new(security, authorized_keys, state.clone());
-            let pass_auth = irosh::auth::PasswordAuth::new(password);
+            let pass_auth = irosh::auth::PasswordAuth::new(hash);
             options = options.authenticator(irosh::auth::CombinedAuth::new(key_auth, pass_auth));
         }
         "key" => {}
@@ -96,7 +112,6 @@ pub async fn exec(host_args: HostArgs, global_args: &GlobalArgs) -> Result<()> {
             anyhow::bail!("Invalid auth mode: {auth_mode}. Valid options: key, password, combined.")
         }
     }
-
 
     // 4. Start the irosh server.
     let (ready, server) = Server::bind(options).await?;

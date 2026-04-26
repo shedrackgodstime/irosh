@@ -69,9 +69,17 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     let alpn = crate::transport::iroh::derive_alpn(options.secret_value());
     let transport = bind_server_endpoint(identity.secret_key, alpn).await?;
 
+    // Generate a stable ticket by using only NodeId and Relay information.
+    // Transient direct addresses are omitted to ensure the ticket string
+    // remains identical across server restarts and network changes.
+    let mut stable_addr = iroh::EndpointAddr::new(transport.addr.id);
+    if let Some(relay_url) = transport.addr.relay_urls().next() {
+        stable_addr = stable_addr.with_relay_url(relay_url.clone());
+    }
+
     let startup = ServerReady {
         endpoint_id: transport.endpoint_id,
-        ticket: crate::transport::ticket::Ticket::new(transport.addr),
+        ticket: crate::transport::ticket::Ticket::new(stable_addr),
         relay_urls: transport.relay_urls,
         direct_addresses: transport.direct_addresses,
         host_key_openssh: server_pub

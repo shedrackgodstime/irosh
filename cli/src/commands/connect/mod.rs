@@ -9,7 +9,7 @@ use irosh::{
     Client, ClientOptions, PtyOptions, SecurityConfig, Session, SessionEvent, StateConfig,
 };
 use std::io::IsTerminal;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use tracing_subscriber::{EnvFilter, reload};
 
@@ -160,7 +160,6 @@ where
         Ok(s) => s,
         Err(e) => handle_connect_error(e, &options).await?,
     };
-
 
     maybe_autosave_alias(&session, &options, &connect_args.target)?;
 

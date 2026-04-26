@@ -134,3 +134,19 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<NodeIdentit
         ssh_key,
     })
 }
+/// Deletes the local secret key from storage.
+///
+/// This is used to "rotate" the node identity. Returns `true` if a file was deleted,
+/// `false` if it didn't exist.
+pub fn delete_secret_key(state: &StateConfig) -> Result<bool> {
+    let path = state.root().join(SECRET_KEY_FILE);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|source| StorageError::FileWrite {
+            path: path.clone(),
+            source,
+        })?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}

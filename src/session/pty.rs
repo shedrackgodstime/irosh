@@ -372,7 +372,8 @@ impl RawTerminal {
             let original_mode = mode;
             // Disable line input, echo, and signals (processed input).
             // Enable virtual terminal input for VT100/Xterm sequences.
-            let raw_mode = (mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+            let raw_mode = (mode
+                & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
                 | ENABLE_VIRTUAL_TERMINAL_INPUT;
 
             if SetConsoleMode(handle, raw_mode) == 0 {
@@ -412,4 +413,3 @@ impl Drop for RawTerminal {
 pub fn map_sig(_signal: russh::Sig) -> Option<i32> {
     None
 }
-

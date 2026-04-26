@@ -18,8 +18,12 @@
 use std::fmt;
 use std::sync::{Arc, Mutex as StdMutex};
 
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use russh::keys::ssh_key::{HashAlg, PublicKey};
 use tracing::{info, warn};
+
+use crate::error::AuthError;
 
 use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
 use crate::error::Result;
@@ -189,14 +193,14 @@ impl Authenticator for KeyOnlyAuth {
 /// ```
 #[derive(Debug)]
 pub struct PasswordAuth {
-    password: String,
+    password_hash: String,
 }
 
 impl PasswordAuth {
-    /// Creates a new password authenticator with the given password.
-    pub fn new(password: impl Into<String>) -> Self {
+    /// Creates a new password authenticator with a pre-hashed password.
+    pub fn new(password_hash: impl Into<String>) -> Self {
         Self {
-            password: password.into(),
+            password_hash: password_hash.into(),
         }
     }
 }
@@ -211,11 +215,43 @@ impl Authenticator for PasswordAuth {
     }
 
     fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
-        // NOTE: Timing attacks over P2P SSH are extremely difficult to exploit,
-        // but a constant-time comparison (e.g. via `subtle`) would be ideal
-        // for hardened deployments. This is acceptable for Phase 1.
-        Ok(self.password == password)
+        let parsed_hash = PasswordHash::new(&self.password_hash)
+            .map_err(|reason| AuthError::VerificationFailed { reason })?;
+
+        match Argon2::default().verify_password(password.as_bytes(), &parsed_hash) {
+            Ok(()) => Ok(true),
+            Err(argon2::password_hash::Error::Password) => Ok(false),
+            Err(reason) => Err(AuthError::VerificationFailed { reason }.into()),
+        }
     }
+}
+
+/// Hashes a password using Argon2 with a random salt.
+///
+/// This uses Argon2id (the default in `argon2` crate) which is the current
+/// industry standard for password hashing, providing resistance against
+/// GPU cracking and side-channel attacks.
+///
+/// # Errors
+///
+/// Returns a [`StorageError::PasswordHash`] if salt generation or hashing fails.
+pub fn hash_password(password: &str) -> Result<String> {
+    let mut salt_bytes = [0u8; 16];
+
+    // Securely fill the salt buffer using the OS RNG.
+    // In rand 0.9, rand::fill is the idiomatic way to fill a buffer with OS-provided entropy.
+    rand::fill(&mut salt_bytes);
+
+    let salt = SaltString::encode_b64(&salt_bytes)
+        .map_err(|reason| crate::error::StorageError::PasswordHash { reason })?;
+
+    let argon2 = Argon2::default();
+    let password_hash = argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|reason| crate::error::StorageError::PasswordHash { reason })?
+        .to_string();
+
+    Ok(password_hash)
 }
 
 // ---------------------------------------------------------------------------
@@ -327,10 +363,14 @@ mod tests {
 
     #[test]
     fn password_auth_validates_correct_password() {
-        let auth = PasswordAuth::new("secret123");
-        assert!(auth.check_password("anyone", "secret123").unwrap());
+        let password = "secret123";
+        let hash = hash_password(password).expect("failed to hash test password");
+        let auth = PasswordAuth::new(hash);
+
+        assert!(auth.check_password("anyone", password).unwrap());
         assert!(!auth.check_password("anyone", "wrong").unwrap());
         assert!(!auth.check_password("anyone", "").unwrap());
+
         // PublicKey should always be rejected.
         assert!(auth.supported_methods().contains(&AuthMethod::Password));
         assert!(!auth.supported_methods().contains(&AuthMethod::PublicKey));
@@ -345,12 +385,15 @@ mod tests {
             vec![],
             temp_state("combined"),
         );
-        let pass = PasswordAuth::new("combo");
+        let password = "combo";
+        let hash = hash_password(password).expect("failed to hash test password");
+        let pass = PasswordAuth::new(hash);
         let auth = CombinedAuth::new(key, pass);
+
         assert_eq!(auth.supported_methods().len(), 2);
         assert!(auth.supported_methods().contains(&AuthMethod::PublicKey));
         assert!(auth.supported_methods().contains(&AuthMethod::Password));
-        assert!(auth.check_password("user", "combo").unwrap());
+        assert!(auth.check_password("user", password).unwrap());
         assert!(!auth.check_password("user", "wrong").unwrap());
     }
 

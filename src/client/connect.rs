@@ -314,7 +314,6 @@ impl Client {
         }
     }
 
-
     /// Parses a connection target (ticket or peer alias) into a ticket.
     ///
     /// # Errors

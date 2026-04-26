@@ -4,10 +4,10 @@ use irosh::{ClientOptions, Session, SessionState};
 
 use crate::commands::connect::support::choose_auto_alias;
 
-pub(super) async fn handle_connect_error(
+pub(super) async fn handle_connect_error<T>(
     err: irosh::error::IroshError,
     options: &ClientOptions,
-) -> Result<Session> {
+) -> Result<T> {
     match err {
         irosh::error::IroshError::ServerKeyMismatch { expected, actual } => {
             eprintln!("\n🚨 SECURITY ALERT: SERVER IDENTIFICATION HAS CHANGED!");

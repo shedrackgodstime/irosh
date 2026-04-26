@@ -6,9 +6,6 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 use russh::{ChannelId, server};
 use tracing::{debug, info, warn};
 
-#[cfg(unix)]
-use tracing::error;
-
 use crate::error::{Result, ServerError};
 use crate::server::transfer::ConnectionShellState;
 use crate::session::pty::{default_pty_size, pty_size};
@@ -153,7 +150,6 @@ impl ServerHandler {
             }
         };
 
-
         builder.env("TERM", &state_entry.pty.term);
         for (key, value) in &state_entry.env {
             builder.env(key, value);
@@ -221,8 +217,6 @@ impl ServerHandler {
         #[cfg(unix)]
         let task_shutdown = shutdown.clone();
 
-
-
         state_entry.process = Some(RunningPty {
             master: pair.master,
             writer: Some(writer),
@@ -253,7 +247,6 @@ impl ServerHandler {
             let mut reader = reader;
 
             let reader_done = CancellationToken::new();
-            let reader_done_task = reader_done.clone();
 
             #[cfg(unix)]
             let reader_future = async {
@@ -309,21 +302,26 @@ impl ServerHandler {
                             }
                         }
                     }
-
                 }
             };
 
             #[cfg(not(unix))]
             let reader_future = async move {
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
-                let reader_done_task = reader_done_task.clone();
+                let reader_done_task = reader_done.clone();
 
-                info!("Spawning blocking PTY reader thread for channel {:?}", channel);
+                info!(
+                    "Spawning blocking PTY reader thread for channel {:?}",
+                    channel
+                );
                 tokio::task::spawn_blocking(move || {
                     let mut buf = [0u8; 8192];
                     loop {
                         if reader_done_task.is_cancelled() {
-                            info!("PTY reader thread received cancellation for channel {:?}", channel);
+                            info!(
+                                "PTY reader thread received cancellation for channel {:?}",
+                                channel
+                            );
                             break;
                         }
                         match reader.read(&mut buf) {
@@ -332,7 +330,10 @@ impl ServerHandler {
                                 break;
                             }
                             Ok(n) => {
-                                info!("PTY reader thread read {} bytes for channel {:?}", n, channel);
+                                info!(
+                                    "PTY reader thread read {} bytes for channel {:?}",
+                                    n, channel
+                                );
                                 if tx.blocking_send(buf[..n].to_vec()).is_err() {
                                     break;
                                 }
@@ -345,7 +346,6 @@ impl ServerHandler {
                     }
                 });
 
-
                 while let Some(data) = rx.recv().await {
                     if let Err(e) = handle_for_task.data(channel, data.into()).await {
                         warn!("Failed to send PTY data to channel {:?}: {:?}", channel, e);
@@ -354,16 +354,18 @@ impl ServerHandler {
                 }
             };
 
-
-
             let mut child_waiter = tokio::task::spawn_blocking(move || {
-                info!("Waiting for child process {:?} for channel {:?}", pid, channel);
+                info!(
+                    "Waiting for child process {:?} for channel {:?}",
+                    pid, channel
+                );
                 let res = child.wait().ok().map(|s| s.exit_code()).unwrap_or(255);
-                info!("Child process {:?} for channel {:?} exited with code {}", pid, channel, res);
+                info!(
+                    "Child process {:?} for channel {:?} exited with code {}",
+                    pid, channel, res
+                );
                 res
             });
-
-
 
             let exit_status = tokio::select! {
                 status = &mut child_waiter => {

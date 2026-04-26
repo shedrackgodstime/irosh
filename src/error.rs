@@ -153,6 +153,41 @@ pub enum StorageError {
         #[source]
         source: serde_json::Error,
     },
+
+    #[error("failed to hash password: {reason}")]
+    PasswordHash {
+        /// The underlying error from the argon2 crate.
+        ///
+        /// NOTE: This does not use `#[source]` because `argon2::password_hash::Error`
+        /// does not currently implement `std::error::Error`.
+        reason: argon2::password_hash::Error,
+    },
+}
+
+/// Authentication and credential errors.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    /// Password verification failed due to an incorrect password.
+    #[error("invalid password provided")]
+    InvalidPassword,
+
+    /// Password verification failed due to a cryptographic or format error.
+    #[error("password verification failed: {reason}")]
+    VerificationFailed {
+        /// The underlying error from the argon2 crate.
+        ///
+        /// NOTE: This does not use `#[source]` because `argon2::password_hash::Error`
+        /// does not currently implement `std::error::Error`.
+        reason: argon2::password_hash::Error,
+    },
+
+    /// The required authentication method is not supported by the client or server.
+    #[error("unsupported authentication method: {0}")]
+    UnsupportedMethod(String),
+
+    /// A required credential (like a password) was not provided.
+    #[error("missing required credential: {0}")]
+    MissingCredential(String),
 }
 
 /// Client-side session and lifecycle errors.
@@ -381,6 +416,10 @@ pub enum IroshError {
     /// Errors related to connection tickets.
     #[error("ticket error: {0}")]
     Ticket(#[from] crate::transport::ticket::TicketError),
+
+    /// Errors originating from the authentication subsystem.
+    #[error("authentication error: {0}")]
+    Auth(#[from] AuthError),
 
     /// Generic I/O failures.
     #[error("I/O error: {0}")]
