@@ -13,9 +13,9 @@ show_help() {
     printf "  --yes      Skip confirmation prompts and remove everything\n"
     printf "  help       Show this help message\n\n"
     printf "What this removes:\n"
-    printf "  - irosh-server and irosh-client binaries\n"
+    printf "  - irosh unified binary\n"
     printf "  - systemd service (if installed)\n"
-    printf "  - macOS LaunchDaemon (if installed)\n"
+    printf "  - macOS LaunchAgent (if installed)\n"
     printf "  - optionally, your state directory (~/.irosh)\n"
     exit 0
 }
@@ -43,34 +43,56 @@ for dir in $DEST_DIRS; do
         printf "✅ Removed irosh from $dir\n"
         FOUND=true
     fi
+    # Cleanup old legacy binaries if they exist
     if [ -f "$dir/irosh-server" ]; then
         rm -f "$dir/irosh-server"
-        printf "✅ Removed irosh-server from $dir\n"
+        printf "✅ Removed legacy irosh-server from $dir\n"
         FOUND=true
     fi
     if [ -f "$dir/irosh-client" ]; then
         rm -f "$dir/irosh-client"
-        printf "✅ Removed irosh-client from $dir\n"
+        printf "✅ Removed legacy irosh-client from $dir\n"
         FOUND=true
     fi
 done
 
 # --- Remove systemd service (Linux) ---
-if [ -f "$HOME/.config/systemd/user/irosh-server.service" ]; then
-    printf "🛑 Stopping irosh-server service...\n"
-    systemctl --user stop irosh-server 2>/dev/null || true
-    systemctl --user disable irosh-server 2>/dev/null || true
-    rm -f "$HOME/.config/systemd/user/irosh-server.service"
+# New service name
+if [ -f "$HOME/.config/systemd/user/irosh.service" ]; then
+    printf "🛑 Stopping irosh service...\n"
+    systemctl --user stop irosh 2>/dev/null || true
+    systemctl --user disable irosh 2>/dev/null || true
+    rm -f "$HOME/.config/systemd/user/irosh.service"
     printf "✅ Removed systemd service\n"
     FOUND=true
 fi
+# Legacy service name
+if [ -f "$HOME/.config/systemd/user/irosh-server.service" ]; then
+    printf "🛑 Stopping legacy irosh-server service...\n"
+    systemctl --user stop irosh-server 2>/dev/null || true
+    systemctl --user disable irosh-server 2>/dev/null || true
+    rm -f "$HOME/.config/systemd/user/irosh-server.service"
+    printf "✅ Removed legacy systemd service\n"
+    FOUND=true
+fi
 
-# --- Remove macOS LaunchDaemon ---
-if [ -f "/Library/LaunchDaemons/ai.irosh.server.plist" ]; then
-    printf "🛑 Stopping irosh-server service...\n"
-    sudo launchctl unload /Library/LaunchDaemons/ai.irosh.server.plist 2>/dev/null || true
-    sudo rm -f /Library/LaunchDaemons/ai.irosh.server.plist
-    printf "✅ Removed macOS LaunchDaemon\n"
+# --- Remove macOS LaunchAgent ---
+# New label
+LABEL="dev.irosh.server"
+if [ -f "$HOME/Library/LaunchAgents/$LABEL.plist" ]; then
+    printf "🛑 Stopping irosh service...\n"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    rm -f "$HOME/Library/LaunchAgents/$LABEL.plist"
+    printf "✅ Removed macOS LaunchAgent\n"
+    FOUND=true
+fi
+# Legacy label
+LEGACY_PLIST="/Library/LaunchDaemons/ai.irosh.server.plist"
+if [ -f "$LEGACY_PLIST" ]; then
+    printf "🛑 Stopping legacy irosh service...\n"
+    sudo launchctl unload "$LEGACY_PLIST" 2>/dev/null || true
+    sudo rm -f "$LEGACY_PLIST"
+    printf "✅ Removed legacy macOS LaunchDaemon\n"
     FOUND=true
 fi
 

@@ -2,9 +2,6 @@
 # Supports: Windows 10, Windows 11, Windows Server
 
 param(
-    [Parameter(Position=0)]
-    [ValidateSet("server", "client", "")]
-    [string]$Mode = "",
     [Parameter()]
     [switch]$Service
 )
@@ -13,32 +10,29 @@ $ErrorActionPreference = "Stop"
 
 # --- Help Function ---
 if ($args -contains "help" -or $args -contains "-h" -or $args -contains "/?") {
-    Write-Host "irosh installer - Install irosh P2P SSH binaries" -ForegroundColor Cyan
+    Write-Host "irosh installer - Install the unified irosh P2P SSH tool" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Usage:"
     Write-Host "  iwr irosh.pages.dev/ps | iex [OPTIONS]"
     Write-Host "  (Or download and run: .\install.ps1 [OPTIONS])"
     Write-Host ""
     Write-Host "Options:"
-    Write-Host "  server    Install only the server binary"
-    Write-Host "  client    Install only the client binary"
-    Write-Host "  -Service  Enable background service after installation (Server set only)"
+    Write-Host "  -Service  Enable background server service after installation"
     Write-Host "  help      Show this help message"
     Write-Host ""
     Write-Host "Examples:"
-    Write-Host "  # Install everything and start server as a background service"
-    Write-Host "  iex `"(iwr irosh.pages.dev/ps).Content | & { process { `$input | iex } } -Service`""
-    Write-Host "  # (Or more simply: iex `& { $(iwr irosh.pages.dev/ps) } -Service` )"
+    Write-Host "  # Install everything"
+    Write-Host "  iwr irosh.pages.dev/ps | iex"
     Write-Host ""
-    Write-Host "  # Install only server as a service"
-    Write-Host "  iex `"& { $(iwr irosh.pages.dev/ps) } server -Service`""
+    Write-Host "  # Install and start server as a background service"
+    Write-Host "  iex `& { $(iwr irosh.pages.dev/ps) } -Service` "
     exit
 }
 
 # --- Configuration ---
 $Repo = "shedrackgodstime/irosh"
 
-Write-Host "`n[*] Installing irosh P2P SSH Suite for Windows..." -ForegroundColor Cyan
+Write-Host "`n[*] Installing irosh P2P SSH Tool for Windows..." -ForegroundColor Cyan
 Write-Host "--------------------------------------------------" -ForegroundColor Blue
 
 # --- 1. Detect Environment ---
@@ -71,7 +65,7 @@ $ZipPath = Join-Path $TmpDir "irosh.tar.gz"
 Write-Host "[+] Downloading $AssetName..."
 Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath
 
-Write-Host "[*] Unpacking binaries..."
+Write-Host "[*] Unpacking binary..."
 tar -xzf $ZipPath -C $TmpDir
 
 # --- 4. Smart Installation ---
@@ -80,18 +74,9 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir | Out-Null
 }
 
-if ($Mode -eq "server") {
-    Copy-Item (Join-Path $TmpDir "irosh-server.exe") $InstallDir -Force
-    Write-Host "[+] Installed irosh-server to $InstallDir" -ForegroundColor Green
-} elseif ($Mode -eq "client") {
-    Copy-Item (Join-Path $TmpDir "irosh-client.exe") $InstallDir -Force
-    Write-Host "[+] Installed irosh-client to $InstallDir" -ForegroundColor Green
-} else {
-    Copy-Item (Join-Path $TmpDir "irosh.exe") $InstallDir -Force
-    Copy-Item (Join-Path $TmpDir "irosh-server.exe") $InstallDir -Force
-    Copy-Item (Join-Path $TmpDir "irosh-client.exe") $InstallDir -Force
-    Write-Host "[+] Installed irosh Suite (Manager, Server & Client) to $InstallDir" -ForegroundColor Green
-}
+# Install the unified binary
+Copy-Item (Join-Path $TmpDir "irosh.exe") $InstallDir -Force
+Write-Host "[+] Installed irosh to $InstallDir" -ForegroundColor Green
 
 # Add to User PATH if not already there
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -110,20 +95,10 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 
 if ($isAdmin) {
     Write-Host "[*] Registering firewall rules for P2P connectivity..." -ForegroundColor Yellow
-    
-    $ServerExe = Join-Path $InstallDir "irosh-server.exe"
-    $ClientExe = Join-Path $InstallDir "irosh-client.exe"
-    $ManagerExe = Join-Path $InstallDir "irosh.exe"
+    $IroshExe = Join-Path $InstallDir "irosh.exe"
 
-    # We use -ErrorAction SilentlyContinue to avoid noise if rules already exist
-    if (Test-Path $ServerExe) {
-        New-NetFirewallRule -DisplayName "Irosh Server (UDP-In)" -Direction Inbound -Action Allow -Protocol UDP -Program $ServerExe -ErrorAction SilentlyContinue | Out-Null
-    }
-    if (Test-Path $ClientExe) {
-        New-NetFirewallRule -DisplayName "Irosh Client (UDP-In)" -Direction Inbound -Action Allow -Protocol UDP -Program $ClientExe -ErrorAction SilentlyContinue | Out-Null
-    }
-    if (Test-Path $ManagerExe) {
-        New-NetFirewallRule -DisplayName "Irosh Manager (UDP-In)" -Direction Inbound -Action Allow -Protocol UDP -Program $ManagerExe -ErrorAction SilentlyContinue | Out-Null
+    if (Test-Path $IroshExe) {
+        New-NetFirewallRule -DisplayName "Irosh P2P (UDP-In)" -Direction Inbound -Action Allow -Protocol UDP -Program $IroshExe -ErrorAction SilentlyContinue | Out-Null
     }
 } else {
     Write-Host "[i] Info: Skipping firewall registration (Not running as Administrator)." -ForegroundColor Gray
@@ -131,12 +106,8 @@ if ($isAdmin) {
 
 # --- 7. Optional Service Setup ---
 if ($Service) {
-    if ($Mode -ne "client") {
-        Write-Host "[*] Setting up background service..." -ForegroundColor Yellow
-        Start-Process (Join-Path $InstallDir "irosh-server.exe") -ArgumentList "service", "install" -Wait -NoNewWindow
-    } else {
-        Write-Host "[!] Ignoring -Service flag (not installing server binary)." -ForegroundColor Red
-    }
+    Write-Host "[*] Setting up background server service..." -ForegroundColor Yellow
+    Start-Process (Join-Path $InstallDir "irosh.exe") -ArgumentList "system", "install" -Wait -NoNewWindow
 }
 
 # --- 8. Success & Identity Preview ---
@@ -152,7 +123,9 @@ if (Test-Path (Join-Path $InstallDir "irosh.exe")) {
     }
 }
 
-Write-Host "`n * To start your server, run: irosh-server --simple"
-Write-Host " * To list saved peers:      irosh list"
+Write-Host "`n * To start your server:      irosh host"
+Write-Host " * To connect to a node:      irosh <ticket>"
+Write-Host " * To manage saved peers:     irosh peer list"
+Write-Host " * To run in background:      irosh system install"
 Write-Host " * To uninstall:              iwr irosh.pages.dev/uninstall-ps | iex"
 Write-Host " * Restart your terminal to refresh the PATH.`n"

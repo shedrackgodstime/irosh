@@ -1,148 +1,126 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use irosh::{StateConfig, storage};
 use std::path::PathBuf;
-use std::str::FromStr;
+use tracing_subscriber::prelude::*;
 
+mod commands;
+mod display;
+
+/// Secure SSH-over-P2P remote access.
+///
+/// Irosh allows you to establish secure SSH sessions over the Iroh P2P network,
+/// bypassing NAT and firewalls without open ports or public IPs.
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Manage irosh peers and trust")]
-struct Args {
-    /// The directory used for persistent state.
-    #[arg(short, long, env = "IROSH_STATE_DIR", value_name = "DIR")]
-    state: Option<PathBuf>,
+#[command(name = "irosh", version, about, long_about = None)]
+pub struct Args {
+    /// Connection target (ticket string or peer alias).
+    ///
+    /// If provided, initiates a connection immediately. This is a shortcut
+    /// for 'irosh connect <target>'.
+    pub target: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
+    /// The directory used for persistent state (identity, trust, keys).
+    #[arg(
+        short,
+        long,
+        env = "IROSH_STATE_DIR",
+        value_name = "DIR",
+        global = true
+    )]
+    pub state: Option<PathBuf>,
 
     /// Enable verbose logging to stderr.
     #[arg(short, long, global = true)]
-    verbose: bool,
-
-    #[command(subcommand)]
-    command: Commands,
+    pub verbose: bool,
 }
 
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// List all saved peers.
-    List,
-    /// Save a new peer ticket.
-    Save {
-        /// Friendly name for the peer.
-        name: String,
-        /// The Iroh connection ticket.
-        ticket: String,
-    },
-    /// Delete a saved peer.
-    Delete {
-        /// Name of the peer to remove.
-        name: String,
-    },
-    /// Inspect the trust store (known host keys).
-    Trust,
-    /// Show the local Peer ID and identity information.
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Start the irosh P2P SSH server listener.
+    Host(commands::host::HostArgs),
+
+    /// Connect to a remote irosh node.
+    Connect(commands::connect::ConnectArgs),
+
+    /// Manage saved peers and aliases.
+    Peer(commands::peer::PeerArgs),
+
+    /// Manage security trust and authorized keys.
+    Trust(commands::trust::TrustArgs),
+
+    /// Show local peer identity and fingerprints.
     Identity,
+
+    /// Show current node status and active sessions.
+    Status,
+
+    /// Run connectivity and configuration diagnostics.
+    Check,
+
+    /// Manage background services and system integration.
+    System(commands::system::SystemArgs),
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // 1. Resolve state (use client state by default for the manager).
-    let state_root = args
-        .state
-        .or_else(|| dirs::home_dir().map(|h| h.join(".irosh").join("client")))
-        .context("could not determine state directory")?;
+    // 1. Initialize professional logging to stderr.
+    let level = if args.verbose { "info" } else { "error" };
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level));
+    let (filter_layer, filter_handle) = tracing_subscriber::reload::Layer::new(filter);
 
-    let state = StateConfig::new(state_root);
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(filter_layer)
+        .init();
 
-    match args.command {
-        Commands::List => {
-            let peers = storage::list_peers(&state)?;
-            println!("Saved peers: {}", state.root().join("peers").display());
-            if peers.is_empty() {
-                println!("No peers saved.");
-                println!("Use `irosh save <name> <ticket>` to add one.");
-            } else if args.verbose {
-                println!("{:<20} {:<18} TICKET", "NAME", "NODE ID");
-                println!("{}", "-".repeat(120));
-                for peer in peers {
-                    println!(
-                        "{:<20} {:<18} {}",
-                        peer.name,
-                        ticket_node_label(&peer.ticket),
-                        peer.ticket,
-                    );
-                }
-            } else {
-                println!("{:<20} {:<18} TARGET", "NAME", "NODE ID");
-                println!("{}", "-".repeat(96));
-                for peer in peers {
-                    println!(
-                        "{:<20} {:<18} {}",
-                        peer.name,
-                        ticket_node_label(&peer.ticket),
-                        shorten_ticket(&peer.ticket),
-                    );
-                }
-            }
+    // 2. Dispatch to the appropriate command.
+    match (&args.target, &args.command) {
+        (Some(target), None) => {
+            // Shortcut: irosh <target>
+            commands::connect::exec_shortcut(target.clone(), &args, &filter_handle).await?;
         }
-        Commands::Save { name, ticket } => {
-            let ticket = irosh::Ticket::from_str(&ticket).context("invalid ticket format")?;
-            storage::save_peer(
-                &state,
-                &storage::PeerProfile {
-                    name: name.clone(),
-                    ticket,
-                },
-            )?;
-            println!("✅ Saved peer '{}'", name);
-        }
-        Commands::Delete { name } => {
-            if storage::delete_peer(&state, &name)? {
-                println!("✅ Deleted peer '{}'", name);
-            } else {
-                println!("❌ Peer '{}' not found", name);
+        (None, Some(command)) => match command {
+            Commands::Host(host_args) => {
+                commands::host::exec(host_args.clone(), &args).await?;
             }
-        }
-        Commands::Trust => match storage::trust::inspect_trust(&state) {
-            Ok(summary) => {
-                println!("🔐 Trust Store: {}", state.root().join("trust").display());
-                println!("\n[Known Servers (Your client trusts)]");
-                for server in summary.known_servers {
-                    println!(" - {} (Exists: {})", server.path.display(), server.exists);
-                }
-                println!("\n[Authorized Clients (Your server trusts)]");
-                for client in summary.authorized_clients {
-                    println!(" - {} (Exists: {})", client.path.display(), client.exists);
-                }
+            Commands::Connect(connect_args) => {
+                commands::connect::exec(connect_args.clone(), &args, &filter_handle).await?;
             }
-            Err(e) => eprintln!("❌ Failed to read trust store: {}", e),
+            Commands::Peer(peer_args) => {
+                commands::peer::exec(peer_args.clone(), &args).await?;
+            }
+            Commands::Trust(trust_args) => {
+                commands::trust::exec(trust_args.clone(), &args).await?;
+            }
+            Commands::Identity => {
+                commands::identity::exec(&args).await?;
+            }
+            Commands::Status => {
+                commands::status::exec(&args).await?;
+            }
+            Commands::Check => {
+                commands::check::exec(&args).await?;
+            }
+            Commands::System(system_args) => {
+                commands::system::exec(system_args.clone(), &args).await?;
+            }
         },
-        Commands::Identity => {
-            let secret = storage::load_secret_key(&state).context("failed to load identity")?;
-            let public = secret.public();
-            println!("🆔 Your Peer ID: {}", public);
-            println!("📂 State Directory: {}", state.root().display());
+        (None, None) => {
+            // No command or target provided, show status or help.
+            commands::status::exec(&args).await?;
+        }
+        (Some(_), Some(_)) => {
+            anyhow::bail!(
+                "Cannot provide both a positional target and a subcommand. Try 'irosh --help'."
+            );
         }
     }
 
     Ok(())
-}
-
-fn ticket_node_label(ticket: &irosh::Ticket) -> String {
-    let node_id = ticket.to_addr().id.to_string();
-    shorten_middle(&node_id, 16)
-}
-
-fn shorten_ticket(ticket: &irosh::Ticket) -> String {
-    shorten_middle(&ticket.to_string(), 40)
-}
-
-fn shorten_middle(value: &str, max_len: usize) -> String {
-    if value.len() <= max_len {
-        return value.to_string();
-    }
-
-    let keep = (max_len.saturating_sub(3)) / 2;
-    let head = &value[..keep];
-    let tail_len = max_len.saturating_sub(keep + 3);
-    let tail = &value[value.len() - tail_len..];
-    format!("{head}...{tail}")
 }

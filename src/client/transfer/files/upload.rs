@@ -273,6 +273,8 @@ impl Session {
                 source: e.into(),
             })?;
 
+            reject_recursive_symlink(&entry)?;
+
             let relative = entry.path().strip_prefix(local_root).map_err(|_| {
                 ClientError::TransferTargetInvalid {
                     reason: "failed to resolve relative path during directory walk",
@@ -374,5 +376,60 @@ impl Session {
             }
             .into()),
         }
+    }
+}
+
+fn reject_recursive_symlink(entry: &walkdir::DirEntry) -> Result<()> {
+    if entry.file_type().is_symlink() {
+        return Err(ClientError::UploadFailed {
+            details: format!(
+                "recursive upload does not support symbolic links: {}",
+                entry.path().display()
+            ),
+        }
+        .into());
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_recursive_symlink;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_upload_rejects_symlink_entries() {
+        use std::os::unix::fs::symlink;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("irosh-symlink-upload-{unique}"));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let target = root.join("real-dir");
+        std::fs::create_dir_all(&target).expect("create real dir");
+        let link = root.join("link-dir");
+        symlink(&target, &link).expect("create symlink");
+
+        let mut walk = walkdir::WalkDir::new(&root).into_iter();
+        let _root_entry = walk.next().expect("walk root").expect("root entry");
+        let link_entry = walk
+            .find_map(|entry| {
+                let entry = entry.ok()?;
+                (entry.path() == link).then_some(entry)
+            })
+            .expect("find symlink entry");
+
+        let err = reject_recursive_symlink(&link_entry).expect_err("symlink should be rejected");
+        assert!(
+            err.to_string()
+                .contains("recursive upload does not support symbolic links")
+        );
+
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

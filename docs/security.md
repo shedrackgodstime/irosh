@@ -36,7 +36,7 @@ Servers must protect against unauthorized remote execution, even if an attacker 
 Irosh uses a pluggable authentication architecture via the `Authenticator` trait. Currently, the built-in modes support **Key-Only (TOFU)**, **Shared Password**, and **Combined** logic.
 
 **Future Aim: Per-User System Authentication (PAM)**
-While not currently implemented in the CLI, the architecture is designed to eventually support true per-user logins (e.g., `irosh-client <ticket> --user alice`) backed by the host Operating System's native users (PAM on Linux/macOS). 
+While not currently implemented in the CLI, the architecture is designed to eventually support true per-user logins (e.g., `irosh alice@<ticket>`) backed by the host Operating System's native users (PAM on Linux/macOS). 
 The goal of this future `SystemAuth` backend is to allow Enterprise and multi-user environments to authenticate exactly like traditional `ssh user@host`, where adding a system user immediately grants them access to Irosh without managing virtual passwords or separate `.htpasswd`-style files.
 
 ## Local State and Secrets

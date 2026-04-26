@@ -9,14 +9,6 @@ publish = false
 name = "irosh"
 path = "src/main.rs"
 
-[[bin]]
-name = "irosh-server"
-path = "bin/server.rs"
-
-[[bin]]
-name = "irosh-client"
-path = "bin/client.rs"
-
 [dependencies]
 irosh = { path = "..", features = ["server", "client", "storage", "transport"] }
 anyhow = "1"

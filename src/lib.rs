@@ -9,6 +9,9 @@ pub use russh; // Protocol re-export for library consumers.
 #[cfg(feature = "transport")]
 pub mod transport;
 
+#[cfg(all(feature = "transport", feature = "storage"))]
+pub mod diagnostic;
+
 #[cfg(feature = "storage")]
 pub mod storage;
 

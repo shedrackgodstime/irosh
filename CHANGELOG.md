@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Unified CLI Consolidation**: Replaced the fragmented 3-binary architecture (`irosh`, `irosh-server`, `irosh-client`) with a single, professional `irosh` binary.
+- **Subcommand Hierarchy**: Introduced `irosh host`, `irosh connect`, `irosh peer`, `irosh trust`, and `irosh system` for better organization.
+- **Cross-Platform Service Management**: Unified background service installation for Linux (systemd), macOS (launchd), and Windows (Task Scheduler) under `irosh system`.
+- **Target Shortcut**: Initiating a connection is now as simple as `irosh <ticket>`.
+
 ## [0.2.0] - 2026-04-23
 
 ### Added

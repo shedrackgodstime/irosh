@@ -21,7 +21,7 @@ if ($Help) {
     Write-Host "  -Help    Show this help message"
     Write-Host ""
     Write-Host "What this removes:"
-    Write-Host "  - irosh-server.exe and irosh-client.exe binaries"
+    Write-Host "  - irosh unified binary"
     Write-Host "  - from PATH environment variable"
     Write-Host "  - optionally, your state directory (%USERPROFILE%\.irosh)"
     exit
@@ -37,8 +37,8 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "irosh\bin"
 
 if (Test-Path $InstallDir) {
     $Irosh = Join-Path $InstallDir "irosh.exe"
-    $Server = Join-Path $InstallDir "irosh-server.exe"
-    $Client = Join-Path $InstallDir "irosh-client.exe"
+    $LegacyServer = Join-Path $InstallDir "irosh-server.exe"
+    $LegacyClient = Join-Path $InstallDir "irosh-client.exe"
     
     if (Test-Path $Irosh) {
         Remove-Item $Irosh -Force
@@ -46,15 +46,16 @@ if (Test-Path $InstallDir) {
         $Found = $true
     }
     
-    if (Test-Path $Server) {
-        Remove-Item $Server -Force
-        Write-Host "✅ Removed irosh-server.exe" -ForegroundColor Green
+    # Cleanup legacy binaries
+    if (Test-Path $LegacyServer) {
+        Remove-Item $LegacyServer -Force
+        Write-Host "✅ Removed legacy irosh-server.exe" -ForegroundColor Green
         $Found = $true
     }
     
-    if (Test-Path $Client) {
-        Remove-Item $Client -Force
-        Write-Host "✅ Removed irosh-client.exe" -ForegroundColor Green
+    if (Test-Path $LegacyClient) {
+        Remove-Item $LegacyClient -Force
+        Write-Host "✅ Removed legacy irosh-client.exe" -ForegroundColor Green
         $Found = $true
     }
     

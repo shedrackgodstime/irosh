@@ -6,38 +6,34 @@ set -e
 
 # --- Help Function ---
 show_help() {
-    printf "irosh installer - Install irosh P2P SSH binaries\n\n"
+    printf "irosh installer - Install the unified irosh P2P SSH tool\n\n"
     printf "Usage:\n"
     printf "  curl -fsSL irosh.pages.dev/install | sh [OPTIONS]\n\n"
     printf "Options:\n"
-    printf "  server    Install only the server binary\n"
-    printf "  client    Install only the client binary\n"
-    printf "  service   Enable background service after installation (Server set only)\n"
+    printf "  service   Enable background server service after installation\n"
     printf "  help      Show this help message\n\n"
     printf "Examples:\n"
-    printf "  # Install everything and start server as a background service\n"
-    printf "  curl -fsSL irosh.pages.dev/install | sh -s -- service\n\n"
-    printf "  # Install only server as a service\n"
-    printf "  curl -fsSL irosh.pages.dev/install | sh -s -- server service\n"
+    printf "  # Install everything\n"
+    printf "  curl -fsSL irosh.pages.dev/install | sh\n\n"
+    printf "  # Install and start server as a background service\n"
+    printf "  curl -fsSL irosh.pages.dev/install | sh -s -- service\n"
     exit 0
 }
 
 # --- Configuration ---
 REPO="shedrackgodstime/irosh"
-MODE=""  # Can be 'server', 'client', or empty (both)
 
 # --- Parse Arguments ---
 INSTALL_SERVICE=false
 for arg in "$@"; do
     case "$arg" in
-        server|client) MODE="$arg" ;;
         service) INSTALL_SERVICE=true ;;
         help|--help|-h) show_help ;;
     esac
 done
 
 # --- Aesthetic Header ---
-printf "\n\033[1;36m[*] Installing irosh P2P SSH Suite...\033[0m\n"
+printf "\n\033[1;36m[*] Installing irosh P2P SSH Tool...\033[0m\n"
 printf "\033[0;34m--------------------------------------------------\033[0m\n"
 
 # --- 1. Detect Environment ---
@@ -83,7 +79,7 @@ TMP_DIR=$(mktemp -d)
 printf "[+] Downloading $ASSET_NAME...\n"
 curl -sL "$DOWNLOAD_URL" -o "$TMP_DIR/irosh.tar.gz"
 
-printf "[*] Unpacking binaries...\n"
+printf "[*] Unpacking binary...\n"
 tar -xzf "$TMP_DIR/irosh.tar.gz" -C "$TMP_DIR"
 
 # --- 4. Smart Installation ---
@@ -93,33 +89,18 @@ if [ ! -w "$DEST_DIR" ]; then
   mkdir -p "$DEST_DIR"
 fi
 
-if [ "$MODE" = "server" ]; then
-  cp "$TMP_DIR/irosh-server" "$DEST_DIR/"
-  chmod +x "$DEST_DIR/irosh-server"
-  printf "[+] Installed irosh-server to $DEST_DIR\n"
-elif [ "$MODE" = "client" ]; then
-  cp "$TMP_DIR/irosh-client" "$DEST_DIR/"
-  chmod +x "$DEST_DIR/irosh-client"
-  printf "[+] Installed irosh-client to $DEST_DIR\n"
-else
-  cp "$TMP_DIR/irosh" "$DEST_DIR/"
-  cp "$TMP_DIR/irosh-server" "$DEST_DIR/"
-  cp "$TMP_DIR/irosh-client" "$DEST_DIR/"
-  chmod +x "$DEST_DIR/irosh" "$DEST_DIR/irosh-server" "$DEST_DIR/irosh-client"
-  printf "[+] Installed irosh Suite (Manager, Server & Client) to $DEST_DIR\n"
-fi
+# Install the unified binary
+cp "$TMP_DIR/irosh" "$DEST_DIR/"
+chmod +x "$DEST_DIR/irosh"
+printf "[+] Installed irosh to $DEST_DIR\n"
 
 # --- 5. Clean up ---
 rm -rf "$TMP_DIR"
 
 # --- 6. Optional Service Setup ---
 if [ "$INSTALL_SERVICE" = true ]; then
-  if [ "$MODE" != "client" ]; then
-    printf "[*] Setting up background service...\n"
-    "$DEST_DIR/irosh-server" service install || printf "[!] Failed to install background service automatically.\n"
-  else
-    printf "[!] Ignoring 'service' flag (not installing server binary).\n"
-  fi
+    printf "[*] Setting up background server service...\n"
+    "$DEST_DIR/irosh" system install || printf "[!] Failed to install background service automatically.\n"
 fi
 
 # --- 7. Success & Identity Preview ---
@@ -138,13 +119,14 @@ if ! echo "$PATH" | grep -q "$DEST_DIR"; then
     printf "\033[0;33m[!] Warning: $DEST_DIR is not in your PATH.\033[0m\n"
     printf "To run irosh commands directly, add this to your .bashrc or .zshrc:\n"
     printf "  \033[1mexport PATH=\"\$PATH:$DEST_DIR\"\033[0m\n\n"
-    printf "Or run them using the full path:\n"
-    printf "  \033[1m$DEST_DIR/irosh-server --simple\033[0m\n"
+    printf "Or run it using the full path:\n"
+    printf "  \033[1m$DEST_DIR/irosh --help\033[0m\n"
 else
-    printf " * To start your server, run: \033[1m irosh-server --simple \033[0m\n"
-    printf " * To list saved peers:      \033[1m irosh list \033[0m\n"
-    printf " * To run in background:     \033[1m irosh-server service install \033[0m\n"
+    printf " * To start your server:      \033[1m irosh host \033[0m\n"
+    printf " * To connect to a node:      \033[1m irosh <ticket> \033[0m\n"
+    printf " * To manage saved peers:     \033[1m irosh peer list \033[0m\n"
+    printf " * To run in background:      \033[1m irosh system install \033[0m\n"
 fi
 
-printf " * To uninstall:             \033[1m curl -fsSL irosh.pages.dev/uninstall | sh \033[0m\n"
+printf " * To uninstall:              \033[1m curl -fsSL irosh.pages.dev/uninstall | sh \033[0m\n"
 printf "\n"

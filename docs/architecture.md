@@ -7,7 +7,7 @@ This document describes the high-level architecture of the `irosh` crate.
 ## Core Concepts
 
 1. **SSH over Iroh**: `irosh` does not invent a new shell protocol. It routes standard SSH bytes (via the `russh` crate) over an Iroh P2P connection. This means you get standard SSH security, PTY semantics, and multiplexing, but without needing IP addresses, open ports, or DNS.
-2. **Library-First**: `irosh` is fundamentally a library. The `irosh` CLI binaries (client, server) are just thin wrappers over the library's `Client` and `Server` structs.
+2. **Library-First**: `irosh` is fundamentally a library. The unified `irosh` CLI binary is a thin wrapper over the library's `Client` and `Server` structs, using subcommands to expose each capability.
 3. **Bring Your Own I/O**: The library handles transport, encryption, and protocol framing. The caller (e.g., the CLI code) is responsible for wiring up local `stdin`/`stdout` and handling terminal raw modes. The library never writes to the console.
 
 ## Module Layout
@@ -39,4 +39,4 @@ To ensure minimal binary size for consumers, `irosh` uses granular feature flags
 - `storage`: Enables local key generation, trust tracking, and peer profiles.
 - `transport`: Enables the Iroh peer-to-peer networking stack.
 
-Consumers only pay for the code they use. The `irosh-client` CLI binary never compiles server logic, and vice versa.
+Consumers only pay for the code they use. While the official unified CLI binary includes all features for convenience, a custom implementation can choose to compile only the client or server logic to minimize footprint.
