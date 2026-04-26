@@ -71,6 +71,7 @@ sha2 = "0.10"
 
 # walkdir: Recursive directory walking for uploads.
 walkdir = "2"
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }
 
 [dev-dependencies]
 # tokio with full features for async test harnesses.

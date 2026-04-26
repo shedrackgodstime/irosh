@@ -23,7 +23,11 @@ async fn exec_emits_stdout_and_close_events() {
 
     let handle = session.handle.read().await;
     let mut channel = handle.channel_open_session().await.unwrap();
-    channel.exec(true, "printf exec-ok").await.unwrap();
+    #[cfg(windows)]
+    channel.exec(true, "cmd.exe /c echo exec-ok").await.unwrap();
+    #[cfg(not(windows))]
+    channel.exec(true, "echo exec-ok").await.unwrap();
+
     drop(handle);
 
     let mut stdout = Vec::new();

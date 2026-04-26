@@ -1,12 +1,16 @@
 use anyhow::{Context, Result};
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
-use irosh::session::{AsyncStdin, RawTerminal, current_terminal_size};
+use irosh::session::current_terminal_size;
+#[cfg(unix)]
+use irosh::session::{AsyncStdin, RawTerminal};
+
 use irosh::{
     Client, ClientOptions, PtyOptions, SecurityConfig, Session, SessionEvent, StateConfig,
 };
 use std::io::IsTerminal;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use tracing_subscriber::{EnvFilter, reload};
 
 pub mod commands;
@@ -142,13 +146,21 @@ where
     pb.set_message("Dialing P2P node...");
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
-    let session_res = Client::connect(&options, target).await;
+    // Separate P2P connection from SSH handshake to avoid spinner/prompt conflict.
+    let connection_res = Client::dial_p2p(&options, target).await;
     pb.finish_and_clear();
 
+    let connection = match connection_res {
+        Ok(c) => c,
+        Err(e) => handle_connect_error(e, &options).await?,
+    };
+
+    let session_res = Client::establish_session(&options, connection).await;
     let mut session = match session_res {
         Ok(s) => s,
         Err(e) => handle_connect_error(e, &options).await?,
     };
+
 
     maybe_autosave_alias(&session, &options, &connect_args.target)?;
 
@@ -276,7 +288,7 @@ async fn drive_session(mut session: Session) -> Result<()> {
         None
     };
     #[cfg(not(unix))]
-    let mut sigwinch: Option<bool> = None;
+    let _sigwinch: Option<bool> = None;
 
     loop {
         tokio::select! {

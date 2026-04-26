@@ -87,8 +87,8 @@ pub struct Client;
 
 impl Client {
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
-    const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
     const METADATA_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
     const METADATA_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
     const DEFAULT_USER: &'static str = "irosh";
 
@@ -113,19 +113,22 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
+    /// Connects to a remote irosh peer using the provided connection ticket.
+    ///
+    /// This performs the full P2P connection, SSH handshake, and metadata
+    /// synchronization.
     pub async fn connect(options: &ClientOptions, ticket: Ticket) -> Result<Session> {
+        let (connection, endpoint) = Self::dial_p2p(options, ticket).await?;
+        Self::establish_session(options, (connection, endpoint)).await
+    }
+
+    /// Establishes the low-level P2P connection to the target.
+    pub async fn dial_p2p(
+        options: &ClientOptions,
+        ticket: Ticket,
+    ) -> Result<(iroh::endpoint::Connection, iroh::Endpoint)> {
         let target_addr = ticket.to_addr();
         let identity = load_or_generate_identity(options.state()).await?;
-        let client_key = identity.ssh_key;
-
-        let node_id = target_addr.id.to_string();
-        let known_server = if options.security_config().host_key_policy == HostKeyPolicy::AcceptAll
-        {
-            None
-        } else {
-            load_known_server(options.state(), &node_id)?
-        };
-
         let alpn = derive_alpn(options.secret_value());
         let endpoint = bind_client_endpoint(identity.secret_key, alpn.clone()).await?;
 
@@ -148,7 +151,25 @@ impl Client {
                     .into());
                 }
             };
-        let mut state = SessionState::TransportConnected;
+
+        Ok((connection, endpoint))
+    }
+
+    /// Performs the SSH handshake and metadata exchange over an existing P2P connection.
+    pub async fn establish_session(
+        options: &ClientOptions,
+        (connection, endpoint): (iroh::endpoint::Connection, iroh::Endpoint),
+    ) -> Result<Session> {
+        let node_id = connection.remote_id().to_string();
+        let identity = load_or_generate_identity(options.state()).await?;
+        let client_key = identity.ssh_key;
+
+        let known_server = if options.security_config().host_key_policy == HostKeyPolicy::AcceptAll
+        {
+            None
+        } else {
+            load_known_server(options.state(), &node_id)?
+        };
 
         let (send, recv): (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) =
             match connection.open_bi().await {
@@ -172,7 +193,9 @@ impl Client {
         let credentials = options.credentials.clone();
         let prompter = options.prompter.clone();
 
-        let session_result = tokio::time::timeout(Self::SSH_HANDSHAKE_TIMEOUT, async {
+        let mut state = SessionState::TransportConnected;
+
+        let session_result = tokio::time::timeout(Duration::from_secs(60), async {
             state = SessionState::SshHandshaking;
             let mut handle = client::connect_stream(config, stream, handler.clone())
                 .await
@@ -290,6 +313,7 @@ impl Client {
             }
         }
     }
+
 
     /// Parses a connection target (ticket or peer alias) into a ticket.
     ///

@@ -1,5 +1,8 @@
 use crate::Args as GlobalArgs;
-use anyhow::{Context, Result};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use anyhow::Context;
+use anyhow::Result;
+
 use clap::{Args, Subcommand};
 use std::path::PathBuf;
 

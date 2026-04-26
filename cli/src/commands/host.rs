@@ -68,7 +68,14 @@ pub async fn exec(host_args: HostArgs, global_args: &GlobalArgs) -> Result<()> {
     options = options.authorized_keys(authorized_keys.clone());
 
     // 3.5 Configure Authentication Backend.
-    let auth_mode = host_args.auth_mode.to_lowercase();
+    let mut auth_mode = host_args.auth_mode.to_lowercase();
+
+    // If a password is provided but mode is still default 'key', 
+    // automatically switch to 'password' for convenience.
+    if host_args.auth_password.is_some() && auth_mode == "key" {
+        auth_mode = "password".to_string();
+    }
+
     match auth_mode.as_str() {
         "password" => {
             let password = host_args
@@ -89,6 +96,7 @@ pub async fn exec(host_args: HostArgs, global_args: &GlobalArgs) -> Result<()> {
             anyhow::bail!("Invalid auth mode: {auth_mode}. Valid options: key, password, combined.")
         }
     }
+
 
     // 4. Start the irosh server.
     let (ready, server) = Server::bind(options).await?;

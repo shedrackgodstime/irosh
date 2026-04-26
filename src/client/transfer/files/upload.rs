@@ -395,7 +395,9 @@ fn reject_recursive_symlink(entry: &walkdir::DirEntry) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::reject_recursive_symlink;
+    #[cfg(unix)]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[cfg(unix)]
