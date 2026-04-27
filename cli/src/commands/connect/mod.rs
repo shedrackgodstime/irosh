@@ -9,7 +9,7 @@ use irosh::{
     Client, ClientOptions, PtyOptions, SecurityConfig, Session, SessionEvent, StateConfig,
 };
 use std::io::IsTerminal;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use tracing_subscriber::{EnvFilter, reload};
 
