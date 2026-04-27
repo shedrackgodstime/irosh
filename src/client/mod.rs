@@ -36,11 +36,11 @@ impl TransferProgress {
 
     /// Returns the completion percentage clamped to `0..=100`.
     pub fn percent(&self) -> u8 {
-        if self.total == 0 {
-            100
-        } else {
-            ((self.transferred.saturating_mul(100)) / self.total).min(100) as u8
-        }
+        self.transferred
+            .saturating_mul(100)
+            .checked_div(self.total)
+            .unwrap_or(100)
+            .min(100) as u8
     }
 }
 

@@ -271,8 +271,21 @@ impl Drop for AsyncStdin {
 }
 
 #[cfg(not(unix))]
-/// Probes the physical terminal size. On non-Unix, defaults are returned.
+/// Probes the physical terminal size. On Windows, uses GetConsoleScreenBufferInfo.
 pub fn current_terminal_size() -> PtySize {
+    use windows_sys::Win32::System::Console::*;
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        let mut info = std::mem::zeroed::<CONSOLE_SCREEN_BUFFER_INFO>();
+        if GetConsoleScreenBufferInfo(handle, &mut info) != 0 {
+            return PtySize {
+                rows: (info.srWindow.Bottom - info.srWindow.Top + 1) as u16,
+                cols: (info.srWindow.Right - info.srWindow.Left + 1) as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+        }
+    }
     default_pty_size()
 }
 
@@ -327,8 +340,10 @@ impl tokio::io::AsyncRead for AsyncStdin {
 /// Places the current physical Windows terminal into raw mode and restores it
 /// automatically on `Drop`. This captures keystrokes without local processing.
 pub struct RawTerminal {
-    handle: windows_sys::Win32::Foundation::HANDLE,
-    original_mode: u32,
+    in_handle: windows_sys::Win32::Foundation::HANDLE,
+    in_original_mode: u32,
+    out_handle: windows_sys::Win32::Foundation::HANDLE,
+    out_original_mode: u32,
 }
 
 #[cfg(not(unix))]
@@ -340,19 +355,20 @@ impl fmt::Debug for RawTerminal {
 
 #[cfg(not(unix))]
 impl RawTerminal {
-    /// Puts the standard input handle into raw mode.
+    /// Puts the standard input handle into raw mode and enables VT processing on stdout.
     ///
     /// # Errors
     ///
     /// Returns an error if the terminal mode cannot be read or if raw
-    /// mode cannot be applied to the console handle.
+    /// mode cannot be applied to the console handles.
     pub fn new(_fd: i32) -> Result<Self> {
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
         use windows_sys::Win32::System::Console::*;
 
         unsafe {
-            let handle = GetStdHandle(STD_INPUT_HANDLE);
-            if handle == INVALID_HANDLE_VALUE {
+            let in_handle = GetStdHandle(STD_INPUT_HANDLE);
+            let out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+            if in_handle == INVALID_HANDLE_VALUE || out_handle == INVALID_HANDLE_VALUE {
                 return Err(crate::error::IroshError::Client(
                     crate::error::ClientError::TerminalIo {
                         source: std::io::Error::last_os_error(),
@@ -360,27 +376,39 @@ impl RawTerminal {
                 ));
             }
 
-            let mut mode = 0;
-            if GetConsoleMode(handle, &mut mode) == 0 {
+            let mut in_mode = 0;
+            if GetConsoleMode(in_handle, &mut in_mode) == 0 {
                 return Err(crate::error::IroshError::Client(
                     crate::error::ClientError::TerminalIo {
                         source: std::io::Error::last_os_error(),
                     },
                 ));
             }
+            let in_original_mode = in_mode;
 
-            let original_mode = mode;
+            let mut out_mode = 0;
+            let out_original_mode = if GetConsoleMode(out_handle, &mut out_mode) != 0 {
+                let out_original = out_mode;
+                // Enable VT processing for ANSI escape codes.
+                let new_out_mode =
+                    out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+                let _ = SetConsoleMode(out_handle, new_out_mode);
+                out_original
+            } else {
+                0
+            };
+
             // Disable line input, echo, and signals (processed input).
             // Enable virtual terminal input for VT100/Xterm sequences.
-            let raw_mode = (mode
+            let raw_in_mode = (in_mode
                 & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
                 | ENABLE_VIRTUAL_TERMINAL_INPUT;
 
-            if SetConsoleMode(handle, raw_mode) == 0 {
+            if SetConsoleMode(in_handle, raw_in_mode) == 0 {
                 // If VT input fails, try at least without it.
                 let raw_mode_basic =
-                    mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
-                if SetConsoleMode(handle, raw_mode_basic) == 0 {
+                    in_mode & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
+                if SetConsoleMode(in_handle, raw_mode_basic) == 0 {
                     return Err(crate::error::IroshError::Client(
                         crate::error::ClientError::TerminalIo {
                             source: std::io::Error::last_os_error(),
@@ -390,8 +418,10 @@ impl RawTerminal {
             }
 
             Ok(Self {
-                handle,
-                original_mode,
+                in_handle,
+                in_original_mode,
+                out_handle,
+                out_original_mode,
             })
         }
     }
@@ -401,9 +431,12 @@ impl RawTerminal {
 impl Drop for RawTerminal {
     fn drop(&mut self) {
         use windows_sys::Win32::System::Console::SetConsoleMode;
-        // SAFETY: Best-effort restoration of the original console mode.
+        // SAFETY: Best-effort restoration of the original console modes.
         unsafe {
-            let _ = SetConsoleMode(self.handle, self.original_mode);
+            let _ = SetConsoleMode(self.in_handle, self.in_original_mode);
+            if self.out_original_mode != 0 {
+                let _ = SetConsoleMode(self.out_handle, self.out_original_mode);
+            }
         }
     }
 }

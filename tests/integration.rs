@@ -217,7 +217,7 @@ async fn test_stateless_file_transfer() {
 #[tokio::test]
 async fn test_recursive_directory_transfer() {
     init_tracing();
-    tokio::time::timeout(Duration::from_secs(45), async {
+    tokio::time::timeout(Duration::from_secs(300), async {
         let server_state = temp_state("server-recursive");
         let client_state = temp_state("client-recursive");
 

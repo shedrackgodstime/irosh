@@ -370,11 +370,24 @@ impl Session {
     /// Best-effort check if a remote path is a directory.
     async fn is_remote_dir(&mut self, path: impl AsRef<std::path::Path>) -> Result<bool> {
         let path_str = path.as_ref().display().to_string();
-        // Use an extremely robust check with unique results, making it the ONLY thing on the line.
-        let check_cmd = format!(
-            "if [ -d \"{}\" ]; then echo '___IROSH_IS_DIR_YES___'; else echo '___IROSH_IS_DIR_NO___'; fi",
-            path_str
-        );
+
+        let is_windows = self
+            .remote_metadata()
+            .map(|m| m.os.to_lowercase().contains("windows"))
+            .unwrap_or(false);
+
+        let check_cmd = if is_windows {
+            format!(
+                "if (Test-Path -LiteralPath \"{}\" -PathType Container) {{ echo '___IROSH_IS_DIR_YES___' }} else {{ echo '___IROSH_IS_DIR_NO___' }}",
+                path_str.replace('"', "`\"")
+            )
+        } else {
+            format!(
+                "if [ -d \"{}\" ]; then echo '___IROSH_IS_DIR_YES___'; else echo '___IROSH_IS_DIR_NO___'; fi",
+                path_str.replace('"', "\\\"")
+            )
+        };
+
         let output = self.capture_exec(&check_cmd).await?;
         let stdout_str = String::from_utf8_lossy(&output.stdout);
 

@@ -535,7 +535,23 @@ impl ServerHandler {
         }
         #[cfg(not(unix))]
         {
-            let _ = (channel, signal);
+            use windows_sys::Win32::System::Console::*;
+            let channels = self.lock_channels();
+            if let Some(state_entry) = channels.get(&channel)
+                && let Some(process) = state_entry.process.as_ref()
+                && let Some(pid) = process.pid
+            {
+                let event = match signal {
+                    russh::Sig::INT => Some(CTRL_C_EVENT),
+                    russh::Sig::QUIT | russh::Sig::ABRT => Some(CTRL_BREAK_EVENT),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    unsafe {
+                        GenerateConsoleCtrlEvent(event, pid);
+                    }
+                }
+            }
         }
     }
 }

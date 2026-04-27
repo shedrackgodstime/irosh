@@ -8,8 +8,8 @@ use tokio::io::AsyncWriteExt;
 
 use crate::server::transfer::ShellContext;
 use crate::server::transfer::helpers::{
-    PreparedPutDestination, atomic_rename_failure, prepare_put_destination, spawn_upload_helper,
-    target_exists_failure,
+    PreparedPutDestination, UploadSink, atomic_rename_failure, prepare_put_destination,
+    spawn_upload_helper, target_exists_failure,
 };
 
 pub(crate) async fn handle_put_request(
@@ -36,96 +36,89 @@ pub(crate) async fn handle_put_request(
         part_arg,
     } = prepared;
 
-    let mut child = spawn_upload_helper(context, &part_arg).await?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| ServerError::TransferFailed {
-            details: "upload helper stdin unavailable".to_string(),
+    let mut sink = spawn_upload_helper(context, &part_arg).await?;
+    let mut transfer_failed = false;
+    let mut received = 0u64;
+    {
+        let mut stdin = sink.stdin().ok_or_else(|| ServerError::TransferFailed {
+            details: "upload helper sink unavailable".to_string(),
         })?;
 
-    write_put_ready(
-        stream,
-        &TransferReady {
-            size: request.size,
-            mode: request.mode,
-        },
-    )
-    .await
-    .map_err(TransportError::from)?;
+        write_put_ready(
+            stream,
+            &TransferReady {
+                size: request.size,
+                mode: request.mode,
+            },
+        )
+        .await
+        .map_err(TransportError::from)?;
 
-    let mut received = 0u64;
-    let mut transfer_failed = false;
-    loop {
-        match read_next_frame(stream)
-            .await
-            .map_err(TransportError::from)?
-        {
-            TransferFrame::PutChunk(chunk) => {
-                received += chunk.len() as u64;
-                if let Err(err) = stdin.write_all(&chunk).await {
-                    tracing::warn!("Failed to write to upload helper: {}", err);
+
+        loop {
+            match read_next_frame(stream)
+                .await
+                .map_err(TransportError::from)?
+            {
+                TransferFrame::PutChunk(chunk) => {
+                    received += chunk.len() as u64;
+                    if let Err(err) = stdin.write_all(&chunk).await {
+                        tracing::warn!("Failed to write to upload helper: {}", err);
+                        transfer_failed = true;
+                        break;
+                    }
+                }
+                TransferFrame::PutComplete(complete) => {
+                    if complete.size != received {
+                        write_transfer_error(
+                            stream,
+                            &TransferFailure::new(
+                                TransferFailureCode::SizeMismatch,
+                                format!("received {}, client reported {}", received, complete.size),
+                            ),
+                        )
+                        .await
+                        .map_err(TransportError::from)?;
+                        transfer_failed = true;
+                    }
+                    break;
+                }
+                TransferFrame::Error(_) => {
+                    transfer_failed = true;
+                    break;
+                }
+                other => {
+                    let _ = write_transfer_error(
+                        stream,
+                        &TransferFailure::new(
+                            TransferFailureCode::UnexpectedFrame,
+                            format!("{other:?}"),
+                        ),
+                    )
+                    .await;
                     transfer_failed = true;
                     break;
                 }
             }
-            TransferFrame::PutComplete(complete) => {
-                if complete.size != received {
-                    write_transfer_error(
-                        stream,
-                        &TransferFailure::new(
-                            TransferFailureCode::SizeMismatch,
-                            format!("received {}, client reported {}", received, complete.size),
-                        ),
-                    )
-                    .await
-                    .map_err(TransportError::from)?;
-                    transfer_failed = true;
-                }
-                break;
-            }
-            TransferFrame::Error(_) => {
-                transfer_failed = true;
-                break;
-            }
-            other => {
-                let _ = write_transfer_error(
-                    stream,
-                    &TransferFailure::new(
-                        TransferFailureCode::UnexpectedFrame,
-                        format!("{other:?}"),
-                    ),
-                )
-                .await;
-                transfer_failed = true;
-                break;
-            }
         }
+
+        let _ = stdin.flush().await;
     }
 
-    let _ = stdin.flush().await;
-    drop(stdin);
+    let helper_res = sink.wait().await;
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| ServerError::TransferFailed {
-            details: format!("waiting for upload helper failed: {e}"),
-        })?;
-
-    if transfer_failed || !output.status.success() {
+    if transfer_failed || helper_res.is_err() {
         context.remove_file_if_present(&part_arg).await;
 
-        if !output.status.success() && !transfer_failed {
-            write_transfer_error(
-                stream,
-                &TransferFailure::new(
-                    TransferFailureCode::HelperFailed,
-                    String::from_utf8_lossy(&output.stderr).trim().to_string(),
-                ),
-            )
-            .await
-            .map_err(TransportError::from)?;
+        if let Err(err) = helper_res {
+            if !transfer_failed {
+                write_transfer_error(
+                    stream,
+                    &TransferFailure::new(TransferFailureCode::HelperFailed, err.to_string()),
+                )
+                .await
+                .map_err(TransportError::from)?;
+            }
         }
         return Ok(());
     }
@@ -192,52 +185,50 @@ async fn handle_recursive_put_request(
                         }
                     };
 
-                    let mut child = spawn_upload_helper(context, &prepared.part_arg).await?;
-                    let mut stdin =
-                        child
-                            .stdin
-                            .take()
-                            .ok_or_else(|| ServerError::TransferFailed {
-                                details: "upload helper stdin unavailable".to_string(),
-                            })?;
-
-                    let mut file_received = 0u64;
+                    let mut sink = spawn_upload_helper(context, &prepared.part_arg).await?;
                     let mut entry_failed = false;
-                    loop {
-                        match read_next_frame(stream)
-                            .await
-                            .map_err(TransportError::from)?
-                        {
-                            TransferFrame::PutChunk(chunk) => {
-                                file_received += chunk.len() as u64;
-                                if let Err(e) = stdin.write_all(&chunk).await {
-                                    tracing::warn!("Failed to write to upload helper: {}", e);
-                                    entry_failed = true;
-                                    break;
+                    let mut file_received = 0u64;
+                    {
+                        let mut stdin =
+                            sink.stdin().ok_or_else(|| ServerError::TransferFailed {
+                                details: "upload helper sink unavailable".to_string(),
+                            })?;
+                        loop {
+                            match read_next_frame(stream)
+                                .await
+                                .map_err(TransportError::from)?
+                            {
+                                TransferFrame::PutChunk(chunk) => {
+                                    file_received += chunk.len() as u64;
+                                    if let Err(e) = stdin.write_all(&chunk).await {
+                                        tracing::warn!("Failed to write to upload helper: {}", e);
+                                        entry_failed = true;
+                                        break;
+                                    }
                                 }
-                            }
-                            TransferFrame::EntryComplete(_) => break,
-                            other => {
-                                return Err(ServerError::TransferFailed {
-                                    details: format!(
-                                        "unexpected frame during recursive entry stream: {other:?}"
-                                    ),
+                                TransferFrame::EntryComplete(_) => break,
+                                other => {
+                                    return Err(ServerError::TransferFailed {
+                                        details: format!(
+                                            "unexpected frame during recursive entry stream: {other:?}"
+                                        ),
+                                    }
+                                    .into());
                                 }
-                                .into());
                             }
                         }
+                        let _ = stdin.flush().await;
+                        total_received += file_received;
                     }
-                    drop(stdin);
-                    let output = child.wait_with_output().await.map_err(|e| {
-                        ServerError::TransferFailed {
-                            details: format!("waiting for upload helper failed: {e}"),
-                        }
-                    })?;
+                    let helper_res = sink.wait().await;
 
-                    if entry_failed || !output.status.success() {
+                    if entry_failed || helper_res.is_err() {
                         context.remove_file_if_present(&prepared.part_arg).await;
                         return Err(ServerError::TransferFailed {
-                            details: "recursive entry upload failed".to_string(),
+                            details: format!(
+                                "recursive entry upload failed: {}",
+                                helper_res.err().map(|e| e.to_string()).unwrap_or_default()
+                            ),
                         }
                         .into());
                     }

@@ -2,14 +2,13 @@ use anyhow::{Context, Result};
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use irosh::session::current_terminal_size;
-#[cfg(unix)]
 use irosh::session::{AsyncStdin, RawTerminal};
 
 use irosh::{
     Client, ClientOptions, PtyOptions, SecurityConfig, Session, SessionEvent, StateConfig,
 };
 use std::io::IsTerminal;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tracing_subscriber::{EnvFilter, reload};
 
@@ -167,7 +166,6 @@ where
     let stdin_is_tty = std::io::stdin().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
 
-    #[cfg(unix)]
     let _raw_terminal = if stdin_is_tty && stdout_is_tty {
         Some(RawTerminal::new(0)?)
     } else {
@@ -261,10 +259,7 @@ where
 }
 
 async fn drive_session(mut session: Session) -> Result<()> {
-    #[cfg(unix)]
     let mut stdin = AsyncStdin::new()?;
-    #[cfg(not(unix))]
-    let mut stdin = tokio::io::stdin();
 
     let mut stdout = tokio::io::stdout();
     let mut stderr = tokio::io::stderr();
@@ -278,6 +273,22 @@ async fn drive_session(mut session: Session) -> Result<()> {
     };
     let mut input = InputEngine::new(transfer_context);
 
+    let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel::<()>(1);
+    #[cfg(not(unix))]
+    if interactive {
+        tokio::spawn(async move {
+            let mut last_size = current_terminal_size();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                let current = current_terminal_size();
+                if current != last_size {
+                    last_size = current;
+                    let _ = resize_tx.send(()).await;
+                }
+            }
+        });
+    }
+
     #[cfg(unix)]
     let mut sigwinch = if interactive {
         Some(tokio::signal::unix::signal(
@@ -286,8 +297,6 @@ async fn drive_session(mut session: Session) -> Result<()> {
     } else {
         None
     };
-    #[cfg(not(unix))]
-    let _sigwinch: Option<bool> = None;
 
     loop {
         tokio::select! {
@@ -317,7 +326,7 @@ async fn drive_session(mut session: Session) -> Result<()> {
                 if let Some(s) = sigwinch.as_mut() { s.recv().await; }
                 else { std::future::pending::<()>().await; }
                 #[cfg(not(unix))]
-                std::future::pending::<()>().await;
+                resize_rx.recv().await;
             } => {
                 let size = current_terminal_size();
                 let _ = session.resize(size).await;

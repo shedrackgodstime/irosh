@@ -109,121 +109,114 @@ impl ShellContext {
     }
 
     pub(super) async fn path_exists(self, path: &str) -> Result<bool> {
-        match self {
-            Self::Live { .. } => {
-                let mut command = Command::new("test");
-                command.arg("-e").arg(path);
-                self.configure(&mut command);
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("test");
+            command.arg("-e").arg(path);
+            self.configure(&mut command);
 
-                let status = command
-                    .status()
-                    .await
-                    .map_err(|e| ServerError::ShellError {
-                        details: format!("failed to probe remote path existence: {e}"),
-                    })?;
-                Ok(status.success())
-            }
-            Self::Stateless => Ok(tokio::fs::try_exists(path).await?),
+            let status = command
+                .status()
+                .await
+                .map_err(|e| ServerError::ShellError {
+                    details: format!("failed to probe remote path existence: {e}"),
+                })?;
+            return Ok(status.success());
         }
+
+        Ok(tokio::fs::try_exists(path).await?)
     }
 
     pub(super) async fn path_missing(self, path: &str) -> Result<bool> {
-        match self {
-            Self::Live { .. } => {
-                let mut command = Command::new("test");
-                command.arg("!").arg("-e").arg(path);
-                self.configure(&mut command);
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("test");
+            command.arg("!").arg("-e").arg(path);
+            self.configure(&mut command);
 
-                let status = command
-                    .status()
-                    .await
-                    .map_err(|e| ServerError::ShellError {
-                        details: format!("failed to probe remote path absence: {e}"),
-                    })?;
-                Ok(status.success())
-            }
-            Self::Stateless => Ok(!tokio::fs::try_exists(path).await?),
+            let status = command
+                .status()
+                .await
+                .map_err(|e| ServerError::ShellError {
+                    details: format!("failed to probe remote path absence: {e}"),
+                })?;
+            return Ok(status.success());
         }
+
+        Ok(!tokio::fs::try_exists(path).await?)
     }
 
     pub(super) async fn create_dir_all(self, path: &Path) -> Result<bool> {
-        match self {
-            Self::Live { .. } => {
-                let mut command = Command::new("mkdir");
-                command.arg("-p").arg("--").arg(path);
-                self.configure(&mut command);
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("mkdir");
+            command.arg("-p").arg("--").arg(path);
+            self.configure(&mut command);
 
-                let status = command
-                    .status()
-                    .await
-                    .map_err(|e| ServerError::ShellError {
-                        details: format!("failed to spawn mkdir: {e}"),
-                    })?;
-                Ok(status.success())
-            }
-            Self::Stateless => {
-                tokio::fs::create_dir_all(path).await?;
-                Ok(true)
-            }
+            let status = command
+                .status()
+                .await
+                .map_err(|e| ServerError::ShellError {
+                    details: format!("failed to spawn mkdir: {e}"),
+                })?;
+            return Ok(status.success());
         }
+
+        tokio::fs::create_dir_all(path).await?;
+        Ok(true)
     }
 
     pub(super) async fn remove_file_if_present(self, path: &str) {
-        match self {
-            Self::Live { .. } => {
-                let mut command = Command::new("rm");
-                command.arg("-f").arg("--").arg(path);
-                self.configure(&mut command);
-                let _ = command.status().await;
-            }
-            Self::Stateless => {
-                let _ = tokio::fs::remove_file(path).await;
-            }
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("rm");
+            command.arg("-f").arg("--").arg(path);
+            self.configure(&mut command);
+            let _ = command.status().await;
+            return;
         }
+
+        let _ = tokio::fs::remove_file(path).await;
     }
 
     pub(super) async fn rename(self, from: &str, to: &str) -> Result<bool> {
-        match self {
-            Self::Live { .. } => {
-                let mut command = Command::new("mv");
-                command.arg("-f").arg("--").arg(from).arg(to);
-                self.configure(&mut command);
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("mv");
+            command.arg("-f").arg("--").arg(from).arg(to);
+            self.configure(&mut command);
 
-                let status = command
-                    .status()
-                    .await
-                    .map_err(|e| ServerError::ShellError {
-                        details: format!("failed to spawn mv for atomic rename: {e}"),
-                    })?;
-                Ok(status.success())
-            }
-            Self::Stateless => {
-                tokio::fs::rename(from, to).await?;
-                Ok(true)
-            }
+            let status = command
+                .status()
+                .await
+                .map_err(|e| ServerError::ShellError {
+                    details: format!("failed to spawn mv for atomic rename: {e}"),
+                })?;
+            return Ok(status.success());
         }
+
+        tokio::fs::rename(from, to).await?;
+        Ok(true)
     }
 
     pub(super) async fn chmod(self, path: &str, mode: u32) {
-        match self {
-            Self::Live { .. } => {
-                let mut command = Command::new("chmod");
-                command.arg(format!("{:o}", mode)).arg("--").arg(path);
-                self.configure(&mut command);
-                let _ = command.status().await;
-            }
-            Self::Stateless => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-                        .await;
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = (path, mode);
-                }
-            }
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("chmod");
+            command.arg(format!("{:o}", mode)).arg("--").arg(path);
+            self.configure(&mut command);
+            let _ = command.status().await;
+            return;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).await;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (path, mode);
         }
     }
 }

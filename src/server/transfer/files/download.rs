@@ -7,7 +7,9 @@ use crate::transport::transfer::{
 use tokio::io::AsyncReadExt;
 
 use crate::server::transfer::ShellContext;
-use crate::server::transfer::helpers::{probe_download_size, spawn_download_helper};
+use crate::server::transfer::helpers::{
+    DownloadSource, probe_download_size, spawn_download_helper,
+};
 
 pub(crate) async fn handle_get_request(
     stream: &mut IrohDuplex,
@@ -29,64 +31,63 @@ pub(crate) async fn handle_get_request(
         }
     };
 
-    let (mut child, helper_source) = spawn_download_helper(context, &source_path).await?;
-
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| ServerError::TransferFailed {
-            details: "stdout pipe unavailable".to_string(),
+    let (mut source, helper_source) = spawn_download_helper(context, &source_path).await?;
+    {
+        let mut stdout = source.stdout().ok_or_else(|| ServerError::TransferFailed {
+            details: "download source pipe unavailable".to_string(),
         })?;
 
-    write_get_ready(
-        stream,
-        &TransferReady {
-            size: expected_size,
-            mode: None,
-        },
-    )
-    .await
-    .map_err(TransportError::from)?;
-
-    let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
-    loop {
-        let count = stdout
-            .read(&mut buffer)
-            .await
-            .map_err(|e| ServerError::TransferFailed {
-                details: format!("reading download helper stdout failed: {e}"),
-            })?;
-        if count == 0 {
-            break;
-        }
-        write_get_chunk(stream, &buffer[..count])
-            .await
-            .map_err(TransportError::from)?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| ServerError::TransferFailed {
-            details: format!("waiting for download helper failed: {e}"),
-        })?;
-    if !output.status.success() {
-        write_transfer_error(
+        write_get_ready(
             stream,
-            &TransferFailure::new(
-                TransferFailureCode::HelperFailed,
-                format!(
-                    "{}; context={:?}; requested={}; helper_arg={}",
-                    String::from_utf8_lossy(&output.stderr).trim(),
-                    context,
-                    source_path.display(),
-                    helper_source
-                ),
-            ),
+            &TransferReady {
+                size: expected_size,
+                mode: None,
+            },
         )
         .await
         .map_err(TransportError::from)?;
-        return Ok(());
+
+        let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
+        loop {
+            let count = stdout
+                .read(&mut buffer)
+                .await
+                .map_err(|e| ServerError::TransferFailed {
+                    details: format!("reading download source failed: {e}"),
+                })?;
+            if count == 0 {
+                break;
+            }
+            write_get_chunk(stream, &buffer[..count])
+                .await
+                .map_err(TransportError::from)?;
+        }
+    }
+
+    if let DownloadSource::Process(child) = source {
+        let output = child.wait_with_output().await.map_err(|e| {
+            ServerError::TransferFailed {
+                details: format!("waiting for download helper failed: {e}"),
+            }
+        })?;
+        if !output.status.success() {
+            write_transfer_error(
+                stream,
+                &TransferFailure::new(
+                    TransferFailureCode::HelperFailed,
+                    format!(
+                        "{}; context={:?}; requested={}; helper_arg={}",
+                        String::from_utf8_lossy(&output.stderr).trim(),
+                        context,
+                        source_path.display(),
+                        helper_source
+                    ),
+                ),
+            )
+            .await
+            .map_err(TransportError::from)?;
+            return Ok(());
+        }
     }
 
     write_get_complete(
@@ -119,57 +120,63 @@ async fn handle_recursive_get_request(
 
     let mut total_sent = 0u64;
 
-    match context {
-        ShellContext::Stateless => {
-            let walk = walkdir::WalkDir::new(&source_root);
-            for entry in walk {
-                let entry = entry.map_err(|e| ServerError::TransferFailed {
-                    details: format!("failed to walk remote directory: {e}"),
-                })?;
+    let use_native_walk = true;
+    #[cfg(target_os = "linux")]
+    if let ShellContext::Live { .. } = context {
+        use_native_walk = false;
+    }
 
-                let relative = entry.path().strip_prefix(&source_root).map_err(|_| {
-                    ServerError::TransferFailed {
-                        details: "failed to resolve relative path during remote walk".to_string(),
-                    }
-                })?;
+    if use_native_walk {
+        let walk = walkdir::WalkDir::new(&source_root);
+        for entry in walk {
+            let entry = entry.map_err(|e| ServerError::TransferFailed {
+                details: format!("failed to walk remote directory: {e}"),
+            })?;
 
-                if relative.as_os_str().is_empty() {
-                    continue;
+            let relative = entry.path().strip_prefix(&source_root).map_err(|_| {
+                ServerError::TransferFailed {
+                    details: "failed to resolve relative path during remote walk".to_string(),
                 }
+            })?;
 
-                let is_dir = entry.file_type().is_dir();
-                let metadata = entry.metadata().map_err(|e| ServerError::TransferFailed {
-                    details: format!("failed to read remote metadata: {e}"),
-                })?;
+            if relative.as_os_str().is_empty() {
+                continue;
+            }
 
-                let size = if is_dir { 0 } else { metadata.len() };
-                #[cfg(unix)]
-                let mode = {
-                    use std::os::unix::fs::PermissionsExt;
-                    Some(metadata.permissions().mode() & 0o777)
-                };
-                #[cfg(not(unix))]
-                let mode = None;
+            let is_dir = entry.file_type().is_dir();
+            let metadata = entry.metadata().map_err(|e| ServerError::TransferFailed {
+                details: format!("failed to read remote metadata: {e}"),
+            })?;
 
-                crate::transport::transfer::write_new_entry(
-                    stream,
-                    &crate::transport::transfer::EntryHeader {
-                        path: relative.display().to_string(),
-                        size,
-                        mode,
-                        is_dir,
-                    },
-                )
-                .await
-                .map_err(TransportError::from)?;
+            let size = if is_dir { 0 } else { metadata.len() };
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                Some(metadata.permissions().mode() & 0o777)
+            };
+            #[cfg(not(unix))]
+            let mode = None;
 
-                if !is_dir {
-                    stream_file_content(stream, context, entry.path(), &mut total_sent).await?;
-                }
+            crate::transport::transfer::write_new_entry(
+                stream,
+                &crate::transport::transfer::EntryHeader {
+                    path: relative.display().to_string(),
+                    size,
+                    mode,
+                    is_dir,
+                },
+            )
+            .await
+            .map_err(TransportError::from)?;
+
+            if !is_dir {
+                stream_file_content(stream, context, entry.path(), &mut total_sent).await?;
             }
         }
-        ShellContext::Live { .. } => {
-            // In a Live context, we MUST use an external 'find' command to see the
+    } else {
+        #[cfg(target_os = "linux")]
+        {
+            // In a Live context on Linux, we MUST use an external 'find' command to see the
             // filesystem from the perspective of the target namespace.
             // We use null terminators to handle filenames with spaces, colons, or newlines.
             let mut find_cmd = tokio::process::Command::new("sh");
@@ -256,13 +263,10 @@ async fn stream_file_content(
     path: &std::path::Path,
     total_sent: &mut u64,
 ) -> Result<()> {
-    let (mut child, _) = spawn_download_helper(context, path).await?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| ServerError::TransferFailed {
-            details: "stdout pipe unavailable".to_string(),
-        })?;
+    let (mut source, _) = spawn_download_helper(context, path).await?;
+    let mut stdout = source.stdout().ok_or_else(|| ServerError::TransferFailed {
+        details: "download source pipe unavailable".to_string(),
+    })?;
 
     let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
     loop {
@@ -270,7 +274,7 @@ async fn stream_file_content(
             .read(&mut buffer)
             .await
             .map_err(|e| ServerError::TransferFailed {
-                details: format!("reading download helper stdout failed: {e}"),
+                details: format!("reading download source failed: {e}"),
             })?;
         if count == 0 {
             break;
@@ -280,7 +284,6 @@ async fn stream_file_content(
             .map_err(TransportError::from)?;
         *total_sent += count as u64;
     }
-    let _ = child.wait().await;
 
     crate::transport::transfer::write_entry_complete(
         stream,
