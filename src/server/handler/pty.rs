@@ -14,6 +14,14 @@ use super::ServerHandler;
 
 use tokio_util::sync::CancellationToken;
 
+/// Shared ownership of the master PTY handle.
+///
+/// Both `RunningPty` (for resize operations) and the spawned reader task (for
+/// closing the ConPTY on Windows when the child exits) need to access the master.
+/// Wrapping it in `Arc<StdMutex<Option<...>>>` allows the task to take and drop the
+/// handle without requiring `RunningPty` to be moved into the task.
+type SharedMaster = Arc<StdMutex<Option<Box<dyn MasterPty + Send>>>>;
+
 #[derive(Default)]
 pub(super) struct ChannelState {
     pty: PtySpec,
@@ -22,7 +30,9 @@ pub(super) struct ChannelState {
 }
 
 struct RunningPty {
-    master: Box<dyn MasterPty + Send>,
+    /// Shared master PTY handle. Kept here for `resize` and, on Windows, to allow
+    /// the reader task to close the ConPTY when the child exits.
+    master: SharedMaster,
     writer: Option<Box<dyn Write + Send>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     pid: Option<u32>,
@@ -209,6 +219,12 @@ impl ServerHandler {
             }
         }
 
+        // Wrap the master in a shared handle. The spawned task holds a clone so
+        // it can close the ConPTY on Windows when the child exits (which unblocks
+        // the blocking reader thread). The `RunningPty` entry retains the other
+        // clone for resize operations.
+        let shared_master: SharedMaster = Arc::new(StdMutex::new(Some(pair.master)));
+
         let handle = session.handle();
         let channels_ref = self.channels.clone();
         let shell_state = self.shell_state.clone();
@@ -217,8 +233,11 @@ impl ServerHandler {
         #[cfg(unix)]
         let task_shutdown = shutdown.clone();
 
+        // Clone for the spawned task (Windows only needs it to drop on child exit).
+        let task_master = shared_master.clone();
+
         state_entry.process = Some(RunningPty {
-            master: pair.master,
+            master: shared_master,
             writer: Some(writer),
             killer,
             pid,
@@ -306,9 +325,12 @@ impl ServerHandler {
             };
 
             #[cfg(not(unix))]
+            let reader_done_cloned = reader_done.clone();
+
+            #[cfg(not(unix))]
             let reader_future = async move {
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
-                let reader_done_task = reader_done.clone();
+                let reader_done_task = reader_done_cloned;
 
                 info!(
                     "Spawning blocking PTY reader thread for channel {:?}",
@@ -370,9 +392,28 @@ impl ServerHandler {
             let exit_status = tokio::select! {
                 status = &mut child_waiter => {
                     let status = status.unwrap_or(255);
-                    // Child exited. On Windows, the reader might stay blocked forever.
-                    // We signal it to stop, but we don't await it here to avoid hangs.
+                    // Child exited first. Signal the reader loop to stop.
                     reader_done.cancel();
+                    // On Windows (non-unix), the blocking reader thread is stuck on
+                    // `reader.read()` which never returns EOF until the ConPTY write
+                    // end is closed. Dropping the master PTY handle here closes the
+                    // ConPTY session, causing the reader's `read()` to return an
+                    // error/EOF and allowing the blocking thread to exit cleanly.
+                    //
+                    // On Unix the master fd is set to non-blocking and the async
+                    // `AsyncFd`-based reader already handles cancellation, so we
+                    // do not need to drop the master here.
+                    #[cfg(not(unix))]
+                    {
+                        if let Ok(mut guard) = task_master.lock() {
+                            drop(guard.take());
+                        }
+                    }
+                    #[cfg(unix)]
+                    {
+                        // Suppress unused-variable warning on Unix builds.
+                        let _ = &task_master;
+                    }
                     status
                 }
                 _ = reader_future => {
@@ -435,7 +476,13 @@ impl ServerHandler {
         let state_entry = channels.entry(channel).or_default();
         state_entry.pty.size = size;
         if let Some(process) = state_entry.process.as_ref() {
-            let _ = process.master.resize(size);
+            // The master may already have been dropped (e.g. on Windows after
+            // the child exited). Silently ignore the resize in that case.
+            if let Ok(guard) = process.master.lock() {
+                if let Some(master) = guard.as_ref() {
+                    let _ = master.resize(size);
+                }
+            }
         }
         session.channel_success(channel)?;
         Ok(())
@@ -459,6 +506,11 @@ impl ServerHandler {
             self.shell_state.clear_shell_pid_if_matches(process.pid);
             process.writer.take();
             let _ = process.killer.kill();
+            // Drop the master PTY handle to ensure any ConPTY session is fully
+            // torn down, releasing all associated OS resources.
+            if let Ok(mut guard) = process.master.lock() {
+                drop(guard.take());
+            }
         }
     }
 

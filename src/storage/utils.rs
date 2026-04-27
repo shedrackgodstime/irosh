@@ -47,6 +47,7 @@ pub fn atomic_write_secure(path: &Path, data: &[u8]) -> Result<()> {
         path: tmp_path.clone(),
         source,
     })?;
+    drop(file);
 
     // 5. Atomic rename
     fs::rename(&tmp_path, path).map_err(|source| StorageError::FileWrite {
