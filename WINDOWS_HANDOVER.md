@@ -27,6 +27,15 @@ Most core features have been implemented and verified on Windows, but integratio
     - **Recent Fix**: Refactored server helpers to avoid PowerShell for file I/O. This significantly improved local performance, but P2P latency remains a factor.
 2.  **Windows File Locking**:
     - Linker errors (`LNK1104`) often occur during rapid test cycles if previous integration test processes aren't fully terminated. Use `taskkill /IM integration* /F` to clear them.
+3.  **SSH Handshake Failure**:
+    - If you see `🚫 SSH HANDSHAKE FAILED` / `The SSH peer disconnected during handshake`, it typically means the server rejected the client's public key.
+    - **Resolution**:
+        - Start the server with `--authorize <YOUR_PUBLIC_KEY>` (get your key via `irosh identity`).
+        - OR start the server with `--insecure` to bypass authentication for testing.
+        - Ensure the server is actually running and you are using the correct Ticket.
+
+## Current State of Build
+- `cargo build` and `cargo clippy` now pass on Windows without warnings. Unused imports and variants in `src/server/transfer/helpers.rs` have been conditionally allowed or hidden behind `#[cfg]` to maintain parity with Linux.
 
 ## Recommended Next Steps
 1.  **Debug Recursive Transfer**:
