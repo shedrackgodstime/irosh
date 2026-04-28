@@ -256,8 +256,6 @@ impl ServerHandler {
                 operation: "confirm channel success",
                 details: e.to_string(),
             })?;
-        
-        let _ = session.data(channel, "\r\n🔗 Connected to Irosh (Windows Host)\r\n\r\n".into());
 
         tokio::spawn(async move {
             debug!("PTY reader task started for channel {:?}", channel);
@@ -270,6 +268,19 @@ impl ServerHandler {
 
             let handle_for_task = handle.clone();
             let mut reader = reader;
+
+            // On Windows, shells can be "shy" and won't print a prompt until they receive input.
+            // We send a carriage return to "wake up" the prompt for a better SSH-like experience.
+            #[cfg(windows)]
+            {
+                let mut channels = channels_ref.lock().unwrap();
+                if let Some(state) = channels.get_mut(&channel) {
+                    if let Some(writer) = &mut state.process.as_mut().and_then(|p| p.writer.as_mut()) {
+                        let _ = writer.write_all(b"\r");
+                        let _ = writer.flush();
+                    }
+                }
+            }
 
             let reader_done = CancellationToken::new();
 
