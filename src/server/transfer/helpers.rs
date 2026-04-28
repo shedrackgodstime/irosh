@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
+#[allow(unused_imports)]
 use tokio::process::{Child, Command};
 
 use crate::error::{Result, ServerError};
@@ -65,7 +66,8 @@ pub(super) fn atomic_rename_failure(path: &str) -> TransferFailure {
 }
 
 pub(super) enum UploadSink {
-    Process(tokio::process::Child),
+    #[allow(dead_code)]
+    Process(Child),
     File(tokio::fs::File),
 }
 
@@ -190,7 +192,8 @@ pub(super) async fn probe_download_size(
 }
 
 pub(super) enum DownloadSource {
-    Process(tokio::process::Child),
+    #[allow(dead_code)]
+    Process(Child),
     File(tokio::fs::File),
 }
 
