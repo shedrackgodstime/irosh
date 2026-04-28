@@ -466,7 +466,7 @@ impl ServerHandler {
     }
 
     pub(super) fn write_channel_data(&self, channel: ChannelId, data: &[u8]) {
-        info!(
+        debug!(
             "Writing {} SSH bytes into PTY channel {:?}: {}",
             data.len(),
             channel,
