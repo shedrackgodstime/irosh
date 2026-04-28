@@ -366,7 +366,14 @@ impl Session {
             .await
             .map_err(TransportError::from)?
         {
-            TransferFrame::PutComplete(_) => Ok(()),
+            TransferFrame::PutComplete(complete) if complete.size == total_sent => Ok(()),
+            TransferFrame::PutComplete(complete) => Err(ClientError::UploadFailed {
+                details: format!(
+                    "remote reported {} bytes saved, expected {total_sent}",
+                    complete.size
+                ),
+            }
+            .into()),
             TransferFrame::Error(details) => Err(ClientError::TransferRejected {
                 details: details.to_string(),
             }

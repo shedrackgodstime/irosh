@@ -10,6 +10,7 @@ use irosh::{
 use std::io::IsTerminal;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use tracing::info;
 use tracing_subscriber::{EnvFilter, reload};
 
 pub mod commands;
@@ -176,10 +177,14 @@ where
     if stdin_is_tty && stdout_is_tty {
         let size = current_terminal_size();
         let term = std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string());
+        info!("Requesting remote PTY: term={term}, cols={}, rows={}", size.cols, size.rows);
         session.request_pty(PtyOptions::new(term, size)).await?;
+        info!("Remote PTY request accepted");
     }
 
+    info!("Requesting remote shell");
     session.start_shell().await?;
+    info!("Remote shell request accepted");
 
     // 6.5 Setup Port Forwarding.
     let mut tunnels = Vec::new();

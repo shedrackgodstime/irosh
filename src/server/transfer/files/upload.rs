@@ -8,8 +8,8 @@ use tokio::io::AsyncWriteExt;
 
 use crate::server::transfer::ShellContext;
 use crate::server::transfer::helpers::{
-    PreparedPutDestination, UploadSink, atomic_rename_failure, prepare_put_destination,
-    spawn_upload_helper, target_exists_failure,
+    PreparedPutDestination, atomic_rename_failure, prepare_put_destination, spawn_upload_helper,
+    target_exists_failure,
 };
 
 pub(crate) async fn handle_put_request(
@@ -218,7 +218,6 @@ async fn handle_recursive_put_request(
                             }
                         }
                         let _ = stdin.flush().await;
-                        total_received += file_received;
                     }
                     let helper_res = sink.wait().await;
 

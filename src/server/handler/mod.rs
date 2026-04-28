@@ -166,7 +166,10 @@ impl server::Handler for ServerHandler {
         _modes: &[(russh::Pty, u32)],
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
-        debug!("pty_request for channel {:?}", channel);
+        info!(
+            "pty_request for channel {:?}: term={}, cols={}, rows={}",
+            channel, term, col_width, row_height
+        );
         self.set_channel_pty(
             channel,
             term,
@@ -194,7 +197,7 @@ impl server::Handler for ServerHandler {
         channel: ChannelId,
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
-        debug!("shell_request for channel {:?}", channel);
+        info!("shell_request for channel {:?}", channel);
         self.start_command(channel, session, None)?;
         Ok(())
     }

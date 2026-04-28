@@ -377,9 +377,11 @@ impl Session {
             .unwrap_or(false);
 
         let check_cmd = if is_windows {
+            // Windows exec requests are served through `cmd.exe /C`, so this
+            // probe must use cmd syntax rather than PowerShell syntax.
             format!(
-                "if (Test-Path -LiteralPath \"{}\" -PathType Container) {{ echo '___IROSH_IS_DIR_YES___' }} else {{ echo '___IROSH_IS_DIR_NO___' }}",
-                path_str.replace('"', "`\"")
+                "if exist \"{}\\NUL\" (echo ___IROSH_IS_DIR_YES___) else (echo ___IROSH_IS_DIR_NO___)",
+                path_str.replace('"', "\"\"")
             )
         } else {
             format!(

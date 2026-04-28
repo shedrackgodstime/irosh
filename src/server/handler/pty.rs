@@ -137,7 +137,7 @@ impl ServerHandler {
             }
             #[cfg(windows)]
             {
-                let mut command_builder = CommandBuilder::new("cmd.exe");
+                let mut command_builder = CommandBuilder::new(windows_command_processor());
                 command_builder.arg("/C");
                 command_builder.arg(command);
                 command_builder
@@ -152,7 +152,7 @@ impl ServerHandler {
         } else {
             #[cfg(windows)]
             {
-                CommandBuilder::new("powershell.exe")
+                CommandBuilder::new(windows_command_processor())
             }
             #[cfg(not(windows))]
             {
@@ -178,6 +178,10 @@ impl ServerHandler {
                 details: format!("failed to spawn command in PTY: {e}"),
             })?;
         let pid = child.process_id();
+        info!(
+            "Spawned PTY child for channel {:?}: command={:?}, pid={:?}",
+            channel, command, pid
+        );
         if command.is_none() {
             info!("Registering PRIMARY shell PID {:?} for session state", pid);
             self.shell_state.set_shell_pid(pid);
@@ -353,8 +357,10 @@ impl ServerHandler {
                             }
                             Ok(n) => {
                                 info!(
-                                    "PTY reader thread read {} bytes for channel {:?}",
-                                    n, channel
+                                    "PTY reader thread read {} bytes for channel {:?}: {}",
+                                    n,
+                                    channel,
+                                    preview_bytes(&buf[..n])
                                 );
                                 if tx.blocking_send(buf[..n].to_vec()).is_err() {
                                     break;
@@ -369,6 +375,12 @@ impl ServerHandler {
                 });
 
                 while let Some(data) = rx.recv().await {
+                    info!(
+                        "Forwarding {} PTY bytes to SSH channel {:?}: {}",
+                        data.len(),
+                        channel,
+                        preview_bytes(&data)
+                    );
                     if let Err(e) = handle_for_task.data(channel, data.into()).await {
                         warn!("Failed to send PTY data to channel {:?}: {:?}", channel, e);
                         break;
@@ -452,6 +464,12 @@ impl ServerHandler {
     }
 
     pub(super) fn write_channel_data(&self, channel: ChannelId, data: &[u8]) {
+        debug!(
+            "Writing {} SSH bytes into PTY channel {:?}: {}",
+            data.len(),
+            channel,
+            preview_bytes(data)
+        );
         let mut channels = self.lock_channels();
         if let Some(state_entry) = channels.get_mut(&channel)
             && let Some(process) = state_entry.process.as_mut()
@@ -553,5 +571,31 @@ impl ServerHandler {
                 }
             }
         }
+    }
+}
+
+#[cfg(windows)]
+fn windows_command_processor() -> String {
+    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+}
+
+fn preview_bytes(bytes: &[u8]) -> String {
+    const MAX_PREVIEW: usize = 24;
+    let preview = &bytes[..bytes.len().min(MAX_PREVIEW)];
+    let rendered = preview
+        .iter()
+        .map(|byte| match byte {
+            b'\r' => "\\r".to_string(),
+            b'\n' => "\\n".to_string(),
+            b'\t' => "\\t".to_string(),
+            0x20..=0x7e => (*byte as char).to_string(),
+            _ => format!("\\x{byte:02x}"),
+        })
+        .collect::<String>();
+
+    if bytes.len() > MAX_PREVIEW {
+        format!("{rendered}...")
+    } else {
+        rendered
     }
 }

@@ -129,6 +129,7 @@ pub async fn exec(host_args: HostArgs, global_args: &GlobalArgs) -> Result<()> {
 
     let shutdown = server.shutdown_handle();
     let mut server_task = tokio::spawn(async move { server.run().await });
+    let mut shutdown_signal = shutdown_signal();
 
     tokio::select! {
         res = &mut server_task => {
@@ -138,7 +139,7 @@ pub async fn exec(host_args: HostArgs, global_args: &GlobalArgs) -> Result<()> {
                 Err(e) => eprintln!("🔥 Server task failed: {}", e),
             }
         }
-        _ = tokio::signal::ctrl_c() => {
+        _ = &mut shutdown_signal => {
             println!("\n👋 Shutting down irosh server...");
             shutdown.close().await;
 
@@ -151,6 +152,34 @@ pub async fn exec(host_args: HostArgs, global_args: &GlobalArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn shutdown_signal() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+}
+
+#[cfg(windows)]
+fn shutdown_signal() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async {
+        use tokio::signal::windows;
+
+        let mut ctrl_c = windows::ctrl_c().expect("failed to install Ctrl+C handler");
+        let mut ctrl_break = windows::ctrl_break().expect("failed to install Ctrl+Break handler");
+        let mut ctrl_close =
+            windows::ctrl_close().expect("failed to install console close handler");
+        let mut ctrl_shutdown =
+            windows::ctrl_shutdown().expect("failed to install shutdown handler");
+
+        tokio::select! {
+            _ = ctrl_c.recv() => {}
+            _ = ctrl_break.recv() => {}
+            _ = ctrl_close.recv() => {}
+            _ = ctrl_shutdown.recv() => {}
+        }
+    })
 }
 
 fn print_ready_simple(ready: &irosh::ServerReady) {
