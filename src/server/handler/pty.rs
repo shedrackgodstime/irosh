@@ -256,6 +256,8 @@ impl ServerHandler {
                 operation: "confirm channel success",
                 details: e.to_string(),
             })?;
+        
+        let _ = session.data(channel, "\r\n🔗 Connected to Irosh (Windows Host)\r\n\r\n".into());
 
         tokio::spawn(async move {
             debug!("PTY reader task started for channel {:?}", channel);
@@ -464,7 +466,7 @@ impl ServerHandler {
     }
 
     pub(super) fn write_channel_data(&self, channel: ChannelId, data: &[u8]) {
-        debug!(
+        info!(
             "Writing {} SSH bytes into PTY channel {:?}: {}",
             data.len(),
             channel,
@@ -576,7 +578,7 @@ impl ServerHandler {
 
 #[cfg(windows)]
 fn windows_command_processor() -> String {
-    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    "powershell.exe".to_string()
 }
 
 fn preview_bytes(bytes: &[u8]) -> String {

@@ -391,7 +391,7 @@ impl RawTerminal {
                 let out_original = out_mode;
                 // Enable VT processing for ANSI escape codes.
                 let new_out_mode =
-                    out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+                    out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
                 let _ = SetConsoleMode(out_handle, new_out_mode);
                 out_original
             } else {
