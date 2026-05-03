@@ -33,7 +33,7 @@ struct RunningPty {
     /// Shared master PTY handle. Kept here for `resize` and, on Windows, to allow
     /// the reader task to close the ConPTY when the child exits.
     master: SharedMaster,
-    writer: Option<Box<dyn Write + Send>>,
+    pty_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     pid: Option<u32>,
     #[cfg(unix)]
@@ -201,12 +201,30 @@ impl ServerHandler {
             .map_err(|e| ServerError::ShellError {
                 details: format!("failed to clone PTY reader: {e}"),
             })?;
-        let writer = pair
+        let shutdown = CancellationToken::new();
+
+        let mut writer = pair
             .master
             .take_writer()
             .map_err(|e| ServerError::ShellError {
                 details: format!("failed to take PTY writer: {e}"),
             })?;
+
+        let (pty_tx, mut pty_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let writer_done = shutdown.clone();
+
+        tokio::task::spawn_blocking(move || {
+            while let Some(data) = pty_rx.blocking_recv() {
+                if writer_done.is_cancelled() {
+                    break;
+                }
+                if let Err(e) = writer.write_all(&data) {
+                    warn!("Failed to write to PTY: {:?}", e);
+                    break;
+                }
+                let _ = writer.flush();
+            }
+        });
 
         #[cfg(unix)]
         let maybe_fd = pair.master.as_raw_fd();
@@ -233,7 +251,6 @@ impl ServerHandler {
         let channels_ref = self.channels.clone();
         let shell_state = self.shell_state.clone();
 
-        let shutdown = CancellationToken::new();
         #[cfg(unix)]
         let task_shutdown = shutdown.clone();
 
@@ -242,7 +259,7 @@ impl ServerHandler {
 
         state_entry.process = Some(RunningPty {
             master: shared_master,
-            writer: Some(writer),
+            pty_tx: Some(pty_tx),
             killer,
             pid,
             #[cfg(unix)]
@@ -473,10 +490,9 @@ impl ServerHandler {
         let mut channels = self.lock_channels();
         if let Some(state_entry) = channels.get_mut(&channel)
             && let Some(process) = state_entry.process.as_mut()
-            && let Some(writer) = process.writer.as_mut()
+            && let Some(pty_tx) = process.pty_tx.as_ref()
         {
-            let _ = writer.write_all(data);
-            let _ = writer.flush();
+            let _ = pty_tx.send(data.to_vec());
         }
     }
 
@@ -511,7 +527,7 @@ impl ServerHandler {
         if let Some(state_entry) = channels.get_mut(&channel)
             && let Some(process) = state_entry.process.as_mut()
         {
-            process.writer.take();
+            process.pty_tx.take();
         }
     }
 
@@ -522,7 +538,7 @@ impl ServerHandler {
         {
             process.shutdown.cancel();
             self.shell_state.clear_shell_pid_if_matches(process.pid);
-            process.writer.take();
+            process.pty_tx.take();
             let _ = process.killer.kill();
             // Drop the master PTY handle to ensure any ConPTY session is fully
             // torn down, releasing all associated OS resources.
