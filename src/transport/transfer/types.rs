@@ -139,6 +139,8 @@ pub struct ExistsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExistsResponse {
     pub exists: bool,
+    #[serde(default)]
+    pub is_dir: bool,
 }
 
 /// A request for tab completion from the remote server.

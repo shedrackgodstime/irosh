@@ -54,7 +54,6 @@ pub(crate) async fn handle_put_request(
         .await
         .map_err(TransportError::from)?;
 
-
         loop {
             match read_next_frame(stream)
                 .await

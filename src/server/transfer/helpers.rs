@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, Command};
+use tokio::io::AsyncWriteExt;
+#[cfg(target_os = "linux")]
+use tokio::process::Command;
 
 use crate::error::{Result, ServerError};
 use crate::transport::transfer::{TransferFailure, TransferFailureCode};
@@ -65,6 +66,7 @@ pub(super) fn atomic_rename_failure(path: &str) -> TransferFailure {
 }
 
 pub(super) enum UploadSink {
+    #[allow(dead_code)]
     Process(tokio::process::Child),
     File(tokio::fs::File),
 }
@@ -76,18 +78,22 @@ impl UploadSink {
                 .stdin
                 .as_mut()
                 .map(|s| Box::new(s) as Box<dyn tokio::io::AsyncWrite + Unpin + Send>),
-            Self::File(file) => Some(Box::new(file) as Box<dyn tokio::io::AsyncWrite + Unpin + Send>),
+            Self::File(file) => {
+                Some(Box::new(file) as Box<dyn tokio::io::AsyncWrite + Unpin + Send>)
+            }
         }
     }
 
     pub(super) async fn wait(self) -> Result<()> {
         match self {
             Self::Process(child) => {
-                let output = child.wait_with_output().await.map_err(|e| {
-                    ServerError::TransferFailed {
-                        details: format!("waiting for upload helper failed: {e}"),
-                    }
-                })?;
+                let output =
+                    child
+                        .wait_with_output()
+                        .await
+                        .map_err(|e| ServerError::TransferFailed {
+                            details: format!("waiting for upload helper failed: {e}"),
+                        })?;
                 if !output.status.success() {
                     return Err(ServerError::TransferFailed {
                         details: String::from_utf8_lossy(&output.stderr).trim().to_string(),
@@ -97,19 +103,18 @@ impl UploadSink {
                 Ok(())
             }
             Self::File(mut file) => {
-                file.flush().await.map_err(|e| ServerError::TransferFailed {
-                    details: format!("failed to flush upload file: {e}"),
-                })?;
+                file.flush()
+                    .await
+                    .map_err(|e| ServerError::TransferFailed {
+                        details: format!("failed to flush upload file: {e}"),
+                    })?;
                 Ok(())
             }
         }
     }
 }
 
-pub(super) async fn spawn_upload_helper(
-    _context: ShellContext,
-    dest: &str,
-) -> Result<UploadSink> {
+pub(super) async fn spawn_upload_helper(_context: ShellContext, dest: &str) -> Result<UploadSink> {
     #[cfg(target_os = "linux")]
     if let ShellContext::Live { .. } = context {
         let mut upload_cmd = Command::new("sh");
@@ -129,11 +134,11 @@ pub(super) async fn spawn_upload_helper(
         })?));
     }
 
-    let file = tokio::fs::File::create(dest).await.map_err(|e| {
-        ServerError::TransferFailed {
+    let file = tokio::fs::File::create(dest)
+        .await
+        .map_err(|e| ServerError::TransferFailed {
             details: format!("failed to create upload file: {e}"),
-        }
-    })?;
+        })?;
     Ok(UploadSink::File(file))
 }
 
@@ -153,11 +158,13 @@ pub(super) async fn probe_download_size(
             .stderr(std::process::Stdio::piped());
         context.configure(&mut size_probe_cmd);
 
-        let size_probe = size_probe_cmd.output().await.map_err(|e| {
-            ServerError::TransferFailed {
-                details: format!("failed to probe download source size: {e}"),
-            }
-        })?;
+        let size_probe =
+            size_probe_cmd
+                .output()
+                .await
+                .map_err(|e| ServerError::TransferFailed {
+                    details: format!("failed to probe download source size: {e}"),
+                })?;
         if !size_probe.status.success() {
             return Ok(Err(TransferFailure::new(
                 TransferFailureCode::HelperFailed,
@@ -173,23 +180,25 @@ pub(super) async fn probe_download_size(
 
         let raw_stdout = String::from_utf8_lossy(&size_probe.stdout);
         let cleaned: String = raw_stdout.chars().filter(|c| c.is_ascii_digit()).collect();
-        let expected_size = cleaned.parse::<u64>().map_err(|e| {
-            ServerError::TransferFailed {
+        let expected_size = cleaned
+            .parse::<u64>()
+            .map_err(|e| ServerError::TransferFailed {
                 details: format!("failed to parse download source size: {e}"),
-            }
-        })?;
+            })?;
         return Ok(Ok(expected_size));
     }
 
-    let metadata = tokio::fs::metadata(source_path).await.map_err(|e| {
-        ServerError::TransferFailed {
-            details: format!("failed to read download source metadata: {e}"),
-        }
-    })?;
+    let metadata =
+        tokio::fs::metadata(source_path)
+            .await
+            .map_err(|e| ServerError::TransferFailed {
+                details: format!("failed to read download source metadata: {e}"),
+            })?;
     Ok(Ok(metadata.len()))
 }
 
 pub(super) enum DownloadSource {
+    #[allow(dead_code)]
     Process(tokio::process::Child),
     File(tokio::fs::File),
 }
@@ -201,7 +210,9 @@ impl DownloadSource {
                 .stdout
                 .as_mut()
                 .map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>),
-            Self::File(file) => Some(Box::new(file) as Box<dyn tokio::io::AsyncRead + Unpin + Send>),
+            Self::File(file) => {
+                Some(Box::new(file) as Box<dyn tokio::io::AsyncRead + Unpin + Send>)
+            }
         }
     }
 }
@@ -221,16 +232,19 @@ pub(super) async fn spawn_download_helper(
             .stderr(std::process::Stdio::piped());
         context.configure(&mut download_cmd);
 
-        let child = download_cmd.spawn().map_err(|e| ServerError::TransferFailed {
-            details: format!("failed to spawn download helper: {e}"),
-        })?;
+        let child = download_cmd
+            .spawn()
+            .map_err(|e| ServerError::TransferFailed {
+                details: format!("failed to spawn download helper: {e}"),
+            })?;
         return Ok((DownloadSource::Process(child), helper_source));
     }
 
-    let file = tokio::fs::File::open(source_path).await.map_err(|e| {
-        ServerError::TransferFailed {
-            details: format!("failed to open download file: {e}"),
-        }
-    })?;
+    let file =
+        tokio::fs::File::open(source_path)
+            .await
+            .map_err(|e| ServerError::TransferFailed {
+                details: format!("failed to open download file: {e}"),
+            })?;
     Ok((DownloadSource::File(file), helper_source))
 }

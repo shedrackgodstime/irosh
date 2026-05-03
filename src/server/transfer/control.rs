@@ -16,8 +16,9 @@ pub(super) async fn handle_exists_request(
     let path_str = resolved.display().to_string();
 
     let exists = context.path_exists(&path_str).await?;
+    let is_dir = context.is_dir(&path_str).await?;
 
-    write_exists_response(stream, &ExistsResponse { exists })
+    write_exists_response(stream, &ExistsResponse { exists, is_dir })
         .await
         .map_err(TransportError::from)?;
     Ok(())

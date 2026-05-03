@@ -127,6 +127,29 @@ impl ShellContext {
         Ok(tokio::fs::try_exists(path).await?)
     }
 
+    pub(super) async fn is_dir(self, path: &str) -> Result<bool> {
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("test");
+            command.arg("-d").arg(path);
+            self.configure(&mut command);
+
+            let status = command
+                .status()
+                .await
+                .map_err(|e| ServerError::ShellError {
+                    details: format!("failed to probe remote path directory: {e}"),
+                })?;
+            return Ok(status.success());
+        }
+
+        if let Ok(metadata) = tokio::fs::metadata(path).await {
+            Ok(metadata.is_dir())
+        } else {
+            Ok(false)
+        }
+    }
+
     pub(super) async fn path_missing(self, path: &str) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {

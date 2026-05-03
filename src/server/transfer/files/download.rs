@@ -49,12 +49,13 @@ pub(crate) async fn handle_get_request(
 
         let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
         loop {
-            let count = stdout
-                .read(&mut buffer)
-                .await
-                .map_err(|e| ServerError::TransferFailed {
-                    details: format!("reading download source failed: {e}"),
-                })?;
+            let count =
+                stdout
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| ServerError::TransferFailed {
+                        details: format!("reading download source failed: {e}"),
+                    })?;
             if count == 0 {
                 break;
             }
@@ -65,11 +66,12 @@ pub(crate) async fn handle_get_request(
     }
 
     if let DownloadSource::Process(child) = source {
-        let output = child.wait_with_output().await.map_err(|e| {
-            ServerError::TransferFailed {
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| ServerError::TransferFailed {
                 details: format!("waiting for download helper failed: {e}"),
-            }
-        })?;
+            })?;
         if !output.status.success() {
             write_transfer_error(
                 stream,

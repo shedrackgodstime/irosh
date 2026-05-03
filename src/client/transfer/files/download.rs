@@ -371,32 +371,31 @@ impl Session {
     async fn is_remote_dir(&mut self, path: impl AsRef<std::path::Path>) -> Result<bool> {
         let path_str = path.as_ref().display().to_string();
 
-        let is_windows = self
-            .remote_metadata()
-            .map(|m| m.os.to_lowercase().contains("windows"))
-            .unwrap_or(false);
+        let mut stream = self
+            .open_transfer_stream("directory check unavailable")
+            .await?;
+        crate::transport::transfer::write_exists_request(
+            &mut stream,
+            &crate::transport::transfer::ExistsRequest { path: path_str },
+        )
+        .await
+        .map_err(crate::error::TransportError::from)?;
 
-        let check_cmd = if is_windows {
-            // Windows exec requests are served through `cmd.exe /C`, so this
-            // probe must use cmd syntax rather than PowerShell syntax.
-            format!(
-                "if exist \"{}\\NUL\" (echo ___IROSH_IS_DIR_YES___) else (echo ___IROSH_IS_DIR_NO___)",
-                path_str.replace('"', "\"\"")
-            )
-        } else {
-            format!(
-                "if [ -d \"{}\" ]; then echo '___IROSH_IS_DIR_YES___'; else echo '___IROSH_IS_DIR_NO___'; fi",
-                path_str.replace('"', "\\\"")
-            )
-        };
-
-        let output = self.capture_exec(&check_cmd).await?;
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-
-        // Search for exact line match to avoid MOTD issues
-        let is_dir = stdout_str
-            .lines()
-            .any(|l| l.trim() == "___IROSH_IS_DIR_YES___");
-        Ok(is_dir)
+        match crate::transport::transfer::read_next_frame(&mut stream)
+            .await
+            .map_err(crate::error::TransportError::from)?
+        {
+            crate::transport::transfer::TransferFrame::ExistsResponse(res) => Ok(res.is_dir),
+            crate::transport::transfer::TransferFrame::Error(e) => {
+                Err(crate::error::ClientError::TransferRejected {
+                    details: e.to_string(),
+                }
+                .into())
+            }
+            other => Err(crate::error::ClientError::DownloadFailed {
+                details: format!("unexpected frame during is_dir check: {:?}", other),
+            }
+            .into()),
+        }
     }
 }
