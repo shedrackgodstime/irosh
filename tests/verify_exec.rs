@@ -22,7 +22,7 @@ async fn verify_exec_output() {
     let shutdown = server.shutdown_handle();
     let server_handle = tokio::spawn(async move { server.run().await });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
         host_key_policy: HostKeyPolicy::AcceptAll,

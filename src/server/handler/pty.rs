@@ -213,17 +213,34 @@ impl ServerHandler {
         let (pty_tx, mut pty_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let writer_done = shutdown.clone();
 
-        tokio::task::spawn_blocking(move || {
-            while let Some(data) = pty_rx.blocking_recv() {
-                if writer_done.is_cancelled() {
-                    break;
+        let channel_id_for_writer = channel;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = writer_done.cancelled() => break,
+                    data = pty_rx.recv() => {
+                        let Some(data) = data else { break };
+                        let res = tokio::task::spawn_blocking(move || {
+                            writer.write_all(&data).map(|_| {
+                                let _ = writer.flush();
+                                writer
+                            })
+                        }).await;
+
+                        match res {
+                            Ok(Ok(w)) => {
+                                writer = w;
+                            }
+                            _ => break,
+                        }
+                    }
                 }
-                if let Err(e) = writer.write_all(&data) {
-                    warn!("Failed to write to PTY: {:?}", e);
-                    break;
-                }
-                let _ = writer.flush();
             }
+            debug!(
+                "PTY writer task finished for channel {:?}",
+                channel_id_for_writer
+            );
         });
 
         #[cfg(unix)]
