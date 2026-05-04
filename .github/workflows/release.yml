@@ -18,19 +18,19 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            bin: irosh irosh-server irosh-client
+            bin: irosh
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            bin: irosh irosh-server irosh-client
+            bin: irosh
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            bin: irosh.exe irosh-server.exe irosh-client.exe
+            bin: irosh.exe
           - target: x86_64-apple-darwin
             os: macos-latest
-            bin: irosh irosh-server irosh-client
+            bin: irosh
           - target: aarch64-apple-darwin
             os: macos-latest
-            bin: irosh irosh-server irosh-client
+            bin: irosh
 
     steps:
       - name: Checkout code
