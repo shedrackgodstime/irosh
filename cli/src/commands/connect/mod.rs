@@ -28,7 +28,7 @@ use crate::Args as GlobalArgs;
 pub struct ConnectArgs {
     /// The connection ticket or a saved peer name.
     #[arg(help = "Connection target (ticket string or peer alias)")]
-    pub target: String,
+    pub target: Option<String>,
 
     /// Bypass host key verification (Danger: vulnerable to MITM).
     #[arg(long, help = "Skip TOFU (Trust On First Use) verification")]
@@ -86,7 +86,7 @@ where
     S: tracing::Subscriber,
 {
     let connect_args = ConnectArgs {
-        target,
+        target: Some(target),
         insecure: false, // Default to secure
         secret: None,
         auth_user: None,
@@ -134,7 +134,43 @@ where
     }
 
     // 3. Resolve target.
-    let target = Client::parse_target(options.state(), &connect_args.target)?;
+    let raw_target = match connect_args.target {
+        Some(t) => t,
+        None => {
+            let peers = irosh::storage::list_peers(&state)?;
+            if peers.is_empty() {
+                anyhow::bail!(
+                    "No target specified and no peers saved. Use 'irosh connect <target>' or 'irosh peer add <name> <ticket>'."
+                );
+            }
+
+            let items: Vec<String> = peers
+                .iter()
+                .map(|p| {
+                    format!(
+                        "[{}] {} ({})",
+                        p.name,
+                        p.ticket.to_addr().id.to_string().get(..16).unwrap_or(""),
+                        crate::display::shorten_ticket(&p.ticket)
+                    )
+                })
+                .collect();
+
+            let selection =
+                dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt("Select a peer to connect")
+                    .default(0)
+                    .items(&items)
+                    .interact_opt()?;
+
+            match selection {
+                Some(index) => peers[index].name.clone(),
+                None => anyhow::bail!("Connection cancelled."),
+            }
+        }
+    };
+
+    let target = Client::parse_target(options.state(), &raw_target)?;
 
     // 4. Connect.
     let pb = ProgressBar::new_spinner();
@@ -161,7 +197,7 @@ where
         Err(e) => handle_connect_error(e, &options).await?,
     };
 
-    maybe_autosave_alias(&session, &options, &connect_args.target)?;
+    maybe_autosave_alias(&session, &options, &raw_target)?;
 
     // 5. Setup Terminal Driving.
     let stdin_is_tty = std::io::stdin().is_terminal();
