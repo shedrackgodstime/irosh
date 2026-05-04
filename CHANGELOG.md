@@ -5,17 +5,13 @@ All notable changes to the `irosh` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-05-04
 
 ### Added
 - **Unified CLI Consolidation**: Replaced the fragmented 3-binary architecture (`irosh`, `irosh-server`, `irosh-client`) with a single, professional `irosh` binary.
 - **Subcommand Hierarchy**: Introduced `irosh host`, `irosh connect`, `irosh peer`, `irosh trust`, and `irosh system` for better organization.
 - **Cross-Platform Service Management**: Unified background service installation for Linux (systemd), macOS (launchd), and Windows (Task Scheduler) under `irosh system`.
 - **Target Shortcut**: Initiating a connection is now as simple as `irosh <ticket>`.
-
-## [0.2.0] - 2026-04-23
-
-### Added
 - **Visual Progress Bars**: Integrated `indicatif` for high-end progress bars during `:put` and `:get` transfers.
 - **Mid-Transfer Cancellation**: Added `Ctrl+C` interrupt support to immediately abort file transfers and return to the shell.
 - **P2P Dialing Spinner**: Added a dynamic visual indicator during the initial connection handshake.
@@ -32,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Exit Hang**: Resolved the issue where the process would wait for a final Enter key before exiting.
 - **PID Context**: Fixed PTY path resolution issues related to shell context inheritance.
+- **Windows PTY**: Resolved PTY hangs and enabled raw mode in CLI.
+- **Test Stability**: Added timeouts to exec tests and fixed clippy warnings.
 
 ## [0.1.0] - 2026-04-20
 
