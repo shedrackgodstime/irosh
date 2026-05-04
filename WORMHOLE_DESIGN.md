@@ -56,6 +56,31 @@ The Wormhole is not a permanent connection method. It is a **pairing mechanism**
 
 ---
 
+## 🔒 Security Mitigations (The "Shield")
+To prevent the wormhole from becoming a vulnerability, we implement the following protections:
+
+### 1. Keyed Topic Hashes
+Instead of using the raw wormhole code as the Gossip topic name, we use a **Keyed HMAC**:
+- `Topic = HMAC-SHA256(Key: code, Data: "irosh-wormhole-v1")`
+- This ensures that an attacker monitoring gossip topics cannot "guess" the code by seeing the topic name, and vice versa.
+
+### 2. Interactive Pairing Confirmation
+For ephemeral wormholes initiated from an interactive terminal:
+- When a client "knocks," the server terminal MUST display:
+  `⚠️  Wormhole Connection: Peer [NodeID] wants to pair. Accept? (y/n)`
+- The pairing only completes if the user explicitly confirms.
+
+### 3. Rate Limiting & Auto-Burn
+- **Max Attempts**: 3 failed authentication attempts per wormhole window.
+- **Auto-Burn**: The wormhole is destroyed immediately after **one** successful pairing or after 3 failed attempts.
+- **Entropy Floor**: Custom codes (Persistent) must be at least 8 characters long if no password is used.
+
+### 4. Protocol Isolation (ALPN)
+Wormhole connections use a dedicated ALPN: `irosh/pairing/v1`.
+- This ensures that a "wormhole client" cannot accidentally access the full SSH server without first completing the pairing handshake.
+
+---
+
 ## 🏁 Final Call & Recommendation
 **Implement as an "On-Demand Trust Seed".**
 
