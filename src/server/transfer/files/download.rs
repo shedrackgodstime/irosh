@@ -122,7 +122,7 @@ async fn handle_recursive_get_request(
 
     let mut total_sent = 0u64;
 
-    let use_native_walk = true;
+    let mut use_native_walk = true;
     #[cfg(target_os = "linux")]
     if let ShellContext::Live { .. } = context {
         use_native_walk = false;

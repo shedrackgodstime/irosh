@@ -114,7 +114,7 @@ impl UploadSink {
     }
 }
 
-pub(super) async fn spawn_upload_helper(_context: ShellContext, dest: &str) -> Result<UploadSink> {
+pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Result<UploadSink> {
     #[cfg(target_os = "linux")]
     if let ShellContext::Live { .. } = context {
         let mut upload_cmd = Command::new("sh");
@@ -143,7 +143,7 @@ pub(super) async fn spawn_upload_helper(_context: ShellContext, dest: &str) -> R
 }
 
 pub(super) async fn probe_download_size(
-    _context: ShellContext,
+    context: ShellContext,
     source_path: &Path,
 ) -> Result<std::result::Result<u64, TransferFailure>> {
     #[cfg(target_os = "linux")]
@@ -218,7 +218,7 @@ impl DownloadSource {
 }
 
 pub(super) async fn spawn_download_helper(
-    _context: ShellContext,
+    context: ShellContext,
     source_path: &Path,
 ) -> Result<(DownloadSource, String)> {
     let helper_source = source_path.display().to_string();

@@ -168,7 +168,10 @@ async fn exists_request_response_round_trip_succeeds() {
     let request = ExistsRequest {
         path: "/tmp/example".to_string(),
     };
-    let response = ExistsResponse { exists: true, is_dir: false };
+    let response = ExistsResponse {
+        exists: true,
+        is_dir: false,
+    };
 
     let (mut client, mut server) = tokio::io::duplex(1024);
     let write = tokio::spawn(async move {
@@ -191,7 +194,10 @@ async fn exists_request_response_round_trip_succeeds() {
     );
     assert_eq!(
         response,
-        TransferFrame::ExistsResponse(ExistsResponse { exists: true, is_dir: false })
+        TransferFrame::ExistsResponse(ExistsResponse {
+            exists: true,
+            is_dir: false
+        })
     );
 }
 

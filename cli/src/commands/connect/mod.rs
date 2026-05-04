@@ -8,7 +8,7 @@ use irosh::{
     Client, ClientOptions, PtyOptions, SecurityConfig, Session, SessionEvent, StateConfig,
 };
 use std::io::IsTerminal;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use tracing::info;
 use tracing_subscriber::{EnvFilter, reload};
@@ -281,6 +281,7 @@ async fn drive_session(mut session: Session) -> Result<()> {
     };
     let mut input = InputEngine::new(transfer_context);
 
+    #[cfg(not(unix))]
     let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel::<()>(1);
     #[cfg(not(unix))]
     if interactive {
