@@ -47,10 +47,15 @@ pub async fn bind_server_endpoint(
         RelayMode::Default
     };
 
-    let endpoint = Endpoint::builder()
+    let builder = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(alpns)
-        .relay_mode(relay_mode)
+        .relay_mode(relay_mode);
+
+    #[cfg(target_os = "android")]
+    let builder = builder.net_report(false);
+
+    let endpoint = builder
         .bind()
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;
@@ -91,10 +96,15 @@ pub async fn bind_client_endpoint(secret_key: SecretKey, alpns: Vec<Vec<u8>>) ->
         RelayMode::Default
     };
 
-    let endpoint = Endpoint::builder()
+    let builder = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(alpns)
-        .relay_mode(relay_mode)
+        .relay_mode(relay_mode);
+
+    #[cfg(target_os = "android")]
+    let builder = builder.net_report(false);
+
+    let endpoint = builder
         .bind()
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;
