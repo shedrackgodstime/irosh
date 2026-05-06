@@ -1,5 +1,0 @@
-/install    /scripts/install.sh    200
-/sh         /scripts/install.sh    200
-/ps         /scripts/install.ps1   200
-/uninstall     /scripts/uninstall.sh  200
-/uninstall-ps  /scripts/uninstall.ps1 200

@@ -1,7 +1,0 @@
-﻿cargo :    Compiling irosh v0.2.0 (C:\Users\Anonymous\Projects\irosh)
-At line:1 char:1
-+ cargo test -- --list 2>&1 | Out-File -FilePath "test_list_output.txt" ...
-+ ~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (   Compiling ir...Projects\irosh):String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
