@@ -22,7 +22,7 @@ for the Irosh P2P SSH system. It is the single source of truth for implementatio
 | Command | Description |
 | :--- | :--- |
 | `irosh host` | Run the server in the foreground. Prints the Ticket. |
-| `irosh system install` | Install and run as a background daemon that survives reboots. |
+| `irosh system install` | Install and run as a background daemon that survives reboots. print just like host|
 | `irosh wormhole` | Publish the Ticket under a short 3-word code for easy discovery. |
 | `irosh wormhole --passwd <pw>` | Same, but requires this password during the wormhole's pairing session only. |
 | `irosh connect <ticket-or-code>` | Connect to a server using a Ticket or a wormhole discovery code. |
@@ -193,3 +193,224 @@ for the Irosh P2P SSH system. It is the single source of truth for implementatio
   - How to use wormhole for easy discovery
 - **Exact copy to be designed in the implementation conversation.**
 
+
+---
+
+## 7. User Flows (End-to-End UX)
+
+These flows describe exactly what the user does and what the system does at each step.
+Both `irosh host` and `irosh system install` behave **identically** in auth. The only difference
+is foreground vs. background execution.
+
+---
+
+### Flow 1: Quick Test / Temp Connection (TOFU — No Password)
+
+> *"I just want to try it out or connect once."*
+
+**On the Server machine:**
+```
+irosh host
+```
+Output:
+```
+🚀 Irosh server running.
+📋 Your Ticket:
+   iroh1abc...xyz
+
+🔒 Vault is empty. The first device to connect will be permanently trusted.
+💡 Tip: Run 'irosh passwd' now to require a password instead of trusting automatically.
+```
+
+**On the Client machine:**
+```
+irosh connect iroh1abc...xyz
+```
+- Server sees a new, unknown key.
+- Vault is empty → TOFU: key is saved to Vault.
+- Connection established.
+- Server prints: `✅ New device trusted and connected. (1 trusted device in Vault)`
+
+**After this:**
+- The trusted device always connects silently (key-only, no password).
+- Any other unknown device is **rejected** (no password set, vault not empty).
+
+---
+
+### Flow 2: Secure Bootstrap (Password Before First Connection)
+
+> *"I'm setting up a server and walking away. I want full control."*
+
+**On the Server machine:**
+```
+irosh host         (or: irosh system install)
+irosh passwd
+```
+- `irosh passwd` prompts: `Enter new Node Password: ___`
+- Password is hashed and stored.
+- Server prints: `🔐 Password set. TOFU disabled. All new devices must provide this password.`
+
+**On the Client machine:**
+```
+irosh connect iroh1abc...xyz
+```
+- Server sees a new, unknown key.
+- Node Password is set → prompts client: `Enter Node Password: ___`
+- Client types password → key is saved to Vault.
+- Connection established.
+
+**After this:**
+- The now-trusted device connects silently (key-only, no password prompt again).
+- Any other new device must also provide the password to be trusted.
+
+---
+
+### Flow 3: Always-On Background Server
+
+> *"I want it to survive reboots, just like SSH."*
+
+```
+irosh system install
+```
+Output (same as `irosh host` but then adds):
+```
+🚀 Irosh server running in the background.
+📋 Your Ticket:
+   iroh1abc...xyz
+
+🔒 Vault is empty. The first device to connect will be permanently trusted.
+💡 Tip: Run 'irosh passwd' to require a password for all new devices.
+✅ Service installed. Will restart automatically on reboot.
+```
+
+- The rest of the auth flow is **identical to Flow 1 or Flow 2** depending on whether a password is set.
+- The user manages it via: `irosh system start/stop/status/uninstall`.
+
+---
+
+### Flow 4: Wormhole Discovery (Can't Copy the Ticket)
+
+> *"I'm at the office. I can't copy this long ticket to my phone. I need a quick way in."*
+
+**On the Server machine:**
+```
+irosh wormhole
+```
+Output:
+```
+🌀 Wormhole active.
+🔑 Discovery code: apple-tiger-blue
+   (Anyone who runs 'irosh connect apple-tiger-blue' will discover your ticket)
+⏳ Expires: after first successful connection (or run 'irosh wormhole --stop' to cancel)
+```
+
+**On the Client machine:**
+```
+irosh connect apple-tiger-blue
+```
+- Client resolves `apple-tiger-blue` via Pkarr → retrieves the real Ticket.
+- Ticket is **saved to local peer list** as a "Discovered" peer.
+- Client proceeds with the **normal auth flow** (Flow 1 or Flow 2).
+  - Vault empty + no password → TOFU: connected and trusted.
+  - Password set → client is prompted for the Node Password.
+
+**After this:**
+- Wormhole burns (unpublished from Pkarr).
+- Future connections use the **saved local Ticket** directly. No wormhole needed again.
+
+---
+
+### Flow 5: Adding a Second Device
+
+> *"My laptop is already trusted. I want to add my phone too."*
+
+- **If Node Password is set**: Run `irosh connect <ticket>` on the phone → prompted for password → enters it → trusted.
+- **If NO Node Password is set**: The phone is rejected (vault is not empty, no password). User must either:
+  - Set a permanent password first: `irosh passwd` on the server, then retry on the phone.
+  - OR use `irosh wormhole --passwd <temp>` to gate the one-time pairing session.
+
+---
+
+### Flow 6: Wormhole with Temp Password (Secure Wormhole)
+
+> *"I want to use wormhole but my vault is empty and I have no Node Password set yet."*
+
+**On the Server machine:**
+```
+irosh wormhole --passwd mysecret
+```
+Output:
+```
+🌀 Wormhole active.
+🔑 Discovery code: apple-tiger-blue
+🔐 Wormhole password required to pair (destroyed after first use).
+```
+
+**On the Client machine:**
+```
+irosh connect apple-tiger-blue
+```
+- Discovers the Ticket.
+- Server sees unknown key → prompts: `Enter Wormhole Password: ___`
+- Client enters `mysecret` → key is saved → wormhole password **destroyed immediately**.
+- Connection established.
+
+---
+
+### Flow 7: Revoking a Specific Device
+
+> *"I sold my old laptop. I need to remove its access immediately."*
+
+```
+irosh trust list
+```
+Output:
+```
+Trusted Devices (2):
+  1. SHA256:abc...123  [Laptop-Old]  Paired: 2026-01-10  Last seen: 2026-04-30
+  2. SHA256:xyz...789  [Phone]       Paired: 2026-03-01  Last seen: 2026-05-06
+```
+
+```
+irosh trust revoke SHA256:abc...123
+```
+Output:
+```
+✅ Device 'Laptop-Old' removed. All active sessions for this device have been closed.
+```
+
+---
+
+### Flow 8: Emergency Reset (Unauthorized Access Found)
+
+> *"Someone got in who shouldn't have. Kill everything now."*
+
+```
+irosh trust reset
+```
+Output:
+```
+⚠️  This will remove ALL trusted devices and clear the Node Password.
+    All active sessions will be closed immediately.
+    Type 'yes' to confirm: ___
+```
+- On confirm: Vault wiped, password cleared, all active sessions killed instantly.
+- Server returns to bootstrap state (Flow 1 or Flow 2).
+
+---
+
+### Flow 9: Reinstalled Device (New SSH Key, Old Access Lost)
+
+> *"I wiped my laptop and reinstalled it. Now I can't connect."*
+
+**Client side:**
+- `irosh connect <ticket>` → `❌ Permission denied. Your key is not recognized.`
+- Client hint: `If this server has a Node Password, retry with --passwd. Otherwise ask the server admin to revoke your old key.`
+
+**Server side (admin):**
+```
+irosh trust list          → find the old laptop fingerprint
+irosh trust revoke <fp>   → remove it
+```
+- If password is set: the reinstalled device re-pairs using the password.
+- If no password and vault is now empty: TOFU is active again (Flow 1).
