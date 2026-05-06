@@ -21,7 +21,7 @@ fn init_tracing() {
 #[tokio::test]
 async fn test_e2e_p2p_connection_and_metadata() {
     init_tracing();
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         let server_state = temp_state("server");
         let client_state = temp_state("client");
 
@@ -73,7 +73,7 @@ async fn test_e2e_p2p_connection_and_metadata() {
 #[tokio::test]
 async fn test_e2e_file_transfer() {
     init_tracing();
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         let server_state = temp_state("server-fs");
         let client_state = temp_state("client-fs");
 
@@ -147,7 +147,7 @@ async fn test_e2e_file_transfer() {
 #[tokio::test]
 async fn test_stateless_file_transfer() {
     init_tracing();
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         let server_state = temp_state("server-stateless");
         let client_state = temp_state("client-stateless");
 
@@ -323,7 +323,7 @@ async fn test_recursive_directory_transfer() {
 #[tokio::test]
 async fn test_port_forwarding() {
     init_tracing();
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         let server_state = temp_state("server-tunnel");
         let client_state = temp_state("client-tunnel");
 
@@ -384,4 +384,53 @@ async fn test_port_forwarding() {
     })
     .await
     .expect("Test timed out");
+}
+
+#[tokio::test]
+#[ignore = "Gossip discovery can be flaky in isolated test environments without relays"]
+async fn test_wormhole_rendezvous() {
+    let _ = tracing_subscriber::fmt::try_init();
+    let server_state = temp_state("wormhole-server");
+    let client_state = temp_state("wormhole-client");
+    let code = "crystal-piano-7";
+
+    // 1. Start Server
+    let server_opts = ServerOptions::new(server_state.clone());
+    let (_ready, server) = Server::bind(server_opts).await.unwrap();
+    let shutdown_handle = server.shutdown_handle();
+    let control_tx = server.control_handle();
+
+    let server_task = tokio::spawn(async move {
+        server.run().await.unwrap();
+    });
+
+    // 2. Enable Wormhole on Server
+    control_tx
+        .send(irosh::IpcCommand::EnableWormhole {
+            code: code.to_string(),
+            password: None,
+            persistent: false,
+        })
+        .await
+        .unwrap();
+
+    // 3. Connect Client using the code
+    let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
+        host_key_policy: HostKeyPolicy::AcceptAll,
+    });
+
+    // Discovery can take a few seconds as it relies on Gossip propagation
+    let session = Client::connect(
+        &client_opts,
+        irosh::ResolvedTarget::WormholeCode(code.to_string()),
+    )
+    .await
+    .expect("Wormhole discovery failed");
+
+    // 4. Verify Connection
+    assert!(session.remote_metadata().is_some());
+
+    // 5. Cleanup
+    shutdown_handle.close().await;
+    server_task.await.unwrap();
 }

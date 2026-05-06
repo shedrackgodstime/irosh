@@ -69,6 +69,7 @@ pub(super) async fn handle_connect_error<T>(
 pub(super) fn maybe_autosave_alias(
     session: &Session,
     options: &ClientOptions,
+    ticket: &irosh::transport::ticket::Ticket,
     target_str: &str,
 ) -> Result<()> {
     if let Some(meta) = session.remote_metadata() {
@@ -77,7 +78,7 @@ pub(super) fn maybe_autosave_alias(
             let default_alias =
                 choose_auto_alias(meta.default_alias().as_str(), target_str).to_string();
             match irosh::storage::get_peer(options.state(), &default_alias)? {
-                Some(existing) if existing.ticket.to_string() == *target_str => {
+                Some(existing) if existing.ticket == *ticket => {
                     println!(
                         "ℹ️ Alias '{}' already points to this peer. Leaving it unchanged.",
                         default_alias
@@ -94,7 +95,7 @@ pub(super) fn maybe_autosave_alias(
                         options.state(),
                         &irosh::storage::PeerProfile {
                             name: default_alias.clone(),
-                            ticket: target_str.parse()?,
+                            ticket: ticket.clone(),
                         },
                     )?;
                     println!(

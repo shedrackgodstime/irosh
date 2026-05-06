@@ -21,7 +21,7 @@ fn parse_target_resolves_saved_peer_alias() {
 
     let resolved = Client::parse_target(&state, "local-server").unwrap();
     let expected: Ticket = ticket_text.parse().unwrap();
-    assert_eq!(resolved, expected);
+    assert_eq!(resolved, ResolvedTarget::Ticket(expected));
 }
 
 #[test]

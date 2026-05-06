@@ -1,6 +1,7 @@
 //! SSH Server orchestration and connection handlers.
 
 pub mod handler;
+pub(crate) mod ipc;
 pub(crate) mod shell_access;
 pub(crate) mod side_streams;
 pub(crate) mod startup;
@@ -9,6 +10,7 @@ pub(crate) mod transfer;
 use russh::server;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{info, warn};
 
 use crate::auth::Authenticator;
@@ -28,8 +30,10 @@ pub struct ServerOptions {
     state: StateConfig,
     security: SecurityConfig,
     pub(crate) secret: Option<String>,
+    pub(crate) ipc_enabled: bool,
     authorized_keys: Vec<russh::keys::ssh_key::PublicKey>,
     authenticator: Option<Arc<dyn Authenticator>>,
+    wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
 }
 
 impl Clone for ServerOptions {
@@ -37,9 +41,11 @@ impl Clone for ServerOptions {
         Self {
             state: self.state.clone(),
             security: self.security,
+            ipc_enabled: self.ipc_enabled,
             secret: self.secret.clone(),
             authorized_keys: self.authorized_keys.clone(),
             authenticator: self.authenticator.clone(),
+            wormhole_confirmation: self.wormhole_confirmation.clone(),
         }
     }
 }
@@ -49,10 +55,12 @@ impl ServerOptions {
     pub fn new(state: StateConfig) -> Self {
         Self {
             state,
+            ipc_enabled: true,
             security: SecurityConfig::default(),
             secret: None,
             authorized_keys: Vec::new(),
             authenticator: None,
+            wormhole_confirmation: None,
         }
     }
 
@@ -89,7 +97,26 @@ impl ServerOptions {
         self
     }
 
-    pub(crate) fn state(&self) -> &StateConfig {
+    /// Sets a confirmation callback for interactive wormhole pairing.
+    ///
+    /// When set, the server will invoke this callback to prompt the operator
+    /// before authorizing a wormhole pairing request. This is used by the
+    /// foreground CLI to display a y/n prompt.
+    pub fn wormhole_confirmation(
+        mut self,
+        callback: impl crate::auth::ConfirmationCallback,
+    ) -> Self {
+        self.wormhole_confirmation = Some(Arc::new(callback));
+        self
+    }
+
+    /// Disables the IPC control server. Useful for foreground/ephemeral servers.
+    pub fn disable_ipc(mut self) -> Self {
+        self.ipc_enabled = false;
+        self
+    }
+
+    pub fn state(&self) -> &StateConfig {
         &self.state
     }
 
@@ -159,12 +186,18 @@ impl ServerReady {
 /// connections once [`Server::run`] is called.
 pub struct Server {
     endpoint: iroh::Endpoint,
+    ipc_enabled: bool,
     config: Arc<server::Config>,
     authenticator: Arc<dyn Authenticator>,
     state: StateConfig,
     secret: Option<String>,
     shutdown_tx: tokio::sync::mpsc::Sender<()>,
     shutdown_rx: tokio::sync::mpsc::Receiver<()>,
+    control_tx: tokio::sync::mpsc::Sender<ipc::IpcCommand>,
+    control_rx: tokio::sync::mpsc::Receiver<ipc::IpcCommand>,
+    ticket: crate::transport::ticket::Ticket,
+    gossip: iroh_gossip::net::Gossip,
+    wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
 }
 
 impl fmt::Debug for Server {
@@ -237,6 +270,11 @@ impl Server {
         }
     }
 
+    /// Returns a channel to send control commands to the server loop.
+    pub fn control_handle(&self) -> tokio::sync::mpsc::Sender<ipc::IpcCommand> {
+        self.control_tx.clone()
+    }
+
     /// Engages the server listen loop to accept connections until the endpoint closes.
     ///
     /// Use [`Server::shutdown_handle`] from another task if you need explicit
@@ -252,6 +290,30 @@ impl Server {
         info!("Server actively listening for connections.");
 
         let mut sessions = JoinSet::new();
+
+        // Spawn the IPC control server if enabled.
+        if self.ipc_enabled {
+            let ipc_server =
+                ipc::IpcServer::new(self.state.root().to_path_buf(), self.control_tx.clone());
+            tokio::spawn(async move {
+                if let Err(e) = ipc_server.run().await {
+                    warn!("IPC server failed: {}", e);
+                }
+            });
+        }
+        struct ActiveWormhole {
+            #[allow(dead_code)]
+            code: String,
+            password: Option<String>,
+            persistent: bool,
+            task: tokio::task::JoinHandle<()>,
+            confirmation_callback: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
+            failed_attempts: Arc<AtomicU32>,
+            success: Arc<std::sync::atomic::AtomicBool>,
+            expiry_task: tokio::task::JoinHandle<()>,
+        }
+
+        let mut wormhole: Option<ActiveWormhole> = None;
 
         loop {
             tokio::select! {
@@ -283,7 +345,27 @@ impl Server {
                         }
                     };
 
-                    if alpn != crate::transport::iroh::derive_alpn(self.secret.as_deref()) {
+                    if alpn == iroh_gossip::ALPN {
+                        let gossip = self.gossip.clone();
+                        tokio::spawn(async move {
+                            match accepting.await {
+                                Ok(conn) => {
+                                    if let Err(e) = gossip.handle_connection(conn).await {
+                                        tracing::debug!("Gossip connection handling failed: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::debug!("Failed to confirm Gossip connection: {}", e);
+                                }
+                            }
+                        });
+                        continue;
+                    }
+
+                    let primary_alpn = crate::transport::iroh::derive_alpn(self.secret.as_deref());
+                    let is_pairing_alpn = alpn == crate::transport::wormhole::PAIRING_ALPN;
+
+                    if alpn != primary_alpn && !is_pairing_alpn {
                         warn!(
                             "Ignoring unexpected ALPN: {}",
                             String::from_utf8_lossy(&alpn)
@@ -315,8 +397,29 @@ impl Server {
                     spawn_metadata_and_transfer_acceptor(conn, shell_state.clone());
 
                     let stream = IrohDuplex::new(send, recv);
+                    let mut session_authenticator = self.authenticator.clone();
+
+                    if is_pairing_alpn {
+                        if let Some(wh) = &wormhole {
+                            info!("Pairing connection established via wormhole code.");
+                            session_authenticator = Arc::new(crate::auth::PairingAuthenticator::new(
+                                self.state.clone(),
+                                wh.password.clone(),
+                                wh.confirmation_callback.clone(),
+                                wh.failed_attempts.clone(),
+                                wh.success.clone(),
+                            ));
+                            // We do NOT auto-burn here anymore. We wait until the connection
+                            // is authenticated. If an attacker connects and fails, we shouldn't
+                            // destroy the wormhole for the legitimate user.
+                        } else {
+                            warn!("Pairing connection attempted but no wormhole active.");
+                            continue;
+                        }
+                    }
+
                     let handler = ServerHandler::new(
-                        self.authenticator.clone(),
+                        session_authenticator,
                         shell_state,
                     );
 
@@ -338,6 +441,101 @@ impl Server {
                             }
                             Err(err) => {
                                 warn!("SSH session task panicked or failed: {:?}", err);
+                            }
+                        }
+                    }
+
+                    // After any session completes, check if the wormhole needs to be rate-limited
+                    // or auto-burned on success.
+                    if let Some(wh) = &wormhole {
+                        let fails = wh.failed_attempts.load(Ordering::Relaxed);
+                        let success = wh.success.load(Ordering::Relaxed);
+
+                        if fails >= 3 {
+                            warn!("Wormhole rate limit exceeded ({} failed attempts). Burning wormhole.", fails);
+                            wh.task.abort();
+                            wh.expiry_task.abort();
+                            let code = wh.code.clone();
+                            tokio::spawn(async move {
+                                let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                            });
+                            wormhole = None;
+                        } else if success && !wh.persistent {
+                            info!("Wormhole successfully consumed. Auto-burning.");
+                            wh.task.abort();
+                            wh.expiry_task.abort();
+                            let code = wh.code.clone();
+                            tokio::spawn(async move {
+                                let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                            });
+                            wormhole = None;
+                        }
+                    }
+                }
+                msg = self.control_rx.recv() => {
+                    if let Some(msg) = msg {
+                        match msg {
+                            ipc::IpcCommand::EnableWormhole { code, password, persistent } => {
+                                info!("Wormhole enabled via IPC: {} (persistent: {})", code, persistent);
+
+                                // Abort existing wormhole if any.
+                                if let Some(wh) = wormhole.take() {
+                                    wh.task.abort();
+                                    wh.expiry_task.abort();
+                                    let code = wh.code.clone();
+                                    tokio::spawn(async move {
+                                        let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                                    });
+                                }
+
+                                let gossip = self.gossip.clone();
+                                let ticket = self.ticket.clone();
+                                let code_clone = code.clone();
+                                let task = tokio::spawn(async move {
+                                    if let Err(e) = crate::transport::wormhole::broadcast_ticket_loop(
+                                        &gossip,
+                                        &code_clone,
+                                        ticket,
+                                    )
+                                    .await
+                                    {
+                                        warn!("Wormhole broadcast failed: {}", e);
+                                    }
+                                });
+
+                                // 24-hour expiry timer: automatically disables
+                                // the wormhole if no pairing occurs.
+                                let expiry_control = self.control_tx.clone();
+                                let expiry_task = tokio::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+                                    info!("Wormhole expired after 24 hours.");
+                                    let _ = expiry_control.send(ipc::IpcCommand::DisableWormhole).await;
+                                });
+
+                                wormhole = Some(ActiveWormhole {
+                                    code,
+                                    password: password.clone(),
+                                    persistent,
+                                    task,
+                                    confirmation_callback: self.wormhole_confirmation.clone(),
+                                    failed_attempts: Arc::new(AtomicU32::new(0)),
+                                    success: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                                    expiry_task,
+                                });
+                            }
+                            ipc::IpcCommand::DisableWormhole => {
+                                info!("Wormhole disabled via IPC");
+                                if let Some(wh) = wormhole.take() {
+                                    wh.task.abort();
+                                    wh.expiry_task.abort();
+                                    let code = wh.code.clone();
+                                    tokio::spawn(async move {
+                                        let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                                    });
+                                }
+                            }
+                            ipc::IpcCommand::GetStatus => {
+                                // Currently status is handled synchronously in ipc.rs for simplicity
                             }
                         }
                     }

@@ -66,8 +66,13 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     let supported = authenticator.supported_methods();
     let method_set = build_method_set(&supported);
 
-    let alpn = crate::transport::iroh::derive_alpn(options.secret_value());
-    let transport = bind_server_endpoint(identity.secret_key, alpn).await?;
+    let primary_alpn = crate::transport::iroh::derive_alpn(options.secret_value());
+    let alpns = vec![
+        primary_alpn,
+        iroh_gossip::ALPN.to_vec(),
+        crate::transport::wormhole::PAIRING_ALPN.to_vec(),
+    ];
+    let transport = bind_server_endpoint(identity.secret_key, alpns).await?;
 
     // Generate a stable ticket by using only NodeId and Relay information.
     // Transient direct addresses are omitted to ensure the ticket string
@@ -95,17 +100,25 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     });
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel(1);
+    let (control_tx, control_rx) = tokio::sync::mpsc::channel(32);
 
+    let ticket = startup.ticket.clone();
     Ok((
         startup,
         Server {
+            gossip: iroh_gossip::net::Gossip::builder().spawn(transport.endpoint.clone()),
             endpoint: transport.endpoint,
+            ipc_enabled: options.ipc_enabled,
             config,
             authenticator,
             state: options.state().clone(),
             secret: options.secret.clone(),
             shutdown_tx,
             shutdown_rx,
+            control_tx,
+            control_rx,
+            ticket,
+            wormhole_confirmation: options.wormhole_confirmation.clone(),
         },
     ))
 }

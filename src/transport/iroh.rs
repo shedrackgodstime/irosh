@@ -37,17 +37,27 @@ pub struct ServerEndpoint {
 }
 
 /// Binds a new Iroh endpoint for the server to listen on.
-pub async fn bind_server_endpoint(secret_key: SecretKey, alpn: Vec<u8>) -> Result<ServerEndpoint> {
-    let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
+pub async fn bind_server_endpoint(
+    secret_key: SecretKey,
+    alpns: Vec<Vec<u8>>,
+) -> Result<ServerEndpoint> {
+    let relay_mode = if std::env::var("IROSH_RELAY_DISABLED").is_ok() {
+        RelayMode::Disabled
+    } else {
+        RelayMode::Default
+    };
+
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
-        .alpns(vec![alpn.clone()])
-        .relay_mode(RelayMode::Default)
+        .alpns(alpns)
+        .relay_mode(relay_mode)
         .bind()
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;
 
     // Wait until the node finishes initial networking setup and is online.
-    endpoint.online().await;
+    // Timeout prevents blocking forever if relays are unreachable.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), endpoint.online()).await;
 
     let endpoint_addr = endpoint.addr();
     let node_id = endpoint.id();
@@ -74,16 +84,23 @@ pub async fn bind_server_endpoint(secret_key: SecretKey, alpn: Vec<u8>) -> Resul
 }
 
 /// Binds a new Iroh endpoint for a client connection.
-pub async fn bind_client_endpoint(secret_key: SecretKey, alpn: Vec<u8>) -> Result<Endpoint> {
-    let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
+pub async fn bind_client_endpoint(secret_key: SecretKey, alpns: Vec<Vec<u8>>) -> Result<Endpoint> {
+    let relay_mode = if std::env::var("IROSH_RELAY_DISABLED").is_ok() {
+        RelayMode::Disabled
+    } else {
+        RelayMode::Default
+    };
+
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
-        .alpns(vec![alpn])
-        .relay_mode(RelayMode::Default)
+        .alpns(alpns)
+        .relay_mode(relay_mode)
         .bind()
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;
 
     // Wait until the node finishes initial networking setup and is online.
-    endpoint.online().await;
+    // Timeout prevents blocking forever if relays are unreachable.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), endpoint.online()).await;
     Ok(endpoint)
 }

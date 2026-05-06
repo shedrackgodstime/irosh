@@ -57,7 +57,7 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
     let identity = load_or_generate_identity(state).await?;
     let alpn = derive_alpn(None);
 
-    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
+    let endpoint = iroh::Endpoint::builder()
         .secret_key(identity.secret_key)
         .alpns(vec![alpn])
         .relay_mode(iroh::RelayMode::Default)

@@ -65,6 +65,9 @@ pub enum Commands {
 
     /// Set or update the server's authentication password.
     Passwd(commands::passwd::PasswdArgs),
+
+    /// Enable an interactive pairing wormhole in the foreground.
+    Wormhole(commands::system::WormholeArgs),
 }
 
 #[tokio::main]
@@ -115,6 +118,9 @@ async fn main() -> Result<()> {
             }
             Commands::Passwd(passwd_args) => {
                 commands::passwd::exec(passwd_args.clone(), &args).await?;
+            }
+            Commands::Wormhole(wormhole_args) => {
+                commands::system::exec_wormhole(wormhole_args.clone(), &args).await?;
             }
         },
         (None, None) => {

@@ -16,6 +16,7 @@
 //! - [`CombinedAuth`] — Accepts either public keys or passwords.
 
 use std::fmt;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use argon2::password_hash::SaltString;
@@ -329,6 +330,124 @@ pub trait PasswordPrompter: Send + Sync + std::fmt::Debug + 'static {
     /// so it is safe to perform blocking I/O (like reading from stdin).
     /// Return `None` if the user cancels or prompting fails.
     fn prompt_password(&self, user: &str) -> Option<String>;
+}
+
+/// A callback trait to interactively confirm a pairing request.
+pub trait ConfirmationCallback: Send + Sync + std::fmt::Debug + 'static {
+    /// Confirms whether to accept a pairing request from a peer.
+    ///
+    /// This will be called on the server side when a client attempts to pair.
+    fn confirm_pairing(&self, fingerprint: &str, key: &PublicKey) -> bool;
+}
+
+/// Authenticator used specifically for one-time wormhole pairing.
+///
+/// Tracks failed authentication attempts via a shared atomic counter,
+/// enabling the server loop to enforce rate-limiting policies.
+#[derive(Debug)]
+pub struct PairingAuthenticator {
+    state: StateConfig,
+    expected_password: Option<String>,
+    cached_key: Arc<StdMutex<Option<PublicKey>>>,
+    confirmation_callback: Option<Arc<dyn ConfirmationCallback>>,
+    failed_attempts: Arc<AtomicU32>,
+    success_flag: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PairingAuthenticator {
+    /// Creates a new pairing authenticator.
+    ///
+    /// The `failed_attempts` counter is shared with the caller so the server
+    /// loop can inspect it for rate-limiting decisions without reaching into
+    /// authenticator internals.
+    pub fn new(
+        state: StateConfig,
+        expected_password: Option<String>,
+        confirmation_callback: Option<Arc<dyn ConfirmationCallback>>,
+        failed_attempts: Arc<AtomicU32>,
+        success_flag: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            state,
+            expected_password,
+            cached_key: Arc::new(StdMutex::new(None)),
+            confirmation_callback,
+            failed_attempts,
+            success_flag,
+        }
+    }
+
+    /// Returns the current number of failed authentication attempts.
+    pub fn failed_attempts(&self) -> u32 {
+        self.failed_attempts.load(Ordering::Relaxed)
+    }
+}
+
+impl Authenticator for PairingAuthenticator {
+    fn supported_methods(&self) -> Vec<AuthMethod> {
+        if self.expected_password.is_some() {
+            vec![AuthMethod::PublicKey, AuthMethod::Password]
+        } else {
+            vec![AuthMethod::PublicKey]
+        }
+    }
+
+    fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
+        let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+
+        if self.expected_password.is_none() {
+            // Ephemeral wormhole (no password).
+            // If we have a confirmation callback, ask the user.
+            if let Some(callback) = &self.confirmation_callback {
+                if !callback.confirm_pairing(&fingerprint, key) {
+                    warn!(%fingerprint, "Wormhole pairing rejected by user.");
+                    self.failed_attempts.fetch_add(1, Ordering::Relaxed);
+                    return Ok(false);
+                }
+            }
+
+            info!(%fingerprint, "Wormhole pairing: automatically accepting client key.");
+            let _event = write_authorized_client(&self.state, &fingerprint, key)?;
+            self.success_flag.store(true, Ordering::Relaxed);
+            Ok(true)
+        } else {
+            // Persistent wormhole (requires password).
+            // We still ask for confirmation first if a callback is present.
+            if let Some(callback) = &self.confirmation_callback {
+                if !callback.confirm_pairing(&fingerprint, key) {
+                    warn!(%fingerprint, "Wormhole pairing rejected by user.");
+                    self.failed_attempts.fetch_add(1, Ordering::Relaxed);
+                    return Ok(false);
+                }
+            }
+
+            // We cache the key so we can authorize it if password succeeds.
+            if let Ok(mut cache) = self.cached_key.lock() {
+                *cache = Some(key.clone());
+            }
+            Ok(false) // Reject public key, force fallback to password auth.
+        }
+    }
+
+    fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
+        if let Some(expected) = &self.expected_password {
+            if password == expected {
+                // Correct password! Authorize the cached key.
+                if let Ok(cache) = self.cached_key.lock() {
+                    if let Some(key) = &*cache {
+                        let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+                        info!(%fingerprint, "Wormhole password accepted: authorizing client key.");
+                        let _event = write_authorized_client(&self.state, &fingerprint, key)?;
+                        self.success_flag.store(true, Ordering::Relaxed);
+                        return Ok(true);
+                    }
+                }
+            }
+            // Wrong password — count as a failed attempt.
+            self.failed_attempts.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(false)
+    }
 }
 
 #[cfg(test)]

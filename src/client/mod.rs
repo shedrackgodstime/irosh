@@ -2,6 +2,7 @@
 
 mod connect;
 pub mod handler;
+pub mod ipc;
 #[cfg(test)]
 mod tests;
 mod transfer;
@@ -27,6 +28,21 @@ pub struct TransferProgress {
     pub transferred: u64,
     /// Total expected size in bytes.
     pub total: u64,
+}
+
+/// A target for an irosh connection, which can be a direct ticket or a wormhole code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedTarget {
+    /// A direct Iroh connection ticket.
+    Ticket(crate::transport::ticket::Ticket),
+    /// A 3-word wormhole code that needs to be resolved via Gossip.
+    WormholeCode(String),
+}
+
+impl From<crate::transport::ticket::Ticket> for ResolvedTarget {
+    fn from(ticket: crate::transport::ticket::Ticket) -> Self {
+        Self::Ticket(ticket)
+    }
 }
 
 impl TransferProgress {

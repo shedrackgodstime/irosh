@@ -4,6 +4,7 @@ use anyhow::Context;
 use anyhow::Result;
 
 use clap::{Args, Subcommand};
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Args, Debug, Clone)]
@@ -24,6 +25,26 @@ pub enum SystemAction {
     Stop,
     /// Show the background service status.
     Status,
+    /// Enable an ad-hoc pairing wormhole.
+    Wormhole(WormholeArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct WormholeArgs {
+    /// Optional custom code (otherwise a random 3-word code is generated).
+    pub code: Option<String>,
+    /// Mandatory password for persistent/custom codes.
+    #[arg(long)]
+    pub password: Option<String>,
+    /// Make the wormhole persistent across reboots.
+    #[arg(long)]
+    pub persistent: bool,
+    /// Force the wormhole to run in the foreground (interactive mode).
+    #[arg(long, conflicts_with = "background")]
+    pub foreground: bool,
+    /// Force the wormhole to run via the background daemon.
+    #[arg(long, conflicts_with = "foreground")]
+    pub background: bool,
 }
 
 pub async fn exec(system_args: SystemArgs, global_args: &GlobalArgs) -> Result<()> {
@@ -35,8 +56,44 @@ pub async fn exec(system_args: SystemArgs, global_args: &GlobalArgs) -> Result<(
         SystemAction::Start => handle_service(ServiceAction::Start, &global_args.state).await?,
         SystemAction::Stop => handle_service(ServiceAction::Stop, &global_args.state).await?,
         SystemAction::Status => handle_service(ServiceAction::Status, &global_args.state).await?,
+        SystemAction::Wormhole(args) => exec_wormhole(args, global_args).await?,
     }
     Ok(())
+}
+
+pub async fn exec_wormhole(args: WormholeArgs, global_args: &GlobalArgs) -> Result<()> {
+    let state_root = global_args
+        .state
+        .clone()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".irosh").join("server")))
+        .context("could not determine server state directory")?;
+
+    if let Some(c) = &args.code {
+        if c.len() < 8 && args.password.is_none() {
+            anyhow::bail!(
+                "Custom wormhole codes without a password must be at least 8 characters long for security."
+            );
+        }
+    }
+
+    let client = irosh::IpcClient::new(state_root.clone());
+
+    // Check if the daemon is reachable. We just send a GetStatus command.
+    let daemon_running = client.send(irosh::IpcCommand::GetStatus).await.is_ok();
+
+    if args.background && !daemon_running {
+        anyhow::bail!(
+            "Cannot run in background: daemon is not running. Start it with 'irosh service install'."
+        );
+    }
+
+    if args.foreground {
+        exec_interactive_wormhole(args, global_args).await
+    } else if daemon_running && !args.foreground {
+        handle_wormhole(args.code, args.password, args.persistent, &state_root).await
+    } else {
+        exec_interactive_wormhole(args, global_args).await
+    }
 }
 
 // Logic below is adapted from cli-old/bin/server.rs
@@ -224,7 +281,7 @@ WantedBy=default.target
                 .args(["--user", "enable", "irosh"])
                 .status()?;
             std::process::Command::new("systemctl")
-                .args(["--user", "start", "irosh"])
+                .args(["--user", "restart", "irosh"])
                 .status()?;
 
             println!("🚀 Service enabled and started in the background.");
@@ -544,4 +601,161 @@ fn current_uid() -> Result<String> {
         return Err(anyhow::anyhow!("failed to resolve current user id"));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+async fn handle_wormhole(
+    code: Option<String>,
+    password: Option<String>,
+    persistent: bool,
+    state_root: &std::path::Path,
+) -> Result<()> {
+    use irosh::{IpcClient, IpcCommand, IpcResponse};
+
+    let final_code = match code {
+        Some(c) => c,
+        None => generate_wormhole_code(),
+    };
+
+    if persistent && password.is_none() {
+        anyhow::bail!("Persistent wormholes require a password for security.");
+    }
+
+    let client = IpcClient::new(state_root.to_path_buf());
+    let command = IpcCommand::EnableWormhole {
+        code: final_code.clone(),
+        password: password.clone(),
+        persistent,
+    };
+
+    println!("📡 Connecting to irosh daemon...");
+    match client.send(command).await {
+        Ok(IpcResponse::Ok) => {
+            let mode_text = if persistent {
+                "Persistent — survives reboots"
+            } else {
+                "Background — daemon mode"
+            };
+            println!("\n✨ Wormhole Active ({})", mode_text);
+            println!("Code: \x1b[1;32m{}\x1b[0m", final_code);
+            if persistent {
+                println!("Security: Password-protected + rate-limited");
+                println!("Expiry: Never");
+            } else if password.is_some() {
+                println!("Security: Password-protected");
+                println!("Expiry: 24 hours (or 1 successful connection)");
+            } else {
+                println!("Expiry: 24 hours (or 1 successful connection)");
+            }
+            println!("\nNext:");
+            println!("Run 'irosh {}' on the other machine.", final_code);
+        }
+        Ok(IpcResponse::Error(e)) => {
+            anyhow::bail!("Daemon rejected command: {}", e);
+        }
+        Ok(_) => anyhow::bail!("Unexpected response from daemon"),
+        Err(e) => {
+            anyhow::bail!(
+                "Could not connect to irosh daemon. Is it running? (Error: {})",
+                e
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn generate_wormhole_code() -> String {
+    use rand::Rng;
+    let mut rng = rand::rng();
+
+    // A small subset of the PGP word list or similar for human-friendly codes.
+    const WORDS: &[&str] = &[
+        "apple", "banana", "cherry", "dog", "elephant", "fox", "grape", "honey", "iron", "jungle",
+        "kite", "lemon", "mountain", "night", "ocean", "piano", "quartz", "river", "sky", "tiger",
+        "umbrella", "valley", "whale", "xray", "yellow", "zebra", "amber", "bright", "crystal",
+        "delta", "echo", "frost",
+    ];
+
+    let w1 = WORDS[rng.random_range(0..WORDS.len())];
+    let w2 = WORDS[rng.random_range(0..WORDS.len())];
+    let n = rng.random_range(1..10);
+
+    format!("{}-{}-{}", w1, w2, n)
+}
+
+pub async fn exec_interactive_wormhole(args: WormholeArgs, global_args: &GlobalArgs) -> Result<()> {
+    use irosh::{Server, ServerOptions, StateConfig};
+
+    let state_root = global_args
+        .state
+        .clone()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".irosh").join("server")))
+        .context("could not determine server state directory")?;
+
+    let state = StateConfig::new(state_root);
+    let final_code = match args.code {
+        Some(c) => c,
+        None => generate_wormhole_code(),
+    };
+
+    if args.persistent && args.password.is_none() {
+        anyhow::bail!("Persistent wormholes require a password for security.");
+    }
+
+    println!("📡 Starting interactive wormhole server...");
+
+    let mut options = ServerOptions::new(state);
+
+    // Set up the interactive prompter via ServerOptions and disable IPC
+    // so we don't clobber the background daemon's control socket.
+    options = options
+        .wormhole_confirmation(CliConfirmationCallback)
+        .disable_ipc();
+
+    let (_ready, server) = Server::bind(options).await?;
+    let control = server.control_handle();
+
+    println!("\n✨ Wormhole Active (Foreground Mode)");
+    println!("Code: \x1b[1;32m{}\x1b[0m", final_code);
+    println!("Expiry: 24 hours (or 1 successful connection)");
+    println!("\nNext:");
+    println!("Run 'irosh {}' on the other machine.", final_code);
+    println!("\nWaiting for peer to knock...");
+
+    // Enable the wormhole loop
+    control
+        .send(irosh::IpcCommand::EnableWormhole {
+            code: final_code,
+            password: args.password,
+            persistent: args.persistent,
+        })
+        .await?;
+
+    server.run().await?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct CliConfirmationCallback;
+
+impl irosh::auth::ConfirmationCallback for CliConfirmationCallback {
+    fn confirm_pairing(
+        &self,
+        fingerprint: &str,
+        _key: &irosh::russh::keys::ssh_key::PublicKey,
+    ) -> bool {
+        println!("\n\x1b[1;33m⚠️  Wormhole Pairing Request\x1b[0m");
+        println!("A remote peer is attempting to pair with your machine.");
+        println!("Peer Fingerprint: \x1b[36m{}\x1b[0m", fingerprint);
+        print!("\nDo you want to authorize this peer? (y/n): ");
+        let _ = io::stdout().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_ok() {
+            let choice = input.trim().to_lowercase();
+            choice == "y" || choice == "yes"
+        } else {
+            false
+        }
+    }
 }

@@ -23,14 +23,16 @@ default   = ["server", "client"]
 server    = ["transport", "storage", "dep:russh", "dep:portable-pty"]
 client    = ["transport", "storage", "dep:russh"]
 storage   = ["dep:serde", "dep:serde_json"]
-transport = ["dep:iroh", "dep:iroh-tickets"]
+transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets"]
 
 [dependencies]
 # iroh: core P2P transport, endpoint management, hole-punching.
-iroh = { version = "0.97.0", optional = true }
+iroh = { version = "0.96.0", optional = true, features = ["address-lookup-mdns", "address-lookup-pkarr-dht"] }
+iroh-gossip = { version = "0.96.0", optional = true, features = ["net"] }
 
 # iroh-tickets: handling the official human-readable tickets (endpoint...).
-iroh-tickets = { version = "0.4.0", optional = true }
+iroh-tickets = { version = "0.3.0", optional = true }
+pkarr = "5.0.2"
 
 # portable-pty: cross-platform PTY allocation and process spawning.
 portable-pty = { version = "0.9.0", optional = true }
@@ -54,6 +56,8 @@ tracing = "0.1"
 # tokio: async runtime and traits. 
 tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "net"] }
 tokio-util = { version = "0.7" }
+futures = "0.3"
+futures-lite = "1.13"
 
 # rand: cryptographically secure random number generation.
 rand = "0.9"
@@ -73,6 +77,7 @@ sha2 = "0.10"
 walkdir = "2"
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }
 argon2 = "0.5.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "json"] }
 
 [dev-dependencies]
 # tokio with full features for async test harnesses.

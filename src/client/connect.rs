@@ -5,6 +5,7 @@ use russh::client;
 
 use crate::SessionState;
 use crate::auth::Credentials;
+use crate::client::ResolvedTarget;
 use crate::client::{Session, handler::ClientHandler};
 use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
 use crate::error::{ClientError, IroshError, Result};
@@ -14,6 +15,7 @@ use crate::transport::iroh::{bind_client_endpoint, derive_alpn};
 use crate::transport::metadata::{read_metadata, write_metadata_request};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::ticket::Ticket;
+use tracing::info;
 
 /// Configuration options for the irosh client.
 #[derive(Clone, Debug)]
@@ -117,20 +119,65 @@ impl Client {
     ///
     /// This performs the full P2P connection, SSH handshake, and metadata
     /// synchronization.
-    pub async fn connect(options: &ClientOptions, ticket: Ticket) -> Result<Session> {
-        let (connection, endpoint) = Self::dial_p2p(options, ticket).await?;
+    /// Connects to a remote irosh peer using the provided resolved target.
+    ///
+    /// If the target is a [`ResolvedTarget::WormholeCode`], this will first perform
+    /// a rendezvous handshake via Iroh Gossip to find the target's connection ticket.
+    pub async fn connect(
+        options: &ClientOptions,
+        target: impl Into<ResolvedTarget>,
+    ) -> Result<Session> {
+        let (ticket, is_pairing) = match target.into() {
+            ResolvedTarget::Ticket(t) => (t, false),
+            ResolvedTarget::WormholeCode(code) => {
+                (Self::connect_wormhole(options, &code).await?, true)
+            }
+        };
+        let (connection, endpoint) = Self::dial_p2p(options, ticket, is_pairing).await?;
         Self::establish_session(options, (connection, endpoint)).await
+    }
+
+    /// Performs a wormhole rendezvous to discover a peer's connection ticket.
+    pub async fn connect_wormhole(options: &ClientOptions, code: &str) -> Result<Ticket> {
+        use crate::transport::iroh::bind_client_endpoint;
+        use crate::transport::wormhole::listen_for_ticket;
+
+        let identity = load_or_generate_identity(options.state()).await?;
+        // We use a clean endpoint for the discovery phase to avoid ALPN conflicts,
+        // although Iroh supports multiple ALPNs on one endpoint.
+        let endpoint =
+            bind_client_endpoint(identity.secret_key, vec![iroh_gossip::ALPN.to_vec()]).await?;
+
+        info!("🔮 Attempting wormhole rendezvous for code: {}", code);
+
+        let ticket: Ticket = tokio::time::timeout(
+            std::time::Duration::from_secs(300), // 5 minute timeout as per design
+            listen_for_ticket(&endpoint, code),
+        )
+        .await
+        .map_err(|_| crate::error::IroshError::InvalidTarget {
+            raw: code.to_string(),
+        })??;
+
+        endpoint.close().await;
+
+        Ok(ticket)
     }
 
     /// Establishes the low-level P2P connection to the target.
     pub async fn dial_p2p(
         options: &ClientOptions,
         ticket: Ticket,
+        is_pairing: bool,
     ) -> Result<(iroh::endpoint::Connection, iroh::Endpoint)> {
         let target_addr = ticket.to_addr();
         let identity = load_or_generate_identity(options.state()).await?;
-        let alpn = derive_alpn(options.secret_value());
-        let endpoint = bind_client_endpoint(identity.secret_key, alpn.clone()).await?;
+        let alpn = if is_pairing {
+            crate::transport::wormhole::PAIRING_ALPN.to_vec()
+        } else {
+            derive_alpn(options.secret_value())
+        };
+        let endpoint = bind_client_endpoint(identity.secret_key, vec![alpn.clone()]).await?;
 
         let connection: iroh::endpoint::Connection =
             match tokio::time::timeout(Self::CONNECT_TIMEOUT, endpoint.connect(target_addr, &alpn))
@@ -320,16 +367,23 @@ impl Client {
     ///
     /// Returns an error if the target is unparseable or a requested alias is not found.
     #[cfg(feature = "storage")]
-    pub fn parse_target(state: &StateConfig, target: &str) -> Result<Ticket> {
+    pub fn parse_target(state: &StateConfig, target: &str) -> Result<ResolvedTarget> {
         use std::str::FromStr;
 
+        // 1. Try parsing as a full Iroh ticket.
         if let Ok(ticket) = Ticket::from_str(target) {
-            return Ok(ticket);
+            return Ok(ResolvedTarget::Ticket(ticket));
         }
 
+        // 2. Try resolving as a saved peer alias.
         let peers = crate::storage::peers::list_peers(state)?;
         if let Some(peer) = peers.into_iter().find(|p| p.name == target) {
-            return Ok(peer.ticket);
+            return Ok(ResolvedTarget::Ticket(peer.ticket));
+        }
+
+        // 3. Fallback to Wormhole code if it looks like one (has at least one hyphen).
+        if target.contains('-') || is_wormhole_pattern(target) {
+            return Ok(ResolvedTarget::WormholeCode(target.to_string()));
         }
 
         Err(IroshError::InvalidTarget {
@@ -341,6 +395,13 @@ impl Client {
     pub(crate) fn classify_connect_error(error: &IroshError) -> SessionState {
         SessionState::from_irosh_error(error)
     }
+}
+
+/// Helper to detect if a string looks like a wormhole code.
+fn is_wormhole_pattern(s: &str) -> bool {
+    // Standard codes are word-word-digit, but we also allow any hyphenated string now.
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() >= 2
 }
 
 fn lock_or_recover<T>(mutex: &Arc<StdMutex<T>>) -> MutexGuard<'_, T> {

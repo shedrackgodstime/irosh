@@ -179,11 +179,26 @@ where
             .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈")
             .template("{spinner:.cyan} {msg}")?,
     );
-    pb.set_message("Dialing P2P node...");
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
+    let (ticket, is_pairing) = match target {
+        irosh::ResolvedTarget::Ticket(t) => (t, false),
+        irosh::ResolvedTarget::WormholeCode(code) => {
+            pb.set_message(format!("Searching for wormhole: {}...", code));
+            match Client::connect_wormhole(&options, &code).await {
+                Ok(t) => (t, true),
+                Err(e) => {
+                    pb.finish_and_clear();
+                    return Err(e.into());
+                }
+            }
+        }
+    };
+
+    pb.set_message("Dialing P2P node...");
+
     // Separate P2P connection from SSH handshake to avoid spinner/prompt conflict.
-    let connection_res = Client::dial_p2p(&options, target).await;
+    let connection_res = Client::dial_p2p(&options, ticket.clone(), is_pairing).await;
     pb.finish_and_clear();
 
     let connection = match connection_res {
@@ -197,7 +212,7 @@ where
         Err(e) => handle_connect_error(e, &options).await?,
     };
 
-    maybe_autosave_alias(&session, &options, &raw_target)?;
+    maybe_autosave_alias(&session, &options, &ticket, &raw_target)?;
 
     // 5. Setup Terminal Driving.
     let stdin_is_tty = std::io::stdin().is_terminal();

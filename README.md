@@ -108,8 +108,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Connect from a P2P client
     let mut session = Client::connect(
         &ClientOptions::new(StateConfig::new("/tmp/irosh-client".into())),
-        ready.ticket().to_string().parse()?
-    ).await?;
+        ready.ticket().clone(),
+    )
+    .await?;
 
     // 3. Execute remote commands via Iroh transport
     session.exec("uname -a").await?;
