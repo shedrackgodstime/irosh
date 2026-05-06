@@ -32,15 +32,15 @@ should never have to keep unnecessary information in their head.
 
 **Used by:**
 - `irosh trust reset` → user must type `yes`
-- `irosh identity rotate` → user must type their current NodeID
+- `irosh identity rotate` → user must type `ROTATE`
 - `irosh passwd remove` → user must type `yes`
 
 **UX:**
 ```
-⚠️  WARNING: This will wipe ALL trusted devices and clear the Node Password.
-    All active sessions will be closed immediately.
+[WARN] This will wipe ALL trusted devices and clear the Node Password.
+       All active sessions will be closed immediately.
 
-    Type 'yes' to confirm, or press Ctrl+C to cancel: ___
+       Type 'yes' to confirm, or press Ctrl+C to cancel: ___
 ```
 
 **Behavior:**
@@ -61,7 +61,7 @@ should never have to keep unnecessary information in their head.
 
 **UX:**
 ```
-⚠️  Remove 'Laptop-Old' from trusted devices? [y/N]: ___
+[WARN] Remove 'Laptop-Old' from trusted devices? [y/N]: ___
 ```
 
 **Behavior:**
@@ -104,7 +104,7 @@ Confirm password:   ____
 
 **UX (current — needs polish):**
 ```
-🔐 Server requires a password.
+[SEC] Server requires a password.
 Password: ____
 ```
 
@@ -161,8 +161,8 @@ Enter a name for this peer (e.g. 'work-pc'): ____
 
 **UX (wormhole code):**
 ```
-🌀 Generated code: apple-tiger-blue
-   Press Enter to use this code, or type a custom one: ____
+[P2P] Generated code: apple-tiger-blue
+      Press Enter to use this code, or type a custom one: ____
 ```
 
 **Behavior:**
@@ -182,16 +182,16 @@ Enter a name for this peer (e.g. 'work-pc'): ____
 
 **UX (wormhole security warning):**
 ```
-⚠️  Security Notice:
-    Your server has trusted devices but no Node Password is set.
-    Any device that discovers this wormhole code will be trusted automatically.
-    Run 'irosh passwd set' to require a password instead.
+[SEC] Security Notice:
+      Your server has trusted devices but no Node Password is set.
+      Any device that discovers this wormhole code will be trusted automatically.
+      Run 'irosh passwd set' to require a password instead.
 ```
 
 **UX (first-run empty vault):**
 ```
-🔒 Vault is empty. The first device to connect will be permanently trusted.
-💡 Tip: Run 'irosh passwd set' now to require a password instead.
+[SEC] Vault is empty. The first device to connect will be permanently trusted.
+[INFO] Tip: Run 'irosh passwd set' now to require a password instead.
 ```
 
 **Behavior:**
@@ -211,7 +211,7 @@ Enter a name for this peer (e.g. 'work-pc'): ____
 
 **UX (wormhole wait):**
 ```
-🌀 Wormhole active. Code: apple-tiger-blue
+[P2P] Wormhole active. Code: apple-tiger-blue
 ⠸ Waiting for a device to connect... (Ctrl+C to cancel)
 ```
 
@@ -224,40 +224,39 @@ Enter a name for this peer (e.g. 'work-pc'): ____
 
 ## C9 — Success / Failure Banner
 **Type**: Final status output after an operation.
-**Library**: `println!` with emoji. Consistent prefix convention.
+**Library**: `println!` or `eprintln!` with colored text. Consistent prefix convention for a professional Unix feel.
 
 **Prefix convention:**
-- `✅` — Success
-- `❌` — Failure / Error  
-- `⚠️` — Warning (non-fatal)
-- `💡` — Tip / Suggestion
-- `🔒` — Security-related state
-- `🌀` — Wormhole-related
-- `🚀` — Server started
+- `[OK]` (Green) — Success
+- `[ERR]` (Red) — Failure / Error
+- `[WARN]` (Yellow) — Warning (non-fatal)
+- `[INFO]` (Blue) — Tip / Suggestion / State
+- `[SEC]` (Magenta) — Security-related state
+- `[P2P]` (Cyan) — Wormhole / Networking state
 
 **Examples:**
 
 After `irosh connect` first TOFU:
 ```
-✅ Connected to 'work-pc'.
-🔒 This device has been added to your trusted list. (2 trusted devices total)
-💡 Tip: Run 'irosh trust list' to see all trusted devices.
+[OK] Connected to 'work-pc'.
+[SEC] This device has been added to your trusted list. (2 trusted devices total)
+[INFO] Tip: Run 'irosh trust list' to see all trusted devices.
 ```
 
 After `irosh trust revoke`:
 ```
-✅ Device 'Laptop-Old' removed. Active sessions closed.
+[OK] Device 'Laptop-Old' removed. Active sessions closed.
 ```
 
 After `irosh wormhole` burns:
 ```
-✅ Device paired successfully. Wormhole closed.
+[OK] Device paired successfully. Wormhole closed.
 ```
 
 After `irosh trust reset`:
 ```
-✅ Vault cleared. All trusted devices removed. Node Password cleared.
-   Server is back in bootstrap state.
+[OK] Vault cleared. All trusted devices removed. Node Password cleared.
+     Server is back in bootstrap state.
 ```
 
 ---
@@ -281,7 +280,7 @@ After `irosh trust reset`:
 | `irosh trust reset` | C7 warning → C1 danger confirm → C9 result |
 | `irosh peer add` (no name) | C6 name input |
 | `irosh peer remove` (no name) | C5 selector → C2 soft confirm |
-| `irosh identity rotate` | C7 warning → C1 danger confirm (NodeID) → C9 result |
+| `irosh identity rotate` | C7 warning → C1 danger confirm (ROTATE) → C9 result |
 | `irosh config export` | C3 passphrase → C8 spinner → C9 result |
 | `irosh config import` | C4 passphrase → C8 spinner → C9 result |
 
