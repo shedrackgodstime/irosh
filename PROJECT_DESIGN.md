@@ -151,8 +151,45 @@ for the Irosh P2P SSH system. It is the single source of truth for implementatio
 - **Q13: Double Instance** — What happens when `irosh host` runs while the daemon is already active? Should it fail, attach, or show live logs?
 - **Q14: Daemon crash mid-pairing** — How do we ensure atomic, crash-safe key writes?
 - **Q15: `irosh system install` while `irosh host` is running** — Identity conflict resolution.
-- **Q16: Ticket vs. Wormhole code ambiguity** — How does the client auto-detect which format it was given?
-- **Q17: Session behaviour when `trust reset` is run** — We agreed: kill active sessions. Implementation detail TBD.
 - **Alias Sync** — Should `trust/clients/` folder names double as peer aliases on the client side?
 - **Audit Logs** — `irosh trust log` or similar to view connection history.
 - **Config import/export** — Research OpenSSH equivalents before deciding.
+
+---
+
+## 6. ✅ Closed Gaps
+
+### Gap A: Q16 — How does `irosh connect <input>` know what it was given?
+- **It's three possible inputs, not two**: Alias, Ticket, or Wormhole code (auto-generated OR custom).
+- **Detection order** (in strict priority):
+  1. **Alias**: Is the input in the local saved peer list? → Use the saved ticket. No network call needed.
+  2. **Ticket**: Does the input match the Iroh ticket format (long, base32-encoded, known prefix)? → Connect directly.
+  3. **Wormhole code** (fallback): Everything else → Try Pkarr lookup. Covers both auto-generated 3-word codes AND any custom string the user passed to `irosh wormhole`.
+- **Rule**: If the Pkarr lookup times out or finds nothing, print: *"❌ Could not resolve '\<input\>' as an alias, ticket, or wormhole code."*
+
+---
+
+### Gap B: Can you remove the Node Password?
+- **No `irosh passwd --clear` command.**
+- If you forget the password: physical access to machine → `irosh trust reset` → wipes Vault AND clears password → re-pair all devices.
+- One command. One nuclear option. Simple, no confusion.
+
+---
+
+### Gap C: What does `irosh trust list` show?
+- Fingerprint (always)
+- Date/time of pairing (when the key was first added to the Vault)
+- Alias or label if one exists (e.g., device name from the client)
+- Status: Active (seen recently) vs. Inactive (never or long ago)
+
+---
+
+### Gap D: The first-run UX message
+- **Applies to both `irosh host` AND `irosh system install`** — the message must be consistent.
+- **Content must cover**:
+  - The Ticket (how to share it)
+  - The Vault state (empty = first device gets TOFU)
+  - How to lock it down immediately (`irosh passwd`)
+  - How to use wormhole for easy discovery
+- **Exact copy to be designed in the implementation conversation.**
+
