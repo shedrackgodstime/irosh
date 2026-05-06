@@ -47,15 +47,10 @@ pub async fn bind_server_endpoint(
         RelayMode::Default
     };
 
-    let builder = Endpoint::builder()
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(alpns)
-        .relay_mode(relay_mode);
-
-    #[cfg(target_os = "android")]
-    let builder = builder.net_report(false);
-
-    let endpoint = builder
+        .relay_mode(relay_mode)
         .bind()
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;
@@ -66,9 +61,6 @@ pub async fn bind_server_endpoint(
 
     let endpoint_addr = endpoint.addr();
     let node_id = endpoint.id();
-
-    // Use pure EndpointAddr for now, as NodeAddr path is elusive in this environment.
-    // We will parse it back in the client.
 
     let direct_addresses = endpoint_addr
         .ip_addrs()
@@ -96,15 +88,10 @@ pub async fn bind_client_endpoint(secret_key: SecretKey, alpns: Vec<Vec<u8>>) ->
         RelayMode::Default
     };
 
-    let builder = Endpoint::builder()
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(alpns)
-        .relay_mode(relay_mode);
-
-    #[cfg(target_os = "android")]
-    let builder = builder.net_report(false);
-
-    let endpoint = builder
+        .relay_mode(relay_mode)
         .bind()
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;

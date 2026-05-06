@@ -101,3 +101,6 @@ lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce number of codegen units to increase optimizations
 panic = "abort"     # Abort on panic for smaller binaries
 strip = true        # Strip symbols from binary
+
+[patch.crates-io]
+netwatch = { path = "./vendor/netwatch" }
