@@ -68,6 +68,31 @@ pub async fn exec_wormhole(args: WormholeArgs, global_args: &GlobalArgs) -> Resu
         .or_else(|| dirs::home_dir().map(|h| h.join(".irosh").join("server")))
         .context("could not determine server state directory")?;
 
+    let client = irosh::IpcClient::new(state_root.clone());
+
+    // Check if the daemon is reachable. We just send a GetStatus command.
+    let daemon_running = client.send(irosh::IpcCommand::GetStatus).await.is_ok();
+
+    // Handle special keywords: status, disable
+    match args.code.as_deref() {
+        Some("status") => {
+            if !daemon_running {
+                anyhow::bail!("Daemon is not running. Start it with 'irosh service install'.");
+            }
+            return handle_wormhole_status(&state_root).await;
+        }
+        Some("disable") => {
+            if !daemon_running {
+                anyhow::bail!("Daemon is not running. Start it with 'irosh service install'.");
+            }
+            // If there's a second argument (e.g. irosh wormhole disable <code>), we'd need to capture it.
+            // For now, we'll just disable the active one.
+            return handle_wormhole_disable(&state_root).await;
+        }
+        _ => {}
+    }
+
+    // Validation: Only apply 8-char limit if a custom code is provided and it's NOT a keyword.
     if let Some(c) = &args.code {
         if c.len() < 8 && args.password.is_none() {
             anyhow::bail!(
@@ -75,11 +100,6 @@ pub async fn exec_wormhole(args: WormholeArgs, global_args: &GlobalArgs) -> Resu
             );
         }
     }
-
-    let client = irosh::IpcClient::new(state_root.clone());
-
-    // Check if the daemon is reachable. We just send a GetStatus command.
-    let daemon_running = client.send(irosh::IpcCommand::GetStatus).await.is_ok();
 
     if args.background && !daemon_running {
         anyhow::bail!(
@@ -603,6 +623,49 @@ fn current_uid() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+async fn handle_wormhole_status(state_root: &std::path::Path) -> Result<()> {
+    use irosh::{IpcClient, IpcCommand, IpcResponse};
+    let client = IpcClient::new(state_root.to_path_buf());
+
+    match client.send(IpcCommand::GetStatus).await {
+        Ok(IpcResponse::Status {
+            wormhole_active,
+            wormhole_code,
+            active_sessions,
+        }) => {
+            if wormhole_active {
+                println!("\n✨ Wormhole Active");
+                println!(
+                    "Code: \x1b[1;32m{}\x1b[0m",
+                    wormhole_code.unwrap_or_default()
+                );
+                println!("Expiry: 24 hours (or 1 successful connection)");
+            } else {
+                println!("No active wormhole.");
+            }
+            println!("Active SSH Sessions: {}", active_sessions);
+            Ok(())
+        }
+        Ok(_) => anyhow::bail!("Unexpected response from daemon"),
+        Err(e) => anyhow::bail!("Failed to query daemon: {}", e),
+    }
+}
+
+async fn handle_wormhole_disable(state_root: &std::path::Path) -> Result<()> {
+    use irosh::{IpcClient, IpcCommand, IpcResponse};
+    let client = IpcClient::new(state_root.to_path_buf());
+
+    match client.send(IpcCommand::DisableWormhole).await {
+        Ok(IpcResponse::Ok) => {
+            println!("✅ Wormhole disabled.");
+            Ok(())
+        }
+        Ok(IpcResponse::Error(e)) => anyhow::bail!("Failed to disable wormhole: {}", e),
+        Ok(_) => anyhow::bail!("Unexpected response from daemon"),
+        Err(e) => anyhow::bail!("Failed to connect to daemon: {}", e),
+    }
+}
+
 async fn handle_wormhole(
     code: Option<String>,
     password: Option<String>,
@@ -723,13 +786,16 @@ pub async fn exec_interactive_wormhole(args: WormholeArgs, global_args: &GlobalA
     println!("\nWaiting for peer to knock...");
 
     // Enable the wormhole loop
+    let (tx, _) = tokio::sync::oneshot::channel();
     control
-        .send(irosh::IpcCommand::EnableWormhole {
+        .send(irosh::InternalCommand::EnableWormhole {
             code: final_code,
             password: args.password,
             persistent: args.persistent,
+            tx,
         })
-        .await?;
+        .await
+        .map_err(|_| anyhow::anyhow!("Failed to enable wormhole: server channel closed"))?;
 
     server.run().await?;
     Ok(())

@@ -193,8 +193,8 @@ pub struct Server {
     secret: Option<String>,
     shutdown_tx: tokio::sync::mpsc::Sender<()>,
     shutdown_rx: tokio::sync::mpsc::Receiver<()>,
-    control_tx: tokio::sync::mpsc::Sender<ipc::IpcCommand>,
-    control_rx: tokio::sync::mpsc::Receiver<ipc::IpcCommand>,
+    control_tx: tokio::sync::mpsc::Sender<ipc::InternalCommand>,
+    control_rx: tokio::sync::mpsc::Receiver<ipc::InternalCommand>,
     ticket: crate::transport::ticket::Ticket,
     gossip: iroh_gossip::net::Gossip,
     wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
@@ -271,7 +271,7 @@ impl Server {
     }
 
     /// Returns a channel to send control commands to the server loop.
-    pub fn control_handle(&self) -> tokio::sync::mpsc::Sender<ipc::IpcCommand> {
+    pub fn control_handle(&self) -> tokio::sync::mpsc::Sender<ipc::InternalCommand> {
         self.control_tx.clone()
     }
 
@@ -475,8 +475,16 @@ impl Server {
                 msg = self.control_rx.recv() => {
                     if let Some(msg) = msg {
                         match msg {
-                            ipc::IpcCommand::EnableWormhole { code, password, persistent } => {
-                                info!("Wormhole enabled via IPC: {} (persistent: {})", code, persistent);
+                            ipc::InternalCommand::EnableWormhole {
+                                code,
+                                password,
+                                persistent,
+                                tx,
+                            } => {
+                                info!(
+                                    "Wormhole enabled via IPC: {} (persistent: {})",
+                                    code, persistent
+                                );
 
                                 // Abort existing wormhole if any.
                                 if let Some(wh) = wormhole.take() {
@@ -484,7 +492,8 @@ impl Server {
                                     wh.expiry_task.abort();
                                     let code = wh.code.clone();
                                     tokio::spawn(async move {
-                                        let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                                        let _ =
+                                            crate::transport::wormhole::unpublish_ticket(&code).await;
                                     });
                                 }
 
@@ -507,9 +516,13 @@ impl Server {
                                 // the wormhole if no pairing occurs.
                                 let expiry_control = self.control_tx.clone();
                                 let expiry_task = tokio::spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60))
+                                        .await;
                                     info!("Wormhole expired after 24 hours.");
-                                    let _ = expiry_control.send(ipc::IpcCommand::DisableWormhole).await;
+                                    let (res_tx, _) = tokio::sync::oneshot::channel();
+                                    let _ = expiry_control
+                                        .send(ipc::InternalCommand::DisableWormhole { tx: res_tx })
+                                        .await;
                                 });
 
                                 wormhole = Some(ActiveWormhole {
@@ -522,20 +535,27 @@ impl Server {
                                     success: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                                     expiry_task,
                                 });
+                                let _ = tx.send(ipc::IpcResponse::Ok);
                             }
-                            ipc::IpcCommand::DisableWormhole => {
+                            ipc::InternalCommand::DisableWormhole { tx } => {
                                 info!("Wormhole disabled via IPC");
                                 if let Some(wh) = wormhole.take() {
                                     wh.task.abort();
                                     wh.expiry_task.abort();
                                     let code = wh.code.clone();
                                     tokio::spawn(async move {
-                                        let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                                        let _ =
+                                            crate::transport::wormhole::unpublish_ticket(&code).await;
                                     });
                                 }
+                                let _ = tx.send(ipc::IpcResponse::Ok);
                             }
-                            ipc::IpcCommand::GetStatus => {
-                                // Currently status is handled synchronously in ipc.rs for simplicity
+                            ipc::InternalCommand::GetStatus { tx } => {
+                                let _ = tx.send(ipc::IpcResponse::Status {
+                                    wormhole_active: wormhole.is_some(),
+                                    wormhole_code: wormhole.as_ref().map(|w| w.code.clone()),
+                                    active_sessions: sessions.len(),
+                                });
                             }
                         }
                     }

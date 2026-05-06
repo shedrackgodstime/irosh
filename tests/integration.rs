@@ -405,11 +405,13 @@ async fn test_wormhole_rendezvous() {
     });
 
     // 2. Enable Wormhole on Server
+    let (tx, _) = tokio::sync::oneshot::channel();
     control_tx
-        .send(irosh::IpcCommand::EnableWormhole {
+        .send(irosh::InternalCommand::EnableWormhole {
             code: code.to_string(),
             password: None,
             persistent: false,
+            tx,
         })
         .await
         .unwrap();

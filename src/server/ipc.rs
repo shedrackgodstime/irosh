@@ -27,6 +27,22 @@ pub enum IpcCommand {
     GetStatus,
 }
 
+/// Internal version of IpcCommand that includes a response channel.
+pub enum InternalCommand {
+    EnableWormhole {
+        code: String,
+        password: Option<String>,
+        persistent: bool,
+        tx: tokio::sync::oneshot::Sender<IpcResponse>,
+    },
+    DisableWormhole {
+        tx: tokio::sync::oneshot::Sender<IpcResponse>,
+    },
+    GetStatus {
+        tx: tokio::sync::oneshot::Sender<IpcResponse>,
+    },
+}
+
 /// Responses sent by the irosh daemon back to the IPC client.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum IpcResponse {
@@ -68,12 +84,12 @@ pub enum IpcError {
 /// The IPC listener that handles incoming control commands.
 pub struct IpcServer {
     state_dir: PathBuf,
-    control_tx: tokio::sync::mpsc::Sender<IpcCommand>,
+    control_tx: tokio::sync::mpsc::Sender<InternalCommand>,
 }
 
 impl IpcServer {
     /// Creates a new IPC server using the provided state directory for the socket path.
-    pub fn new(state_dir: PathBuf, control_tx: tokio::sync::mpsc::Sender<IpcCommand>) -> Self {
+    pub fn new(state_dir: PathBuf, control_tx: tokio::sync::mpsc::Sender<InternalCommand>) -> Self {
         Self {
             state_dir,
             control_tx,
@@ -157,7 +173,7 @@ impl IpcServer {
 /// Handles a single IPC connection.
 async fn handle_ipc_connection<S>(
     stream: &mut S,
-    control_tx: tokio::sync::mpsc::Sender<IpcCommand>,
+    control_tx: tokio::sync::mpsc::Sender<InternalCommand>,
 ) -> std::result::Result<(), IpcError>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -169,12 +185,29 @@ where
     let command: IpcCommand = serde_json::from_slice(&buf)?;
     debug!("Received IPC command: {:?}", command);
 
-    // Send the command to the main server loop and wait for it to be processed
-    // if needed (currently we just fire and forget for simple commands,
-    // but we might want a response channel later).
-    let response = match control_tx.send(command).await {
-        Ok(_) => IpcResponse::Ok,
-        Err(_) => IpcResponse::Error("Server control channel closed".to_string()),
+    let (res_tx, res_rx) = tokio::sync::oneshot::channel();
+
+    let internal_cmd = match command {
+        IpcCommand::EnableWormhole {
+            code,
+            password,
+            persistent,
+        } => InternalCommand::EnableWormhole {
+            code,
+            password,
+            persistent,
+            tx: res_tx,
+        },
+        IpcCommand::DisableWormhole => InternalCommand::DisableWormhole { tx: res_tx },
+        IpcCommand::GetStatus => InternalCommand::GetStatus { tx: res_tx },
+    };
+
+    let response = if control_tx.send(internal_cmd).await.is_ok() {
+        res_rx.await.unwrap_or(IpcResponse::Error(
+            "Server failed to provide a response".to_string(),
+        ))
+    } else {
+        IpcResponse::Error("Server control channel closed".to_string())
     };
 
     let res_buf = serde_json::to_vec(&response)?;

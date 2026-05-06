@@ -41,7 +41,7 @@ pub use client::{
 };
 
 #[cfg(feature = "server")]
-pub use server::ipc::{IpcCommand, IpcResponse};
+pub use server::ipc::{InternalCommand, IpcCommand, IpcResponse};
 
 #[cfg(any(feature = "server", feature = "client"))]
 pub use session::{PtyOptions, PtySize, SessionState};
