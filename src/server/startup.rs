@@ -13,13 +13,21 @@ pub(crate) async fn inspect_server(options: &ServerOptions) -> Result<ServerRead
     let node_id = identity.secret_key.public();
     let mut addr = iroh::EndpointAddr::new(node_id);
 
-    // If a custom relay is configured, include it in the stable ticket to
-    // ensure connectivity even if Pkarr discovery is slow.
-    if let Some(ref relay_str) = options.relay_url {
-        if relay_str.starts_with("http") {
-            if let Ok(url) = relay_str.parse::<iroh::RelayUrl>() {
-                addr = addr.with_relay_url(url);
-            }
+    // Ensure the stable ticket includes at least one relay URL for discovery.
+    // Pure node-id tickets (discovery-only) often fail if Pkarr propagation is slow.
+    let relay_url = options
+        .relay_url
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    if relay_url != "disabled" {
+        let url_to_parse = if relay_url == "default" {
+            "https://relay.iroh.network"
+        } else {
+            &relay_url
+        };
+
+        if let Ok(url) = url_to_parse.parse::<iroh::RelayUrl>() {
+            addr = addr.with_relay_url(url);
         }
     }
 

@@ -13,7 +13,7 @@ pub async fn exec(action: IdentityAction, ctx: &CliContext) -> Result<()> {
             let options = ctx.server_options()?;
             let ready = irosh::Server::inspect(&options).await?;
 
-            let identity = storage::load_or_generate_identity(&options.state()).await?;
+            let identity = storage::load_or_generate_identity(options.state()).await?;
             let fingerprint = identity.ssh_key.public_key().fingerprint(HashAlg::Sha256);
 
             println!("\n  \x1b[1;36m🆔 Machine Identity\x1b[0m");
