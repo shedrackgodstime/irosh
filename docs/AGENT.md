@@ -17,6 +17,8 @@ We are moving from a tangled "Discovery" MVP to a professional, production-grade
   2. `docs/CLI_COMMAND_TREE.md` (Available commands and scope)
   3. `docs/CLI_UX_COMPONENTS.md` (The 9 standard UI prompts)
   4. `docs/ARCHITECTURE_STATE.md` (Atomic writes and file watching)
+  5. `docs/ARCHITECTURE_CROSS_PLATFORM.md` (Sys modules and OS isolation)
+  6. `docs/SECURITY_AUDIT.md` (Actionable MVP security checklist)
 
 ---
 
