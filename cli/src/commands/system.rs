@@ -35,26 +35,26 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
         }
         SystemAction::Status => {
             let status = service::query_service_status().await;
-            println!("\n  \x1b[1;35m⚙️  System Service Status\x1b[0m");
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m");
+            println!("\n  System Service Status");
+            println!("  ----------------------------------------------------");
             match status {
                 ServiceStatus::Active(manager) => {
-                    println!("  Status:    \x1b[1;32m● ACTIVE\x1b[0m");
+                    println!("  Status:    ACTIVE");
                     println!("  Manager:   {}", manager);
                 }
                 ServiceStatus::Inactive => {
-                    println!("  Status:    \x1b[1;33m○ INACTIVE\x1b[0m");
+                    println!("  Status:    INACTIVE");
                     println!("  Notice:    Service is installed but not running.");
                 }
                 ServiceStatus::NotFound => {
-                    println!("  Status:    \x1b[1;31m◌ NOT INSTALLED\x1b[0m");
+                    println!("  Status:    NOT INSTALLED");
                     println!("  Action:    Run 'irosh system install' to enable background tasks.");
                 }
                 ServiceStatus::Unknown => {
-                    println!("  Status:    \x1b[38;5;244m? UNKNOWN\x1b[0m");
+                    println!("  Status:    UNKNOWN");
                 }
             }
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m\n");
+            println!("  ----------------------------------------------------\n");
         }
         SystemAction::Logs { follow } => {
             irosh::sys::service::view_logs(follow).await?;

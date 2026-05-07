@@ -11,9 +11,9 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
 
     match action {
         ConfigAction::List => {
-            println!("\n  \x1b[1;35m⚙️  Global Configuration\x1b[0m");
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m");
-            println!("  \x1b[1;37m{:<18} {:<30}\x1b[0m", "SETTING", "VALUE");
+            println!("\n  Global Configuration");
+            println!("  ----------------------------------------------------");
+            println!("  {:<18} {:<30}", "SETTING", "VALUE");
 
             let settings = [
                 (
@@ -33,9 +33,9 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
             ];
 
             for (k, v) in settings {
-                println!("  {:<18} \x1b[36m{}\x1b[0m", k, v);
+                println!("  {:<18} {}", k, v);
             }
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m\n");
+            println!("  ----------------------------------------------------\n");
         }
         ConfigAction::Get { key } => {
             let val = match key.as_str() {
@@ -61,7 +61,7 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     anyhow::bail!("Invalid key.");
                 }
             };
-            Ui::info(&format!("\x1b[1m{}\x1b[0m = \x1b[36m{}\x1b[0m", key, val));
+            Ui::info(&format!("{} = {}", key, val));
         }
         ConfigAction::Set { key, value } => {
             match key.as_str() {

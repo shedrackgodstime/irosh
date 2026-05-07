@@ -63,11 +63,9 @@ async fn exec_internal(
             if peers.is_empty() {
                 Ui::warn("Address book is empty", "You haven't saved any peers yet.");
                 Ui::info("To connect, you can:");
-                Ui::info("  1. Use a wormhole code:   \x1b[36mirosh <code-word>\x1b[0m");
-                Ui::info("  2. Use a full ticket:     \x1b[36mirosh <ticket-string>\x1b[0m");
-                Ui::info(
-                    "  3. Add a peer manually:   \x1b[36mirosh peer add <name> <ticket>\x1b[0m",
-                );
+                Ui::info("  1. Use a wormhole code:   irosh <code-word>");
+                Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
+                Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
                 println!();
                 anyhow::bail!("No target specified.");
             }
@@ -94,19 +92,13 @@ async fn exec_internal(
                 .any(|p| p.name == raw_target);
 
             if is_alias {
-                Ui::info(&format!(
-                    "Connecting to saved peer: \x1b[1;36m{}\x1b[0m",
-                    raw_target
-                ));
+                Ui::info(&format!("Connecting to saved peer: {}", raw_target));
             } else {
                 Ui::info("Connecting via direct ticket...");
             }
         }
         irosh::ResolvedTarget::WormholeCode(code) => {
-            Ui::info(&format!(
-                "Attempting wormhole connection: \x1b[1;33m{}\x1b[0m",
-                code
-            ));
+            Ui::info(&format!("Attempting wormhole connection: {}", code));
         }
     }
 
@@ -156,10 +148,7 @@ async fn exec_internal(
         format!("peer-{}", &ticket.to_addr().id.to_string()[..8])
     };
 
-    Ui::success(&format!(
-        "Secure session established with \x1b[1;36m{}\x1b[0m",
-        display_name
-    ));
+    Ui::success(&format!("Secure session established with {}", display_name));
 
     // Auto-save logic: Offer to save the peer if it's not already in the address book
     let peers = irosh::storage::list_peers(&state)?;
@@ -181,7 +170,7 @@ async fn exec_internal(
             Ui::error(&format!("Failed to save peer: {}", e));
         } else {
             Ui::success(&format!(
-                "Peer saved! You can now connect using: \x1b[36mirosh connect {}\x1b[0m",
+                "Peer saved! You can now connect using: irosh connect {}",
                 display_name
             ));
         }

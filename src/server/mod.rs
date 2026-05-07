@@ -1,18 +1,18 @@
 //! P2P SSH Server implementation.
 //!
-//! This module provides the [`Server`] struct, which orchestrates the 
-//! life-cycle of an Irosh host. It handles incoming QUIC connections, 
-//! manages SSH channel multiplexing, and provides an IPC interface 
+//! This module provides the [`Server`] struct, which orchestrates the
+//! life-cycle of an Irosh host. It handles incoming QUIC connections,
+//! manages SSH channel multiplexing, and provides an IPC interface
 //! for background control.
 //!
 //! ## Architecture
 //!
-//! The server runs on top of an [`iroh::Endpoint`]. It listens for 
+//! The server runs on top of an [`iroh::Endpoint`]. It listens for
 //! connections with specific ALPNs (Application-Layer Protocol Negotiation):
 //! - `irosh/primary/v1`: The standard P2P SSH session.
 //! - `irosh/pairing/v1`: Temporary ad-hoc pairing via Wormhole.
 //!
-//! For every connection, the server spawns a dedicated task that 
+//! For every connection, the server spawns a dedicated task that
 //! handles PTY allocation and command execution.
 
 pub mod handler;

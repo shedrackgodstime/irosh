@@ -9,6 +9,23 @@
 - **Wormhole Pairing**: Secure out-of-band trust establishment using short human-friendly codes.
 - **Unified Auth**: A flexible authentication system supporting Public Keys, Passwords, and TOFU.
 
+## Usage
+
+Add `irosh` to your `Cargo.toml`. To start a basic P2P server:
+
+```rust,no_run
+use irosh::{Server, ServerOptions, StateConfig};
+
+#[tokio::main]
+async fn main() -> irosh::Result<()> {
+    let options = ServerOptions::new(StateConfig::new("./state".into()));
+    let (ready, server) = Server::bind(options).await?;
+    
+    println!("Server Ticket: {}", ready.ticket);
+    server.run().await
+}
+```
+
 ## Crate Architecture
 
 This crate follows a **"Fat Library"** design. All logic related to networking, cryptography, and protocol state resides here. The accompanying CLI (`irosh-cli`) is a thin wrapper around this library, handling only UI and OS-specific setup.

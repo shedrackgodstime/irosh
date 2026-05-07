@@ -1,16 +1,16 @@
 //! P2P SSH Client implementation.
 //!
-//! This module provides the [`Client`] and [`Session`] abstractions 
-//! for connecting to remote Irosh hosts. It handles peer discovery, 
+//! This module provides the [`Client`] and [`Session`] abstractions
+//! for connecting to remote Irosh hosts. It handles peer discovery,
 //! ALPN negotiation, and interactive shell multiplexing.
 //!
 //! ## Connection Flow
 //!
-//! 1. **Discovery**: Resolve a [`Ticket`] or [`ResolvedTarget`] into a set 
+//! 1. **Discovery**: Resolve a [`crate::transport::ticket::Ticket`] or [`ResolvedTarget`] into a set
 //!    of network addresses.
-//! 2. **Authentication**: Negotiate SSH keys or passwords via the configured 
-//!    [`Authenticator`].
-//! 3. **Session**: Establish a bi-directional [`Session`] for shell access 
+//! 2. **Authentication**: Negotiate SSH keys or passwords via the configured
+//!    [`crate::auth::Authenticator`].
+//! 3. **Session**: Establish a bi-directional [`Session`] for shell access
 //!    or data transfer.
 
 mod connect;

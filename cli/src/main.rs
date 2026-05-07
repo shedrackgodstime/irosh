@@ -1,4 +1,4 @@
-//! Irosh CLI — The thin frontend for P2P SSH.
+//! Irosh CLI - The thin frontend for P2P SSH.
 
 mod commands;
 mod context;
@@ -18,7 +18,11 @@ pub struct Args {
     #[arg(long, env = "IROSH_STATE")]
     pub state: Option<std::path::PathBuf>,
 
-    /// Specific log level (debug, info, warn, error)
+    /// Enable verbose logging (debug level for irosh, info for others)
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
+
+    /// Specific log level override (e.g. 'debug', 'trace')
     #[arg(long, global = true)]
     pub log: Option<String>,
 
@@ -34,11 +38,25 @@ pub struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize logging
-    let filter = args.log.as_deref().unwrap_or("info");
+    // Initialize professional monochrome logging
+    let filter = if args.verbose {
+        "irosh=debug,info"
+    } else if let Some(custom) = &args.log {
+        custom.as_str()
+    } else {
+        "irosh=info,error"
+    };
+
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_target(args.verbose)
+        .with_ansi(false) // Force monochrome
+        .with_level(args.verbose)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
         .init();
 
     let ctx = CliContext::new(args)?;

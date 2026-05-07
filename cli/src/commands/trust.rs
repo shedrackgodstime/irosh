@@ -16,12 +16,9 @@ pub async fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                 return Ok(());
             }
 
-            println!("\n  \x1b[1;34m🔒 Authorized Devices (Vault)\x1b[0m");
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m");
-            println!(
-                "  \x1b[1;37m{:<20} {:<30}\x1b[0m",
-                "IDENTITY", "FINGERPRINT (SHA256)"
-            );
+            println!("\n  Authorized Devices (Vault)");
+            println!("  ----------------------------------------------------");
+            println!("  {:<20} {:<30}", "IDENTITY", "FINGERPRINT (SHA256)");
 
             for (id, k) in keys {
                 let fingerprint = k.fingerprint(HashAlg::Sha256).to_string();
@@ -31,9 +28,9 @@ pub async fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                     id.clone()
                 };
 
-                println!("  {:<20} \x1b[32m{}\x1b[0m", short_id, fingerprint);
+                println!("  {:<20} {}", short_id, fingerprint);
             }
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m\n");
+            println!("  ----------------------------------------------------\n");
         }
         TrustAction::Revoke { fingerprint: _ } => {
             let keys = storage::load_all_authorized_clients(&state)?;

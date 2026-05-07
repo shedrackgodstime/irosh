@@ -1,11 +1,11 @@
 //! Networking transports and protocol implementation.
 //!
-//! This module provides the glue between the [Iroh](https://iroh.computer) 
+//! This module provides the glue between the [Iroh](https://iroh.computer)
 //! peer-to-peer stack and the SSH protocol. It handles:
 //!
 //! 1. **Node Discovery**: Finding peers via P2P tickets and Pkarr (Wormhole).
 //! 2. **Connection Establishment**: Hole-punching and relaying via QUIC.
-//! 3. **Protocol Multiplexing**: Handling both standard SSH sessions and 
+//! 3. **Protocol Multiplexing**: Handling both standard SSH sessions and
 //!    irosh-specific transfer protocols (Wormhole pairing, Metadata).
 //!
 //! ## Sub-modules

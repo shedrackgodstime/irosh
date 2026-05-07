@@ -1,6 +1,6 @@
-use dialoguer::theme::ColorfulTheme;
+use dialoguer::theme::SimpleTheme;
 
-/// Standard theme for all Irosh CLI interactions.
-pub fn irosh_theme() -> ColorfulTheme {
-    ColorfulTheme::default()
+/// Standard monochrome theme for all Irosh CLI interactions.
+pub fn irosh_theme() -> SimpleTheme {
+    SimpleTheme
 }

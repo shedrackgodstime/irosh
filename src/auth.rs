@@ -14,7 +14,7 @@
 //! - [`PasswordAuth`] — A single shared password for all connections. Good for
 //!   personal or simple setups.
 //! - [`CombinedAuth`] — Accepts either public keys or passwords.
-//! - [`UnifiedAuthenticator`] — The master security policy for Irosh V2. Manages the 
+//! - [`UnifiedAuthenticator`] — The master security policy for Irosh V2. Manages the
 //!   precedence between established trust, node passwords, and temporary wormhole codes.
 
 use std::fmt;
@@ -237,7 +237,7 @@ impl Authenticator for PasswordAuth {
 ///
 /// # Errors
 ///
-/// Returns a [`StorageError::PasswordHash`] if salt generation or hashing fails.
+/// Returns a [`crate::error::StorageError::PasswordHash`] if salt generation or hashing fails.
 pub fn hash_password(password: &str) -> Result<String> {
     let mut salt_bytes = [0u8; 16];
 

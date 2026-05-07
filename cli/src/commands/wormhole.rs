@@ -98,7 +98,7 @@ async fn handle_status(client: &IpcClient) -> Result<()> {
         } => {
             if wormhole_active {
                 Ui::success(&format!(
-                    "Wormhole active! Code: \x1b[1;32m{}\x1b[0m",
+                    "Wormhole active! Code: {}",
                     wormhole_code.unwrap_or_default()
                 ));
             } else {
@@ -138,7 +138,7 @@ async fn handle_enable_daemon(
     {
         IpcResponse::Ok => {
             Ui::success(&format!(
-                "Wormhole active in background! Code: \x1b[1;32m{}\x1b[0m",
+                "Wormhole active in background! Code: {}",
                 final_code
             ));
             Ui::info(&format!("Run 'irosh {}' on the other machine.", final_code));
@@ -167,7 +167,7 @@ async fn handle_foreground_wormhole(
     let control = server.control_handle();
 
     Ui::success(&format!(
-        "Wormhole active (Foreground)! Code: \x1b[1;32m{}\x1b[0m",
+        "Wormhole active (Foreground)! Code: {}",
         final_code
     ));
     Ui::info(&format!("Run 'irosh {}' on the other machine.", final_code));

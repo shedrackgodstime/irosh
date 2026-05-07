@@ -55,7 +55,7 @@ pub async fn drive_session(mut session: Session) -> Result<()> {
                         stderr.flush().await?;
                     }
                     Some(SessionEvent::Closed) => {
-                        println!("\r\n🔒 Session closed.");
+                        println!("\r\nSession closed.");
                         break;
                     }
                     None => break,

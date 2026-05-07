@@ -18,21 +18,14 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 return Ok(());
             }
 
-            println!("\n  \x1b[1;36m👥 Saved Peers (Address Book)\x1b[0m");
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m");
-            println!(
-                "  \x1b[1;37m{:<18} {:<30}\x1b[0m",
-                "ALIAS", "TICKET SUMMARY"
-            );
+            println!("\n  Saved Peers (Address Book)");
+            println!("  ----------------------------------------------------");
+            println!("  {:<18} {:<30}", "ALIAS", "TICKET SUMMARY");
 
             for p in peers {
-                println!(
-                    "  \x1b[1m{:<18}\x1b[0m \x1b[38;5;244m{}\x1b[0m",
-                    p.name,
-                    display::shorten_ticket(&p.ticket)
-                );
+                println!("  {:<18} {}", p.name, display::shorten_ticket(&p.ticket));
             }
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m\n");
+            println!("  ----------------------------------------------------\n");
         }
         PeerAction::Add { name, ticket } => {
             let ticket_parsed = ticket.parse()?;
@@ -74,23 +67,17 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
         }
         PeerAction::Info { name } => {
             if let Some(p) = storage::get_peer(state, &name)? {
-                println!("\n  \x1b[1;36mℹ️  Peer Detail: {}\x1b[0m", name);
-                println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m");
-                println!("  \x1b[1;37mAlias:\x1b[0m     {}", name);
-                println!(
-                    "  \x1b[1;37mNode ID:\x1b[0m   \x1b[32m{}\x1b[0m",
-                    p.ticket.to_addr().id
-                );
-                println!(
-                    "  \x1b[1;37mTicket:\x1b[0m    \x1b[38;5;244m{}\x1b[0m",
-                    p.ticket
-                );
+                println!("\n  Peer Detail: {}", name);
+                println!("  ----------------------------------------------------");
+                println!("  Alias:     {}", name);
+                println!("  Node ID:   {}", p.ticket.to_addr().id);
+                println!("  Ticket:    {}", p.ticket);
 
                 let addr = p.ticket.to_addr();
                 if let Some(relay) = addr.relay_urls().next() {
-                    println!("  \x1b[1;37mRelay:\x1b[0m     {}", relay);
+                    println!("  Relay:     {}", relay);
                 }
-                println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m\n");
+                println!("  ----------------------------------------------------\n");
             } else {
                 Ui::error(&format!("Peer '{}' not found in address book.", name));
             }

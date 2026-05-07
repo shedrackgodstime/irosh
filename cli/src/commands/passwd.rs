@@ -29,16 +29,16 @@ pub async fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
             }
         }
         PasswdAction::Status => {
-            println!("\n  \x1b[1;33m🔑 Node Password Status\x1b[0m");
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m");
+            println!("\n  Node Password Status");
+            println!("  ----------------------------------------------------");
             if storage::load_shadow_file(&state)?.is_some() {
-                println!("  Status:    \x1b[1;32mACTIVE\x1b[0m");
+                println!("  Status:    ACTIVE");
                 println!("  Security:  Argon2id Hashed");
             } else {
-                println!("  Status:    \x1b[1;31mNOT SET\x1b[0m");
+                println!("  Status:    NOT SET");
                 println!("  Warning:   Node is currently in TOFU or Invite-only mode.");
             }
-            println!("  \x1b[2m────────────────────────────────────────────────────\x1b[0m\n");
+            println!("  ----------------------------------------------------\n");
         }
     }
     Ok(())

@@ -8,7 +8,7 @@ pub fn danger_confirm(message: &str, expected: &str) -> bool {
         return false;
     }
 
-    eprintln!("\n\x1b[1;33m[WARN]\x1b[0m {}", message);
+    eprintln!("\nwarning: {}", message);
     let prompt = format!("Type '{}' to confirm, or press Ctrl+C to cancel", expected);
 
     match Input::<String>::with_theme(&irosh_theme())
@@ -27,7 +27,7 @@ pub fn soft_confirm(message: &str) -> bool {
     }
 
     Confirm::with_theme(&irosh_theme())
-        .with_prompt(format!("\x1b[1;33m[WARN]\x1b[0m {}", message))
+        .with_prompt(format!("warning: {}", message))
         .default(false)
         .interact()
         .unwrap_or(false)

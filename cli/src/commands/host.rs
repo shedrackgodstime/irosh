@@ -55,10 +55,7 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
     };
 
     Ui::p2p("Server is starting...");
-    Ui::success(&format!(
-        "Server listening! Ticket: \x1b[1;32m{}\x1b[0m",
-        ready.ticket
-    ));
+    Ui::success(&format!("Server listening! Ticket: {}", ready.ticket));
     Ui::info("Press Ctrl+C to stop the server.");
 
     server.run().await?;
