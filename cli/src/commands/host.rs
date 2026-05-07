@@ -25,7 +25,7 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
 
     if let Some(relay_url) = &config.relay_url {
         let mode = irosh::transport::iroh::parse_relay_mode(relay_url)?;
-        options = options.relay_mode(mode);
+        options = options.relay_mode(mode, Some(relay_url.clone()));
     }
 
     // Disable IPC to avoid conflict with background daemon

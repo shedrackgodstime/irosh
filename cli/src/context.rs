@@ -37,4 +37,28 @@ impl CliContext {
     pub fn server_state(&self) -> Result<StateConfig> {
         Ok(StateConfig::new(self.server_state_root()?))
     }
+
+    pub fn server_options(&self) -> Result<irosh::ServerOptions> {
+        let state = self.server_state()?;
+        let config = irosh::storage::load_config(&state)?;
+        let relay_str = config
+            .relay_url
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+
+        let mut options = irosh::ServerOptions::new(state)
+            .relay_mode(
+                irosh::transport::iroh::parse_relay_mode(&relay_str)?,
+                Some(relay_str),
+            )
+            .security(irosh::SecurityConfig {
+                host_key_policy: irosh::config::HostKeyPolicy::Tofu,
+            });
+
+        if let Some(secret) = config.stealth_secret {
+            options = options.secret(secret);
+        }
+
+        Ok(options)
+    }
 }

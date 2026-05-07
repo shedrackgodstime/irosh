@@ -32,6 +32,7 @@ pub struct ServerOptions {
     pub(crate) secret: Option<String>,
     pub(crate) ipc_enabled: bool,
     pub(crate) relay_mode: iroh::RelayMode,
+    pub(crate) relay_url: Option<String>,
     authorized_keys: Vec<russh::keys::ssh_key::PublicKey>,
     authenticator: Option<Arc<dyn Authenticator>>,
     wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
@@ -45,6 +46,7 @@ impl Clone for ServerOptions {
             ipc_enabled: self.ipc_enabled,
             secret: self.secret.clone(),
             relay_mode: self.relay_mode.clone(),
+            relay_url: self.relay_url.clone(),
             authorized_keys: self.authorized_keys.clone(),
             authenticator: self.authenticator.clone(),
             wormhole_confirmation: self.wormhole_confirmation.clone(),
@@ -61,6 +63,7 @@ impl ServerOptions {
             security: SecurityConfig::default(),
             secret: None,
             relay_mode: iroh::RelayMode::Default,
+            relay_url: None,
             authorized_keys: Vec::new(),
             authenticator: None,
             wormhole_confirmation: None,
@@ -68,8 +71,9 @@ impl ServerOptions {
     }
 
     /// Configures the relay mode for the server.
-    pub fn relay_mode(mut self, mode: iroh::RelayMode) -> Self {
+    pub fn relay_mode(mut self, mode: iroh::RelayMode, url: Option<String>) -> Self {
         self.relay_mode = mode;
+        self.relay_url = url;
         self
     }
 

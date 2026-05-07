@@ -11,7 +11,17 @@ pub(crate) async fn inspect_server(options: &ServerOptions) -> Result<ServerRead
     let identity = load_or_generate_identity(options.state()).await?;
     let server_pub = identity.ssh_key.public_key();
     let node_id = identity.secret_key.public();
-    let addr = iroh::EndpointAddr::new(node_id);
+    let mut addr = iroh::EndpointAddr::new(node_id);
+
+    // If a custom relay is configured, include it in the stable ticket to
+    // ensure connectivity even if Pkarr discovery is slow.
+    if let Some(ref relay_str) = options.relay_url {
+        if relay_str.starts_with("http") {
+            if let Ok(url) = relay_str.parse::<iroh::RelayUrl>() {
+                addr = addr.with_relay_url(url);
+            }
+        }
+    }
 
     Ok(ServerReady {
         endpoint_id: node_id.to_string(),
