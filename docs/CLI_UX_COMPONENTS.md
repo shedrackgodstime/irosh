@@ -180,12 +180,12 @@ Enter a name for this peer (e.g. 'work-pc'): ____
 - `irosh passwd remove` before the C2 prompt
 - `irosh host` / `irosh system install` first-run when vault is empty
 
-**UX (wormhole security warning):**
+**UX (unprotected wormhole warning):**
 ```
-[SEC] Security Notice:
-      Your server has trusted devices but no Node Password is set.
-      Any device that discovers this wormhole code will be trusted automatically.
-      Run 'irosh passwd set' to require a password instead.
+[WARN] Security Notice:
+      Your vault is empty and no password is set.
+      Any device that discovers this code will be trusted automatically.
+      Tip: Run 'irosh wormhole --passwd <secret>' to invite a device securely.
 ```
 
 **UX (first-run empty vault):**

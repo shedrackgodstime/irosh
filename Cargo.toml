@@ -47,9 +47,6 @@ serde_json = { version = "1", optional = true }
 # thiserror: error type derivation.
 thiserror = "2"
 
-# libc: Unix syscall bindings for PTY, signals, and terminal control.
-libc = "0.2"
-
 # tracing: structured logging and diagnostics.
 tracing = "0.1"
 
@@ -58,6 +55,7 @@ tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "ne
 tokio-util = { version = "0.7" }
 futures = "0.3"
 futures-lite = "1.13"
+dirs = "6"
 
 # rand: cryptographically secure random number generation.
 rand = "0.9"
@@ -75,9 +73,14 @@ sha2 = "0.10"
 
 # walkdir: Recursive directory walking for uploads.
 walkdir = "2"
-windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }
 argon2 = "0.5.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "json"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }
 
 [dev-dependencies]
 # tokio with full features for async test harnesses.

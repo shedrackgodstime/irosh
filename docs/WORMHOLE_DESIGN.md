@@ -16,19 +16,20 @@ Irosh's primary value is **Stealth**. By requiring a long, high-entropy ticket, 
 
 ---
 
-## 🛠️ The Solution: The "Trust-Seed" Bridge
+## 🛠️ The Solution: The "Discovery Bridge"
 Instead of a permanent discovery service, we implement an **on-demand rendezvous bridge**.
 
-### 1. Ephemeral Wormhole (Standard)
-- **Command**: `irosh system wormhole`
-- **Behavior**: Generates a random 3-word code (e.g., `crystal-piano-7`).
-- **Expiry**: Valid for **one successful connection** or 5 minutes.
-- **Security**: The short time window and high-entropy wordlist make bot-guessing mathematically improbable.
+**Philosophy**: Discovery is not Auth. The wormhole's primary job is to share the long Iroh Ticket. Once the ticket is discovered, the client proceeds to the standard authentication flow.
 
-### 2. Persistent Wormhole (Custom/Manual)
-- **Command**: `irosh system wormhole [custom-code] --no-expire-reboot`
-- **Behavior**: Uses a user-provided string. Survives reboots.
-- **Security**: **MANDATORY Session Password.** Because the code is persistent and potentially low-entropy, a secondary shared secret is required for the first handshake.
+### 1. Ephemeral Wormhole (Standard)
+- **Command**: `irosh wormhole`
+- **Behavior**: Generates a random 3-word code.
+- **Security**: Valid for **one successful pairing**. After discovery, the standard auth logic (TOFU or Node Password) takes over.
+
+### 2. The "Invite Pattern" (Temp Password)
+- **Command**: `irosh wormhole --passwd <secret>`
+- **Use Case**: Used when no permanent Node Password is set, but the user wants to securely "invite" a new device into a populated vault.
+- **Behavior**: Provides a one-time secret that gates the first connection after discovery.
 
 ---
 
@@ -37,15 +38,15 @@ Instead of a permanent discovery service, we implement an **on-demand rendezvous
 | Layer | Component | Purpose |
 | :--- | :--- | :--- |
 | **Discovery** | Wormhole Code | Replaces the long Ticket for initial "finding" of the node. |
-| **Authorization** | Session Password | Prevents unauthorized "TOFU hijacking" if the code is guessed. |
-| **Verification** | SSH TOFU | Pins the host key once the first connection is established. |
+| **Authentication** | Node/Temp Password | Authorizes the connection once the ticket is discovered. |
+| **Trust** | SSH Vault | Pins the key permanently once the first auth is successful. |
 
 ### The "Booster Rocket" Pattern
 The Wormhole is not a permanent connection method. It is a **pairing mechanism**:
-1. Client connects via Wormhole + Password.
-2. Server verifies the client and **automatically adds the client's public key** to its permanent `authorized_keys`.
-3. The Wormhole closes.
-4. Future connections use standard SSH public-key auth—the code and password are never needed again.
+1. Client resolves Code -> Gets Ticket.
+2. Client connects using Ticket -> Triggers Handshake.
+3. Server Auth handles the key/password verification.
+4. On success, the key is added to the Vault and the Wormhole closes.
 
 ---
 
@@ -64,11 +65,9 @@ Instead of using the raw wormhole code as the Gossip topic name, we use a **Keye
 - `Topic = HMAC-SHA256(Key: code, Data: "irosh-wormhole-v1")`
 - This ensures that an attacker monitoring gossip topics cannot "guess" the code by seeing the topic name, and vice versa.
 
-### 2. Interactive Pairing Confirmation
-For ephemeral wormholes initiated from an interactive terminal:
-- When a client "knocks," the server terminal MUST display:
-  `⚠️  Wormhole Connection: Peer [NodeID] wants to pair. Accept? (y/n)`
-- The pairing only completes if the user explicitly confirms.
+### 2. Auto-Burn & Cleanup
+- **Expiry**: Ephemeral wormholes expire after 5 minutes of inactivity.
+- **Auto-Burn**: The wormhole is destroyed immediately after **one** successful pairing.
 
 ### 3. Rate Limiting & Auto-Burn
 - **Max Attempts**: 3 failed authentication attempts per wormhole window.

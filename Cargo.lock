@@ -2340,6 +2340,7 @@ version = "0.2.0"
 dependencies = [
  "argon2",
  "data-encoding",
+ "dirs",
  "futures",
  "futures-lite 1.13.0",
  "hex",
@@ -2371,6 +2372,7 @@ name = "irosh-cli"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "dialoguer",
  "dirs",

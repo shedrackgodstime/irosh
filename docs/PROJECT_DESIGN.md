@@ -14,6 +14,7 @@ for the Irosh P2P SSH system. It is the single source of truth for implementatio
     - `irosh/1`: For established trust (Strict mode, key-only).
     - `pairing/v1`: For the wormhole pairing handshake.
 5.  **Discovery is not Auth**: `irosh wormhole` is only a bridge to the Ticket. After discovery, the client follows the same auth flow as a direct Ticket connection.
+6.  **The Invite Pattern**: If no Node Password is set, `irosh wormhole --passwd` provides a one-time "Invite" secret to pair a new device into a populated vault.
 
 ---
 
@@ -42,11 +43,11 @@ for the Irosh P2P SSH system. It is the single source of truth for implementatio
 ### Direct Ticket Flow (`irosh connect <ticket>`)
 1. Client presents its SSH Public Key.
 2. Server checks the Vault:
-   - **Vault is empty AND no Node Password**: Trust and save key. (TOFU).
-   - **Vault is empty AND Node Password is set**: Prompt for password. On success, save key.
-   - **Vault is not empty AND key is present**: Accept immediately.
-   - **Vault is not empty AND key is absent AND Node Password set**: Prompt for password. On success, save key.
-   - **Vault is not empty AND key is absent AND no Node Password**: Reject. Silent drop.
+   - **Key is present**: Accept immediately (Established trust always wins).
+   - **Key is absent AND Node Password is set**: Challenge for Node Password.
+   - **Key is absent AND active Wormhole session has `--passwd`**: Challenge for Temp Password (Invite Pattern).
+   - **Key is absent AND Vault is empty AND no password set**: Accept and save key (TOFU).
+   - **Key is absent AND Vault is not empty AND no password set**: Reject. Silent drop.
 
 ### Wormhole Discovery Flow (`irosh connect <3-word-code>`)
 1. Client resolves the 3-word code via Pkarr to get the real Ticket.
