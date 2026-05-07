@@ -27,3 +27,8 @@ Since you are using Iroh, you have built-in **Relay (DERP)** support. If the Win
 
 
 If you look at their source, you'll see they don't just treat Windows as a "different shell"—they treat it as a completely different target with its own specific drivers and API calls.
+
+
+
+
+If it still fails on Windows, it’s usually because the MasterPty is dropped too early. In Rust, if the pair.master goes out of scope, the child process is often killed immediately. Ensure your MasterPty is moved into a long-lived state or a background thread.
