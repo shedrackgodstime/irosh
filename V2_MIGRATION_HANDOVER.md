@@ -24,10 +24,12 @@ All architectural decisions are locked and documented in the `docs/` directory. 
 - `docs/SECURITY_AUDIT.md`
 
 ## Immediate Next Steps
-The user is ready to start coding. The recommended first steps for this session are:
-1. **Initialize the Crate Split:** Modify `Cargo.toml` to formally separate the core `irosh` library (lib.rs) from the executable `irosh-cli` (main.rs), as detailed in `ARCHITECTURE_CRATE_SPLIT.md`.
-2. **Setup the `sys` Module:** Create the `sys::unix` and `sys::windows` structure defined in `ARCHITECTURE_CROSS_PLATFORM.md`.
-3. **Begin Core Migration:** Start porting the core networking (Iroh) and Auth/Vault logic from the MVP into the clean library crate. 
+The V2 workspace has already been initialized. The messy MVP code has been moved to `src_old/` and `cli_old/`. 
+
+Your job is to look at the logic in `src_old/` and `cli_old/`, untangle it, and port it into the clean `src/` (Fat Library) and `cli/` (Thin CLI) directories.
+
+1. **Setup the `sys` Module:** Finish building the `sys::unix` and `sys::windows` structure defined in `ARCHITECTURE_CROSS_PLATFORM.md` inside `src/lib.rs`.
+2. **Begin Core Migration:** Start porting the core networking (Iroh) and Auth/Vault logic from `src_old/` into the clean library crate `src/`.
 
 **Remember:** Do not attempt to fix the broken Windows MVP code. Migrate the working Linux implementation into the clean V2 structure first, using stub functions for Windows. The user will implement the Windows ConPTY logic later when they have access to a Windows PC.
 
