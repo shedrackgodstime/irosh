@@ -36,7 +36,7 @@ pub async fn listen_for_ticket(_endpoint: &iroh::Endpoint, code: &str) -> Result
             details: format!("Failed to build pkarr client: {}", e),
         })?;
 
-    info!("🔮 Searching for wormhole rendezvous via Pkarr: {}", code);
+    info!("Searching for wormhole rendezvous via Pkarr: {}", code);
 
     // Poll the relays until we find the record.
     for i in 0..60 {
@@ -47,7 +47,7 @@ pub async fn listen_for_ticket(_endpoint: &iroh::Endpoint, code: &str) -> Result
                     if let Ok(content) = String::try_from(txt.clone()) {
                         if let Some(ticket_str) = content.strip_prefix("irosh-ticket=") {
                             if let Ok(ticket) = ticket_str.parse::<Ticket>() {
-                                info!("✨ Wormhole discovered via Pkarr rendezvous");
+                                info!("Wormhole discovered via Pkarr rendezvous");
                                 return Ok(ticket);
                             }
                         }
@@ -102,7 +102,7 @@ pub async fn broadcast_ticket_loop(
             details: format!("Failed to sign pkarr packet: {}", e),
         })?;
 
-    info!("📡 Publishing wormhole to Pkarr rendezvous: {}", code);
+    info!("Publishing wormhole to Pkarr rendezvous: {}", code);
 
     loop {
         match client.publish(&signed_packet, None).await {
@@ -131,7 +131,7 @@ pub async fn unpublish_ticket(code: &str) -> Result<()> {
                 details: format!("Failed to sign empty pkarr packet: {}", e),
             })?;
 
-    debug!("📡 Unpublishing wormhole from Pkarr: {}", code);
+    debug!("Unpublishing wormhole from Pkarr: {}", code);
 
     // We only try once. If it fails, the TTL will naturally expire it anyway.
     let _ = client.publish(&signed_packet, None).await;

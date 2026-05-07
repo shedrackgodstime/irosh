@@ -5,10 +5,10 @@ mod context;
 mod display;
 mod ui;
 
-use anyhow::Result;
 use clap::Parser;
 use commands::{CommandExec, Commands};
 use context::CliContext;
+use ui::Ui;
 
 #[derive(Parser)]
 #[command(name = "irosh")]
@@ -35,7 +35,7 @@ pub struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let args = Args::parse();
 
     // Initialize professional monochrome logging
@@ -44,33 +44,54 @@ async fn main() -> Result<()> {
     } else if let Some(custom) = &args.log {
         custom.as_str()
     } else {
-        "irosh=info,error"
+        "irosh=warn,error"
     };
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
-        .with_target(args.verbose)
-        .with_ansi(false) // Force monochrome
-        .with_level(args.verbose)
+        .with_target(false)
+        .with_ansi(false)
+        .with_level(false)
+        .without_time()
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
         .init();
 
-    let ctx = CliContext::new(args)?;
-
-    // Handle root command shortcut (irosh <target>)
-    if let Some(target) = ctx.args.target.clone() {
-        if ctx.args.command.is_none() {
-            return commands::connect::exec_shortcut(&target, &ctx).await;
+    let ctx = match CliContext::new(args) {
+        Ok(c) => c,
+        Err(e) => {
+            use crate::ui::Ui;
+            Ui::error(&format!("Initialization failed: {}", e));
+            std::process::exit(1);
         }
-    }
+    };
 
-    if let Some(cmd) = &ctx.args.command {
-        cmd.execute(&ctx).await
+    let res = if let Some(target) = ctx.args.target.clone() {
+        if ctx.args.command.is_none() {
+            commands::connect::exec_shortcut(&target, &ctx).await
+        } else {
+            match &ctx.args.command {
+                Some(cmd) => cmd.execute(&ctx).await,
+                None => commands::dashboard::exec(&ctx).await,
+            }
+        }
     } else {
-        commands::dashboard::exec(&ctx).await
+        match &ctx.args.command {
+            Some(cmd) => cmd.execute(&ctx).await,
+            None => commands::dashboard::exec(&ctx).await,
+        }
+    };
+
+    if let Err(e) = res {
+        if ctx.args.verbose {
+            Ui::error(&format!("{:#}", e));
+        } else {
+            Ui::error(&format!("{}", e));
+            eprintln!("  Tip: Run with --verbose for full diagnostic details.");
+        }
+        std::process::exit(1);
     }
 }

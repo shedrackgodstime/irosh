@@ -160,7 +160,7 @@ impl Client {
         )
         .await?;
 
-        info!("🔮 Attempting wormhole rendezvous for code: {}", code);
+        info!("Attempting wormhole rendezvous for code: {}", code);
 
         let ticket: Ticket = tokio::time::timeout(
             std::time::Duration::from_secs(300), // 5 minute timeout as per design
