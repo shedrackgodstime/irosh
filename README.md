@@ -1,18 +1,21 @@
 # Irosh
 
-**Secure SSH-like remote access without open ports, NAT issues, or public IPs.**
+**Cryptographically-Identified P2P Secure Shell and Decentralized Data Transfer Protocol.**
 
 [![Crates.io](https://img.shields.io/crates/v/irosh.svg)](https://crates.io/crates/irosh)
 [![Documentation](https://docs.rs/irosh/badge.svg)](https://docs.rs/irosh)
 [![License](https://img.shields.io/crates/l/irosh.svg)](#license)
 
-Powered by [Iroh](https://iroh.computer) peer-to-peer transport with built-in identity and TOFU (Trust On First Use) security.
+Irosh is a high-assurance remote access toolset built on the Iroh networking stack. It provides a robust library and a streamlined CLI for establishing secure shell sessions and high-speed data transfers over encrypted, hole-punched QUIC streams. 
+
+By leveraging Ed25519 identities, Irosh eliminates the need for public IP addresses, open ports, or complex VPN configurations, making it ideal for managing distributed infrastructure across restricted networks.
 
 ---
 
-## 🚀 Installation (CLI)
+## Installation
 
-Install the unified `irosh` binary for standard interactive usage:
+### CLI Binary (Recommended)
+For standard interactive usage, install the pre-compiled binary via the unified installer:
 
 **Linux / macOS / Android (Termux)**:
 ```bash
@@ -24,131 +27,105 @@ curl -fsSL irosh.pages.dev/install | sh
 iwr irosh.pages.dev/ps | iex
 ```
 
----
-
-## ⚡ Quick Start
-
-1. **On the Remote Machine**: Start the server to generate a connection ticket:
-   ```bash
-   irosh host
-   ```
-2. **On Your Local Machine**: Connect using that ticket (or a saved alias):
-   ```bash
-   irosh <TICKET_OR_ALIAS>
-   ```
-3. **Inside the Shell**: Start a line with `~` for local escape commands:
-   - `~?` or `~help`: View all available local commands.
-   - `~~`: Send a literal `~` character to the remote shell.
-   - `~C`: Open the `irosh>` local command prompt.
-   - `~put [-r] <local> [remote]`: Upload a file or directory to the remote.
-   - `~get [-r] <remote> [local]`: Download a file or directory from the remote.
-
-### 📦 Management Commands
-- **Save a peer**: `irosh peer add <alias> <ticket>`
-- **List saved peers**: `irosh peer list`
-- **Background Service**: `irosh system install` (Works on Linux, macOS, and Windows)
-- **Identity**: `irosh identity` (View your Node ID and SSH host keys)
-
----
-
-## 💎 Why Irosh?
-
-Traditional SSH is built for the "Server-Client" world of public IPs and open ports. **Irosh is built for the P2P world.**
-
-- ✅ **No Open Ports**: Works entirely via P2P hole-punching. No firewall rules needed.
-- ✅ **NAT Traversal**: Connect to machines behind home routers or strict corporate firewalls.
-- ✅ **Unified CLI**: A single, professional binary for all your P2P SSH needs.
-- ✅ **Secure by Default**: Built-in QUIC encryption and Ed25519 peer identity.
-- ✅ **Premium CLI UX**: Visual progress bars, persistent history, Tab completion, and `Ctrl+C` cancellation for transfers.
-- ✅ **Fast & Stable**: Non-blocking I/O and lazy channel initialization for a snappy feel.
-
----
-
-## 🎯 Ideal For...
-
-- **Home Labs**: Access machines behind CGNAT (like Starlink or mobile hotspots) without a VPN.
-- **Remote Development**: Connect to your home workstation from a coffee shop without port forwarding.
-- **IoT & Edge**: Manage remote devices deployed in restricted or cellular networks.
-- **One-off Support**: Help a friend troubleshoot by connecting to their machine via a one-time ticket.
-
-## ⚙️ How it Works
-
-Irosh uses the Iroh network to establish direct peer-to-peer QUIC connections. It bypasses firewalls using state-of-the-art hole-punching and falls back to a global relay network only when direct connectivity is impossible.
-
-```mermaid
-graph LR
-    Local["💻 Local Machine"] -- "QUIC / P2P" --> Remote["🖥️ Remote Host"]
-    Local -- "Hole Punching" --> Relay["🌐 Iroh Relay (Fallback)"]
-    Relay -- "Relayed Traffic" --> Remote
+### From Source
+If you have the Rust toolchain installed:
+```bash
+cargo install irosh-cli
 ```
 
 ---
 
-## 🛠 Developer Integration (Library)
+## Core Architecture
 
-The `irosh` crate is designed as a library first. Transport, protocol, and framing are strictly independent of CLI assumptions.
+Irosh is designed for professional environments where security and resilience are paramount.
 
-### 1. Add to your project
+- **Identity-Based Routing**: Peer discovery and authentication are tied to a persistent Ed25519 secret key.
+- **NAT Traversal**: Automatic hole-punching and relaying via the Iroh stack ensures connectivity in complex network topologies.
+- **Ad-hoc Peer Discovery**: Secure, out-of-band trust establishment using short-lived pairing codes.
+- **Service-Oriented**: Native support for background execution via system services (systemd, launchd).
+- **Protocol Multiplexing**: Dedicated side-channels for metadata exchange and high-performance file synchronization.
+
+---
+
+## Quick Start
+
+### 1. Host Initialization
+Install the background service on the host machine to enable persistent access:
+```bash
+irosh system install
+```
+
+### 2. Peer Pairing
+Generate a temporary pairing code for initial discovery:
+```bash
+irosh wormhole <custom-code>
+```
+
+### 3. Establishing a Session
+Connect from a client machine using the pairing code or a previously saved ticket:
+```bash
+irosh <code-or-ticket>
+```
+
+---
+
+## Interactive Escape Commands
+During an active session, use the `~` prefix at the start of a line for local control:
+- `~?` - View all available local commands.
+- `~put [-r] <local> [remote]` - Upload a file or directory.
+- `~get [-r] <remote> [local]` - Download a file or directory.
+- `~C` - Open the irosh local command prompt.
+- `~~` - Send a literal tilde character.
+
+---
+
+## Developer Integration (Library)
+
+The `irosh` crate provides a low-level API for embedding P2P SSH capabilities into custom Rust applications.
+
+### Add to project
 ```bash
 cargo add irosh
 ```
 
-### 2. Implementation Example
+### Implementation Example
 ```rust,no_run
-use irosh::{Client, ClientOptions, SecurityConfig, Server, ServerOptions, StateConfig};
+use irosh::{Server, ServerOptions, StateConfig};
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Bind a P2P server
-    let (ready, server) = Server::bind(
-        ServerOptions::new(StateConfig::new("/tmp/irosh-server".into()))
-    ).await?;
-
-    tokio::spawn(server.run());
-
-    // 2. Connect from a P2P client
-    let mut session = Client::connect(
-        &ClientOptions::new(StateConfig::new("/tmp/irosh-client".into())),
-        ready.ticket().clone(),
-    )
-    .await?;
-
-    // 3. Execute remote commands via Iroh transport
-    session.exec("uname -a").await?;
-    Ok(())
+#[tokio::main]
+async fn main() -> irosh::Result<()> {
+    let state = StateConfig::new("./state".into());
+    let options = ServerOptions::new(state);
+    
+    let (ready, server) = Server::bind(options).await?;
+    println!("Node initialized. Ticket: {}", ready.ticket);
+    
+    server.run().await
 }
 ```
 
-For the complete API reference, visit [docs.rs/irosh](https://docs.rs/irosh).
-
-### 3. Feature Flags
-- `server`: enables server-side API (includes PTY logic).
-- `client`: enables client-side API.
-- `storage`: enables trust and identity persistence.
-- `transport`: enables Iroh transport and protocol types.
-
 ---
 
-## ❓ How is this different from SSH?
+## Protocol Comparison
 
-| Feature | Standard SSH | Irosh |
+| Feature | OpenSSH | Irosh |
 | :--- | :--- | :--- |
-| **Addressing** | Static IP / DNS / Port 22 | Server-generated Tickets |
-| **Connectivity** | Public IP / Port Forwarding | NAT Hole-punching (Anywhere) |
-| **Identity** | Manual Key Management | Built-in Ed25519 Peer IDs |
-| **Trust** | `known_hosts` file | TOFU (Trust On First Use) |
-| **Relays** | Manual Jump-host/VPN | Automatic Iroh Relay Network |
+| **Addressing** | IP / Hostname | Cryptographic Node ID |
+| **Connectivity** | Static Ports (22) | NAT Hole-punching / QUIC |
+| **Identity** | External Key Management | Built-in Ed25519 Secrets |
+| **Trust Model** | Manual known_hosts | Trust On First Use (TOFU) |
+| **Relay Support** | Manual ProxyJump | Native Global Relay Network |
 
 ---
 
-## 📚 Documentation & History
+## Documentation
 
-- [**Architecture**](docs/architecture.md): The separation of transport, session, and shell state.
-- [**Security**](docs/security.md): Cryptographic TOFU access policy and host key pinning.
-- [**Protocol**](docs/protocol.md): Custom side-stream framing for metadata and file transfers.
-- [**Changelog**](CHANGELOG.md): Full history of project updates and releases.
+- [**API Reference**](https://docs.rs/irosh) - Full technical documentation for library consumers.
+- [**Architecture Roadmap**](docs/ROADMAP.md) - Internal design documents and future development plans.
+- [**Security Overview**](docs/ROADMAP.md) - In-depth analysis of the Irosh trust and encryption model.
 
 ---
 
 ## License
 
-Licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
+Licensed under MIT or Apache-2.0.
