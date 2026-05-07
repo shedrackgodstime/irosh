@@ -67,6 +67,7 @@ pub enum IpcResponse {
 pub enum IpcError {
     /// Failed to bind the IPC socket.
     #[error("failed to bind IPC socket at {path}")]
+    #[allow(dead_code)]
     BindFailed {
         path: PathBuf,
         #[source]
@@ -84,6 +85,7 @@ pub enum IpcError {
 
 /// The IPC listener that handles incoming control commands.
 pub struct IpcServer {
+    #[allow(dead_code)]
     state_dir: PathBuf,
     control_tx: tokio::sync::mpsc::Sender<InternalCommand>,
 }

@@ -10,10 +10,11 @@ pub async fn drive_session(mut session: Session) -> Result<()> {
     let mut stderr = tokio::io::stderr();
     let mut buf = vec![0u8; 4096];
 
+    #[allow(unused_variables)]
     let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
 
     #[cfg(unix)]
-    let mut sigwinch = if interactive {
+    let mut sigwinch: Option<tokio::signal::unix::Signal> = if interactive {
         Some(tokio::signal::unix::signal(
             tokio::signal::unix::SignalKind::window_change(),
         )?)

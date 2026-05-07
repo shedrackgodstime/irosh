@@ -19,6 +19,10 @@ impl fmt::Debug for RawTerminal {
     }
 }
 
+// Windows HANDLEs are pointers, but standard stream handles are safe to send across threads.
+unsafe impl Send for RawTerminal {}
+unsafe impl Sync for RawTerminal {}
+
 impl RawTerminal {
     /// Puts the standard input handle into raw mode and enables VT processing on stdout.
     pub fn new(_fd: i32) -> Result<Self> {
