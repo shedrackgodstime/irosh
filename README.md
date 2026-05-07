@@ -6,107 +6,50 @@
 [![Documentation](https://docs.rs/irosh/badge.svg)](https://docs.rs/irosh)
 [![License](https://img.shields.io/crates/l/irosh.svg)](#license)
 
-Irosh is a high-assurance remote access toolset built on the Iroh networking stack. It provides a robust library and a streamlined CLI for establishing secure shell sessions and high-speed data transfers over encrypted, hole-punched QUIC streams. 
-
-By leveraging Ed25519 identities, Irosh eliminates the need for public IP addresses, open ports, or complex VPN configurations, making it ideal for managing distributed infrastructure across restricted networks.
+Irosh is a high-assurance networking library built on the Iroh P2P stack. It enables developers to establish secure, encrypted, and hole-punched QUIC streams for remote shell access and binary data synchronization without requiring public IP addresses or open ports.
 
 ---
 
-## Installation
+## Library Integration
 
-### CLI Binary (Recommended)
-For standard interactive usage, install the pre-compiled binary via the unified installer:
-
-**Linux / macOS / Android (Termux)**:
-```bash
-curl -fsSL irosh.pages.dev/install | sh
-```
-
-**Windows (PowerShell)**:
-```powershell
-iwr irosh.pages.dev/ps | iex
-```
-
-### From Source
-If you have the Rust toolchain installed:
-```bash
-cargo install irosh-cli
-```
-
----
-
-## Core Architecture
-
-Irosh is designed for professional environments where security and resilience are paramount.
-
-- **Identity-Based Routing**: Peer discovery and authentication are tied to a persistent Ed25519 secret key.
-- **NAT Traversal**: Automatic hole-punching and relaying via the Iroh stack ensures connectivity in complex network topologies.
-- **Ad-hoc Peer Discovery**: Secure, out-of-band trust establishment using short-lived pairing codes.
-- **Service-Oriented**: Native support for background execution via system services (systemd, launchd).
-- **Protocol Multiplexing**: Dedicated side-channels for metadata exchange and high-performance file synchronization.
-
----
-
-## Quick Start
-
-### 1. Host Initialization
-Install the background service on the host machine to enable persistent access:
-```bash
-irosh system install
-```
-
-### 2. Peer Pairing
-Generate a temporary pairing code for initial discovery:
-```bash
-irosh wormhole <custom-code>
-```
-
-### 3. Establishing a Session
-Connect from a client machine using the pairing code or a previously saved ticket:
-```bash
-irosh <code-or-ticket>
-```
-
----
-
-## Interactive Escape Commands
-During an active session, use the `~` prefix at the start of a line for local control:
-- `~?` - View all available local commands.
-- `~put [-r] <local> [remote]` - Upload a file or directory.
-- `~get [-r] <remote> [local]` - Download a file or directory.
-- `~C` - Open the irosh local command prompt.
-- `~~` - Send a literal tilde character.
-
----
-
-## Developer Integration (Library)
-
-The `irosh` crate provides a low-level API for embedding P2P SSH capabilities into custom Rust applications.
+The `irosh` crate is the core of the ecosystem, providing a high-level API for embedding P2P SSH capabilities into custom Rust applications.
 
 ### Add to project
 ```bash
 cargo add irosh
 ```
 
-### Implementation Example
+### Server Implementation Example
 ```rust,no_run
 use irosh::{Server, ServerOptions, StateConfig};
 
 #[tokio::main]
 async fn main() -> irosh::Result<()> {
+    // 1. Initialize state and server options
     let state = StateConfig::new("./state".into());
     let options = ServerOptions::new(state);
     
+    // 2. Bind the P2P server to the Iroh network
     let (ready, server) = Server::bind(options).await?;
     println!("Node initialized. Ticket: {}", ready.ticket);
     
+    // 3. Execute the server loop
     server.run().await
 }
 ```
 
 ---
 
-## Protocol Comparison
+## Core Architecture
+
+Irosh is built for resilient environments where security and low-latency connectivity are paramount.
+
+- **Identity-Based Routing**: Peer discovery and authentication are tied to a persistent Ed25519 secret key.
+- **NAT Traversal**: Native hole-punching and relaying via the Iroh stack ensures connectivity across complex network topologies.
+- **Protocol Multiplexing**: Dedicated side-channels for metadata exchange and high-performance file synchronization.
+- **Service-Oriented**: Support for persistent background execution via native system services.
+
+### Protocol Comparison
 
 | Feature | OpenSSH | Irosh |
 | :--- | :--- | :--- |
@@ -118,11 +61,40 @@ async fn main() -> irosh::Result<()> {
 
 ---
 
+## Command Line Interface (CLI)
+
+The `irosh-cli` package provides a reference implementation of the library for interactive usage.
+
+### Installation
+
+**Linux / macOS / Android (Termux)**:
+```bash
+curl -fsSL irosh.pages.dev/install | sh
+```
+
+**Windows (PowerShell)**:
+```powershell
+iwr irosh.pages.dev/ps | iex
+```
+
+### Quick Start
+1. **Initialize Host**: `irosh system install`
+2. **Enable Pairing**: `irosh wormhole <code-or-alias>`
+3. **Connect**: `irosh <code-or-ticket>`
+
+### Interactive Escape Commands
+During an active session, use the `~` prefix for local control:
+- `~put [-r] <local> [remote]` - Upload a file or directory.
+- `~get [-r] <remote> [local]` - Download a file or directory.
+- `~C` - Open the irosh local command prompt.
+
+---
+
 ## Documentation
 
 - [**API Reference**](https://docs.rs/irosh) - Full technical documentation for library consumers.
-- [**Architecture Roadmap**](docs/ROADMAP.md) - Internal design documents and future development plans.
-- [**Security Overview**](docs/ROADMAP.md) - In-depth analysis of the Irosh trust and encryption model.
+- [**Architecture Roadmap**](docs/ROADMAP.md) - Internal design and future development plans.
+- [**Security Overview**](docs/ROADMAP.md) - Analysis of the trust and encryption model.
 
 ---
 
