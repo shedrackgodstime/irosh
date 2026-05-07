@@ -120,9 +120,9 @@ async fn main() -> irosh::Result<()> {
 
 ## Documentation
 
-- [**API Reference**](https://docs.rs/irosh) - Full technical documentation for library consumers.
-- [**Architecture Roadmap**](docs/ROADMAP.md) - Internal design documents and future development plans.
-- [**Security Overview**](docs/ROADMAP.md) - In-depth analysis of the Irosh trust and encryption model.
+- [**Technical Manual**](src/README.md) — Architectural details, feature flags, and library integration.
+- [**API Reference**](https://docs.rs/irosh) — Full technical documentation for Rust developers.
+- [**Documentation Roadmap**](docs/ROADMAP.md) — Future development plans and documentation chapters.
 
 ---
 
