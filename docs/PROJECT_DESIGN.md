@@ -135,14 +135,15 @@ for the Irosh P2P SSH system. It is the single source of truth for implementatio
 
 ---
 
-### Q12: What if `irosh wormhole` is used to bypass security when the vault is not empty?
-- **User answer**: Idea — `irosh wormhole --passwd <temp-password>`. The temp password is only valid during the wormhole session. After pairing, it is discarded. The fear: an attacker could use this temp password + wormhole code to bypass security.
-- **Proposed solution (layered)**:
-  1. If **Vault is not empty AND Node Password is already set**: `irosh wormhole` is **blocked by default**. Print: *"⚠️ Wormhole is disabled: Your server already has trusted devices and a Node Password. Use `irosh trust revoke` to manage access."*
-  2. If **Vault is not empty AND no Node Password**: `irosh wormhole` is allowed but prints a strong warning: *"⚠️ Warning: No Node Password is set. Any device that discovers this wormhole code will be trusted automatically."*
-  3. If **Vault is empty**: `irosh wormhole --passwd <temp>` is the recommended secure path. The temp password gates the first connection.
-- **Key rule**: The wormhole `--passwd` is consumed and destroyed after ONE successful pairing. It cannot be reused.
-- **Security note**: The wormhole is already blocked if the vault is populated + password is set. This prevents the "bypass" fear almost entirely.
+### Q12: Is the Wormhole a security bypass?
+- **Final Decision**: No. Discovery is not Auth. The wormhole only shares the Ticket.
+- **Rules for Initiation**:
+  1. **If Vault is EMPTY**: `irosh wormhole` is **Allowed** (The standard bootstrap experience).
+  2. **If Vault is NOT EMPTY + No Node Password**: `irosh wormhole` is **Blocked**. The user must set a Node Password before they can use easy-discovery for new devices.
+  3. **If a Node Password is set**: `irosh wormhole` is **Allowed**. The connection is protected by the password challenge.
+  4. **The `--passwd <secret>` Override**: Using `--passwd` always allows the wormhole, as it provides an explicit one-time secret for that pairing session.
+- **Key rule**: The wormhole `--passwd` (if used) is consumed and destroyed after ONE successful pairing. It cannot be reused.
+
 
 ---
 
