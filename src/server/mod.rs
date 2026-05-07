@@ -434,13 +434,11 @@ impl Server {
 
                             let vault = crate::storage::load_all_authorized_clients(&self.state).unwrap_or_default();
                             let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
-                            let node_password = crate::storage::load_shadow_file(&self.state).unwrap_or_default();
 
                             let pairing_auth = crate::auth::UnifiedAuthenticator::with_tracking(
                                 self.state.clone(),
                                 self.security.host_key_policy,
                                 keys,
-                                node_password,
                                 wh.password.clone(),
                                 crate::auth::PairingMonitor {
                                     success_flag: wh.success.clone(),

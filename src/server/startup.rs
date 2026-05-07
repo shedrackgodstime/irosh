@@ -60,24 +60,21 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     let server_pub = server_key.public_key().clone();
 
     // Build the authenticator: custom if provided, else default UnifiedAuthenticator.
-    let authenticator: Arc<dyn crate::auth::Authenticator> = if let Some(custom) =
-        options.authenticator.clone()
-    {
-        custom
-    } else {
-        // Build the default unified auth from existing config.
-        let vault = load_all_authorized_clients(options.state())?;
-        let keys = vault.into_iter().map(|(_, k)| k).collect();
-        let node_password = crate::storage::load_shadow_file(options.state()).unwrap_or_default();
+    let authenticator: Arc<dyn crate::auth::Authenticator> =
+        if let Some(custom) = options.authenticator.clone() {
+            custom
+        } else {
+            // Build the default unified auth from existing config.
+            let vault = load_all_authorized_clients(options.state())?;
+            let keys = vault.into_iter().map(|(_, k)| k).collect();
 
-        Arc::new(crate::auth::UnifiedAuthenticator::new(
-            options.state().clone(),
-            options.security_config().host_key_policy,
-            keys,
-            node_password,
-            None, // No temp password for primary connections
-        ))
-    };
+            Arc::new(crate::auth::UnifiedAuthenticator::new(
+                options.state().clone(),
+                options.security_config().host_key_policy,
+                keys,
+                None, // No temp password for primary connections
+            ))
+        };
 
     // Configure russh to advertise only the methods our authenticator supports.
     let supported = authenticator.supported_methods();
