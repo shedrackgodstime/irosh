@@ -8,12 +8,18 @@ use std::io::IsTerminal;
 mod session;
 mod tunnels;
 
-#[derive(Debug)]
-struct CliPasswordPrompter;
+#[derive(Debug, Clone)]
+struct CliPasswordPrompter {
+    pb: Option<indicatif::ProgressBar>,
+}
 
 impl irosh::PasswordPrompter for CliPasswordPrompter {
     fn prompt_password(&self, _user: &str) -> Option<String> {
-        Ui::password_input("Public key rejected. Server requires a password")
+        if let Some(ref pb) = self.pb {
+            pb.suspend(|| Ui::password_input("Public key rejected. Server requires a password"))
+        } else {
+            Ui::password_input("Public key rejected. Server requires a password")
+        }
     }
 }
 
@@ -37,7 +43,7 @@ async fn exec_internal(
     let state = ctx.state.clone();
     let config = irosh::storage::load_config(&state)?;
 
-    let mut options = ClientOptions::new(state.clone()).password_prompter(CliPasswordPrompter);
+    let mut options = ClientOptions::new(state.clone());
 
     // Apply global config overrides
     if let Some(secret) = &config.stealth_secret {
@@ -105,6 +111,9 @@ async fn exec_internal(
     }
 
     let pb = Ui::spinner("Establishing connection...");
+    options = options.password_prompter(CliPasswordPrompter {
+        pb: Some(pb.clone()),
+    });
 
     let (ticket, is_pairing) = match target {
         irosh::ResolvedTarget::Ticket(t) => (t, false),
@@ -154,7 +163,9 @@ async fn exec_internal(
 
     // Auto-save logic: Offer to save the peer if it's not already in the address book
     let peers = irosh::storage::list_peers(&state)?;
-    let is_already_saved = peers.iter().any(|p| p.ticket == ticket);
+    let is_already_saved = peers
+        .iter()
+        .any(|p| p.ticket.to_addr().id == ticket.to_addr().id);
 
     if !is_already_saved
         && Ui::soft_confirm(&format!(
