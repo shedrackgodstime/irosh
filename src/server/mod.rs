@@ -36,6 +36,7 @@ pub struct ServerOptions {
     authorized_keys: Vec<russh::keys::ssh_key::PublicKey>,
     authenticator: Option<Arc<dyn Authenticator>>,
     wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
+    pub(crate) shutdown_on_wormhole_success: bool,
 }
 
 impl Clone for ServerOptions {
@@ -50,6 +51,7 @@ impl Clone for ServerOptions {
             authorized_keys: self.authorized_keys.clone(),
             authenticator: self.authenticator.clone(),
             wormhole_confirmation: self.wormhole_confirmation.clone(),
+            shutdown_on_wormhole_success: self.shutdown_on_wormhole_success,
         }
     }
 }
@@ -67,6 +69,7 @@ impl ServerOptions {
             authorized_keys: Vec::new(),
             authenticator: None,
             wormhole_confirmation: None,
+            shutdown_on_wormhole_success: false,
         }
     }
 
@@ -126,6 +129,12 @@ impl ServerOptions {
     /// Disables the IPC control server. Useful for foreground/ephemeral servers.
     pub fn disable_ipc(mut self) -> Self {
         self.ipc_enabled = false;
+        self
+    }
+
+    /// Automatically shutdowns the server after a successful wormhole pairing.
+    pub fn shutdown_on_wormhole_success(mut self) -> Self {
+        self.shutdown_on_wormhole_success = true;
         self
     }
 
@@ -215,6 +224,7 @@ pub struct Server {
     /// Reserved for future server-side interactive pairing confirmation prompts.
     #[allow(dead_code)]
     wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
+    shutdown_on_wormhole_success: bool,
 }
 
 impl fmt::Debug for Server {
@@ -330,6 +340,7 @@ impl Server {
         }
 
         let mut wormhole: Option<ActiveWormhole> = None;
+        let (success_tx, mut success_rx) = tokio::sync::mpsc::channel(1);
 
         loop {
             tokio::select! {
@@ -433,6 +444,7 @@ impl Server {
                                 wh.password.clone(),
                                 wh.success.clone(),
                                 wh.failed_attempts.clone(),
+                                Some(success_tx.clone()),
                             );
 
                             // CRITICAL: Build a per-session russh::Config that advertises
@@ -599,6 +611,25 @@ impl Server {
                                     active_sessions: sessions.len(),
                                 });
                             }
+                        }
+                    }
+                }
+                _ = success_rx.recv() => {
+                    if let Some(wh) = &wormhole {
+                        if !wh.persistent {
+                            info!("Wormhole pairing successful. Auto-burning.");
+                            wh.task.abort();
+                            wh.expiry_task.abort();
+                            let code = wh.code.clone();
+                            tokio::spawn(async move {
+                                let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                            });
+
+                            if self.shutdown_on_wormhole_success {
+                                info!("Shutdown on wormhole success enabled. Exiting server loop.");
+                                break;
+                            }
+                            wormhole = None;
                         }
                     }
                 }

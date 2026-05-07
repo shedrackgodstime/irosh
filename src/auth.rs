@@ -359,6 +359,8 @@ pub struct UnifiedAuthenticator {
     failed_attempts: Arc<AtomicU32>,
     /// Tracks the key currently attempting password auth.
     cached_key: Arc<StdMutex<Option<PublicKey>>>,
+    /// Optional notification channel for successful pairing.
+    success_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl UnifiedAuthenticator {
@@ -379,6 +381,7 @@ impl UnifiedAuthenticator {
             success_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             failed_attempts: Arc::new(AtomicU32::new(0)),
             cached_key: Arc::new(StdMutex::new(None)),
+            success_tx: None,
         }
     }
 
@@ -392,6 +395,7 @@ impl UnifiedAuthenticator {
         temp_password_hash: Option<String>,
         success_flag: Arc<std::sync::atomic::AtomicBool>,
         failed_attempts: Arc<AtomicU32>,
+        success_tx: Option<tokio::sync::mpsc::Sender<()>>,
     ) -> Self {
         Self {
             state,
@@ -402,6 +406,7 @@ impl UnifiedAuthenticator {
             success_flag,
             failed_attempts,
             cached_key: Arc::new(StdMutex::new(None)),
+            success_tx,
         }
     }
 
@@ -451,6 +456,15 @@ impl UnifiedAuthenticator {
 
         Ok(false)
     }
+
+    fn notify_success(&self) {
+        if let Some(tx) = &self.success_tx {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(()).await;
+            });
+        }
+    }
 }
 
 impl Authenticator for UnifiedAuthenticator {
@@ -492,6 +506,7 @@ impl Authenticator for UnifiedAuthenticator {
             let _event = write_authorized_client(&self.state, &fingerprint, key)?;
             authorized.push(key.clone());
             self.success_flag.store(true, Ordering::Relaxed);
+            self.notify_success();
             return Ok(true);
         }
 
@@ -512,6 +527,7 @@ impl Authenticator for UnifiedAuthenticator {
                         let _event = write_authorized_client(&self.state, &fingerprint, key)?;
                         authorized.push(key.clone());
                         self.success_flag.store(true, Ordering::Relaxed);
+                        self.notify_success();
                     }
                     return Ok(true);
                 }

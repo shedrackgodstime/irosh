@@ -18,6 +18,10 @@ pub async fn query_service_status() -> ServiceStatus {
 
 #[cfg(target_os = "linux")]
 async fn query_status_linux() -> ServiceStatus {
+    let user_home = dirs::home_dir().unwrap_or_default();
+    let service_file = user_home.join(".config/systemd/user/irosh.service");
+    let exists = service_file.exists();
+
     let output = std::process::Command::new("systemctl")
         .args(["--user", "is-active", "irosh"])
         .output();
@@ -27,11 +31,23 @@ async fn query_status_linux() -> ServiceStatus {
             let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
             match state.as_str() {
                 "active" => ServiceStatus::Active("systemd".to_string()),
-                "inactive" | "failed" => ServiceStatus::Inactive,
-                _ => ServiceStatus::NotFound,
+                "inactive" | "failed" | "deactivating" => ServiceStatus::Inactive,
+                _ => {
+                    if exists {
+                        ServiceStatus::Inactive
+                    } else {
+                        ServiceStatus::NotFound
+                    }
+                }
             }
         }
-        Err(_) => ServiceStatus::Unknown,
+        Err(_) => {
+            if exists {
+                ServiceStatus::Inactive
+            } else {
+                ServiceStatus::Unknown
+            }
+        }
     }
 }
 

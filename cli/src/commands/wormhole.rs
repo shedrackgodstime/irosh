@@ -160,7 +160,9 @@ async fn handle_foreground_wormhole(
 
     Ui::p2p("Starting temporary wormhole server...");
 
-    let options = ServerOptions::new(state).disable_ipc();
+    let options = ServerOptions::new(state)
+        .disable_ipc()
+        .shutdown_on_wormhole_success();
     let (_ready, server) = Server::bind(options).await?;
     let control = server.control_handle();
 
