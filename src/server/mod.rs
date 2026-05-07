@@ -442,9 +442,11 @@ impl Server {
                                 keys,
                                 node_password,
                                 wh.password.clone(),
-                                wh.success.clone(),
-                                wh.failed_attempts.clone(),
-                                Some(success_tx.clone()),
+                                crate::auth::PairingMonitor {
+                                    success_flag: wh.success.clone(),
+                                    failed_attempts: wh.failed_attempts.clone(),
+                                    success_tx: Some(success_tx.clone()),
+                                },
                             );
 
                             // CRITICAL: Build a per-session russh::Config that advertises

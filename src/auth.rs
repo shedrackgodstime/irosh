@@ -332,12 +332,21 @@ pub trait PasswordPrompter: Send + Sync + std::fmt::Debug + 'static {
     fn prompt_password(&self, user: &str) -> Option<String>;
 }
 
-/// A callback trait to interactively confirm a pairing request.
+/// Confirms whether to accept a pairing request from a peer.
 pub trait ConfirmationCallback: Send + Sync + std::fmt::Debug + 'static {
     /// Confirms whether to accept a pairing request from a peer.
-    ///
-    /// This will be called on the server side when a client attempts to pair.
     fn confirm_pairing(&self, fingerprint: &str, key: &PublicKey) -> bool;
+}
+
+/// Tracking and notification handles for a pairing session.
+#[derive(Debug, Clone)]
+pub struct PairingMonitor {
+    /// Flag set to true on successful pairing.
+    pub success_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Counter for failed password attempts.
+    pub failed_attempts: Arc<AtomicU32>,
+    /// Notification channel for success.
+    pub success_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 /// The master authenticator for irosh, implementing the unified security policy.
@@ -393,9 +402,7 @@ impl UnifiedAuthenticator {
         authorized_keys: Vec<PublicKey>,
         node_password_hash: Option<String>,
         temp_password_hash: Option<String>,
-        success_flag: Arc<std::sync::atomic::AtomicBool>,
-        failed_attempts: Arc<AtomicU32>,
-        success_tx: Option<tokio::sync::mpsc::Sender<()>>,
+        monitor: PairingMonitor,
     ) -> Self {
         Self {
             state,
@@ -403,10 +410,10 @@ impl UnifiedAuthenticator {
             authorized_keys: Arc::new(StdMutex::new(authorized_keys)),
             node_password_hash,
             temp_password_hash,
-            success_flag,
-            failed_attempts,
+            success_flag: monitor.success_flag,
+            failed_attempts: monitor.failed_attempts,
             cached_key: Arc::new(StdMutex::new(None)),
-            success_tx,
+            success_tx: monitor.success_tx,
         }
     }
 
