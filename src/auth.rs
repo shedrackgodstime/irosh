@@ -434,12 +434,22 @@ impl UnifiedAuthenticator {
         }
     }
 
+    fn refresh_keys(&self) -> Result<()> {
+        let vault = crate::storage::load_all_authorized_clients(&self.state)?;
+        let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
+        let mut authorized = self.lock_keys();
+        *authorized = keys;
+        Ok(())
+    }
+
     fn check_password_match(&self, password: &str) -> Result<bool> {
         let argon2 = Argon2::default();
 
         // 1. Check Node Password (Permanent)
-        if let Some(hash) = &self.node_password_hash {
-            let parsed_hash = PasswordHash::new(hash)
+        // Refresh from disk to catch 'irosh passwd set' without restart
+        let node_hash = crate::storage::load_shadow_file(&self.state).unwrap_or_default();
+        if let Some(hash) = node_hash {
+            let parsed_hash = PasswordHash::new(&hash)
                 .map_err(|reason| AuthError::VerificationFailed { reason })?;
             if argon2
                 .verify_password(password.as_bytes(), &parsed_hash)
@@ -477,7 +487,10 @@ impl UnifiedAuthenticator {
 impl Authenticator for UnifiedAuthenticator {
     fn supported_methods(&self) -> Vec<AuthMethod> {
         let mut methods = vec![AuthMethod::PublicKey];
-        if self.node_password_hash.is_some() || self.temp_password_hash.is_some() {
+        let node_pw_exists = crate::storage::load_shadow_file(&self.state)
+            .unwrap_or_default()
+            .is_some();
+        if node_pw_exists || self.temp_password_hash.is_some() {
             methods.push(AuthMethod::Password);
         }
         methods
@@ -485,11 +498,22 @@ impl Authenticator for UnifiedAuthenticator {
 
     fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
         let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+
+        {
+            let authorized = self.lock_keys();
+            // 1. Established trust (Vault) always wins.
+            if authorized.contains(key) {
+                info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
+                return Ok(true);
+            }
+        }
+
+        // If not found, refresh vault from disk to see if it was updated by another process.
+        let _ = self.refresh_keys();
         let mut authorized = self.lock_keys();
 
-        // 1. Established trust (Vault) always wins.
         if authorized.contains(key) {
-            info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
+            info!(%fingerprint, "Client matched key after vault refresh. Access granted.");
             return Ok(true);
         }
 
@@ -500,7 +524,10 @@ impl Authenticator for UnifiedAuthenticator {
         }
 
         // 3. If any password exists, we MUST reject the public key and force a password challenge.
-        if self.node_password_hash.is_some() || self.temp_password_hash.is_some() {
+        let node_pw_exists = crate::storage::load_shadow_file(&self.state)
+            .unwrap_or_default()
+            .is_some();
+        if node_pw_exists || self.temp_password_hash.is_some() {
             if let Ok(mut cache) = self.cached_key.lock() {
                 *cache = Some(key.clone());
             }
@@ -509,8 +536,9 @@ impl Authenticator for UnifiedAuthenticator {
 
         // 4. No passwords set. Check for TOFU (Bootstrap phase).
         if authorized.is_empty() {
-            info!(%fingerprint, "Vault is empty. Accepting first connection (TOFU).");
-            let _event = write_authorized_client(&self.state, &fingerprint, key)?;
+            info!(%fingerprint, "Vault is empty and no password set. Accepting first connection (TOFU).");
+            let _event =
+                crate::storage::trust::write_authorized_client(&self.state, &fingerprint, key)?;
             authorized.push(key.clone());
             self.success_flag.store(true, Ordering::Relaxed);
             self.notify_success();
