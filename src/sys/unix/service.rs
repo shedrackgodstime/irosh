@@ -122,7 +122,7 @@ Description=irosh P2P SSH Server
 After=network.target
 
 [Service]
-ExecStart={} host {}
+ExecStart={}{} host
 Restart=always
 RestartSec=5
 
@@ -298,7 +298,7 @@ fn build_launchd_plist(
     user_home: &std::path::Path,
 ) -> String {
     let mut args_xml = format!(
-        "<string>{}</string>\n    <string>host</string>",
+        "<string>{}</string>",
         xml_escape(exe.to_string_lossy().as_ref())
     );
     if let Some(state_dir) = state {
@@ -307,6 +307,7 @@ fn build_launchd_plist(
             xml_escape(state_dir.to_string_lossy().as_ref())
         ));
     }
+    args_xml.push_str("\n    <string>host</string>");
 
     let stdout_path = user_home
         .join("Library/Logs/irosh.log")
