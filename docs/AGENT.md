@@ -54,6 +54,7 @@ Errors are first-class citizens.
   - `async-*` (Async/Await)
 - **Edition:** Rust 2024. Use modern idioms (`let-else`, precise captures `use<'a>`, stable async traits).
 - **Dependencies:** Justify every new dependency. Prefer the standard library or widely-audited crates. Do not add a crate for a single 5-line function.
+- **Diagnostics & Logging:** Use the `tracing` and `tracing-subscriber` ecosystem for all operational visibility (spans, events, timeouts). Do NOT invent custom `thread_local!` logging systems, as they break in async contexts.
 - **Warnings:** The code must pass `cargo fmt`, `cargo test`, and `cargo clippy -- -D warnings` with zero errors. Do not use blanket `#![allow(warnings)]`.
 
 ---
