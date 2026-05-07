@@ -14,6 +14,8 @@
 //! - [`PasswordAuth`] — A single shared password for all connections. Good for
 //!   personal or simple setups.
 //! - [`CombinedAuth`] — Accepts either public keys or passwords.
+//! - [`UnifiedAuthenticator`] — The master security policy for Irosh V2. Manages the 
+//!   precedence between established trust, node passwords, and temporary wormhole codes.
 
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
