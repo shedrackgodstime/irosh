@@ -74,4 +74,10 @@ pub fn spawn_pty() -> Result<(), IroshError> {
 }
 ```
 
-This allows the entire project to compile and pass CI on all platforms, while clearly isolating the missing pieces for future implementation.
+### Windows PTY Implementation Caveats (When Building the Stub)
+
+When you eventually implement `sys::windows::pty`, be aware of these confirmed `portable-pty` / ConPTY quirks:
+1. **Absolute Paths Required:** You cannot just spawn `cmd` or `powershell`. You must use the absolute path (e.g., `C:\Windows\System32\cmd.exe`).
+2. **Environment Variables:** Do not clear the environment when spawning the process. Windows requires `SystemRoot` and other minimal env vars, otherwise it instantly crashes.
+3. **Dedicated Threads (Sync):** Windows pipes are heavily synchronous. Do not try to read/write them directly inside a `tokio::select!` loop. Spawn a dedicated `std::thread` to handle the `portable-pty` read/write operations and pass the bytes back to tokio via an `mpsc` channel.
+4. **MasterPty Lifetime:** If the `MasterPty` object goes out of scope and is dropped, the Windows child process is immediately killed. Ensure it is moved into a long-lived state struct for the duration of the session.
