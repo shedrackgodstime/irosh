@@ -110,6 +110,7 @@ pub fn check_security(state: &StateConfig) -> SecurityReport {
     let root_path = state.root().to_path_buf();
     let key_path = state.root().join("keys").join("node.secret");
 
+    #[allow(unused_mut)]
     let mut report = SecurityReport {
         root_path: root_path.clone(),
         root_exists: root_path.exists(),

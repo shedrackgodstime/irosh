@@ -15,9 +15,9 @@ pub struct IpcClient {
 
 impl IpcClient {
     /// Creates a new IPC client targeting the daemon in the specified state directory.
-    pub fn new(state_dir: PathBuf) -> Self {
+    pub fn new(_state_dir: PathBuf) -> Self {
         #[cfg(unix)]
-        let socket_path = state_dir.join("irosh.sock");
+        let socket_path = _state_dir.join("irosh.sock");
         #[cfg(windows)]
         let socket_path = PathBuf::from(r"\\.\pipe\irosh-service");
 
@@ -60,7 +60,7 @@ impl IpcClient {
         use tokio::net::windows::named_pipe::ClientOptions;
 
         let client = ClientOptions::new()
-            .open(&self.socket_path.to_string_lossy())
+            .open(&*self.socket_path.to_string_lossy())
             .map_err(crate::error::IroshError::Io)?;
 
         Ok(client)

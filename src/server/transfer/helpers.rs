@@ -114,6 +114,7 @@ impl UploadSink {
     }
 }
 
+#[allow(unused_variables)]
 pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Result<UploadSink> {
     #[cfg(target_os = "linux")]
     if let ShellContext::Live { .. } = context {
@@ -142,6 +143,7 @@ pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Re
     Ok(UploadSink::File(file))
 }
 
+#[allow(unused_variables)]
 pub(super) async fn probe_download_size(
     context: ShellContext,
     source_path: &Path,
@@ -217,6 +219,7 @@ impl DownloadSource {
     }
 }
 
+#[allow(unused_variables)]
 pub(super) async fn spawn_download_helper(
     context: ShellContext,
     source_path: &Path,
