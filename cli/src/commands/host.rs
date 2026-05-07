@@ -28,9 +28,6 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
         options = options.relay_mode(mode, Some(relay_url.clone()));
     }
 
-    // Disable IPC to avoid conflict with background daemon
-    options = options.disable_ipc();
-
     let (ready, server) = match Server::bind(options).await {
         Ok(res) => res,
         Err(e) => {

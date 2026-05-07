@@ -639,6 +639,26 @@ mod tests {
     }
 
     #[test]
+    fn unified_auth_tofu_works_with_no_passwords() -> crate::Result<()> {
+        let state = temp_state("unified-tofu");
+        let auth = UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], None);
+
+        use russh::keys::ssh_key::PrivateKey;
+        use russh::keys::ssh_key::private::Ed25519Keypair;
+
+        let keypair = Ed25519Keypair::from_seed(&[0u8; 32]);
+        let key = PrivateKey::from(keypair).public_key().clone();
+
+        // 1. First connection should succeed (TOFU)
+        assert!(auth.check_public_key("user", &key)?);
+
+        // 2. Vault should now contain the key
+        let vault = crate::storage::load_all_authorized_clients(&state)?;
+        assert_eq!(vault.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn credentials_construction() {
         let creds = Credentials::new("admin", "pass123");
         assert_eq!(creds.user, "admin");

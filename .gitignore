@@ -1,13 +1,23 @@
 # --- Rust / Cargo ---
 /target/
 **/*.rs.bk
+Cargo.lock
 
-# --- Irosh Local State (CRITICAL: DO NOT REMOVE) ---
-# We store private keys and trust records in .state/ folders.
-# These must NEVER be committed to version control.
+# --- Irosh Local State & Secrets ---
+# Private keys and trust material MUST NEVER be committed.
+.irosh/
 .state/
 **/state/
 *.secret
+node.secret
+shadow.hash
+
+# --- Test Data & Temporary Files ---
+temp/
+tmp/
+cli/test/test-client/
+/test-client/
+*.log
 
 # --- IDEs & Editors ---
 .idea/
@@ -20,7 +30,8 @@
 .DS_Store
 Thumbs.db
 
-# --- Irosh Custom ---
-.irosh/
+# --- Documentation & Meta ---
 api-guidelines
 /notes
+/irosh.service
+/irosh.plist

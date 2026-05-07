@@ -341,15 +341,18 @@ impl Server {
 
         let mut wormhole: Option<ActiveWormhole> = None;
         let (success_tx, mut success_rx) = tokio::sync::mpsc::channel(1);
+        let mut shutdown_requested = false;
 
         loop {
+            if shutdown_requested && sessions.is_empty() {
+                break;
+            }
             tokio::select! {
-                biased;
                 _ = self.shutdown_rx.recv() => {
                     tracing::debug!("Server received explicit shutdown signal.");
-                    break;
+                    shutdown_requested = true;
                 }
-                incoming = self.endpoint.accept() => {
+                incoming = self.endpoint.accept(), if !shutdown_requested => {
                     let Some(incoming) = incoming else {
                         tracing::debug!("Server endpoint closed, no more incoming connections.");
                         break;
@@ -626,13 +629,18 @@ impl Server {
                             });
 
                             if self.shutdown_on_wormhole_success {
-                                info!("Shutdown on wormhole success enabled. Exiting server loop.");
-                                break;
+                                info!("Shutdown on wormhole success requested. Waiting for session to close.");
+                                shutdown_requested = true;
                             }
                             wormhole = None;
                         }
                     }
                 }
+            }
+
+            if shutdown_requested && sessions.is_empty() {
+                info!("Shutdown conditions met. Exiting server loop.");
+                break;
             }
         }
 
