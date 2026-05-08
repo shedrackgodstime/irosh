@@ -1,3 +1,4 @@
+use iroh::RelayMode;
 use irosh::config::HostKeyPolicy;
 use irosh::{Client, ClientOptions, SecurityConfig, Server, ServerOptions, StateConfig};
 use std::time::Duration;
@@ -26,9 +27,11 @@ async fn test_e2e_p2p_connection_and_metadata() {
         let client_state = temp_state("client");
 
         // 1. Start Server
-        let server_opts = ServerOptions::new(server_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None);
 
         let (ready, server) = Server::bind(server_opts)
             .await
@@ -39,9 +42,11 @@ async fn test_e2e_p2p_connection_and_metadata() {
         let server_handle = tokio::spawn(async move { server.run().await });
 
         // 2. Connect Client
-        let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
 
         // Give the server a moment to be "online" in the Iroh network
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -84,9 +89,11 @@ async fn test_e2e_file_transfer() {
         fs::write(&local_file, b"hello irosh").await.unwrap();
 
         println!("[DEBUG] Binding server...");
-        let server_opts = ServerOptions::new(server_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None);
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
@@ -97,9 +104,11 @@ async fn test_e2e_file_transfer() {
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         println!("[DEBUG] Connecting client...");
-        let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
         let mut session = Client::connect(&client_opts, ticket).await.unwrap();
 
         println!("[DEBUG] Starting shell...");
@@ -160,9 +169,11 @@ async fn test_stateless_file_transfer() {
             .unwrap();
 
         println!("[DEBUG] Binding server...");
-        let server_opts = ServerOptions::new(server_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None);
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
@@ -173,9 +184,11 @@ async fn test_stateless_file_transfer() {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         println!("[DEBUG] Connecting client...");
-        let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
         let mut session = Client::connect(&client_opts, ticket).await.unwrap();
 
         // NO shell start here! Testing stateless transfer.
@@ -241,9 +254,11 @@ async fn test_recursive_directory_transfer() {
             .unwrap();
 
         println!("[DEBUG] Binding server...");
-        let server_opts = ServerOptions::new(server_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None);
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
@@ -254,9 +269,11 @@ async fn test_recursive_directory_transfer() {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         println!("[DEBUG] Connecting client...");
-        let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
         let mut session = Client::connect(&client_opts, ticket).await.unwrap();
 
         // Remote recursive transfers currently need a shell for 'find' (for download)
@@ -339,9 +356,11 @@ async fn test_port_forwarding() {
         });
 
         // 2. Start Irosh Server
-        let server_opts = ServerOptions::new(server_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None);
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
         let shutdown = server.shutdown_handle();
@@ -350,9 +369,11 @@ async fn test_port_forwarding() {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // 3. Connect Irosh Client
-        let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        });
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
         let session = Client::connect(&client_opts, ticket).await.unwrap();
 
         // 4. Setup Local Forwarding:
@@ -395,7 +416,8 @@ async fn test_wormhole_rendezvous() {
     let code = "crystal-piano-7";
 
     // 1. Start Server
-    let server_opts = ServerOptions::new(server_state.clone());
+    let server_opts =
+        ServerOptions::new(server_state.clone()).relay_mode(RelayMode::Disabled, None);
     let (_ready, server) = Server::bind(server_opts).await.unwrap();
     let shutdown_handle = server.shutdown_handle();
     let control_tx = server.control_handle();
@@ -417,9 +439,11 @@ async fn test_wormhole_rendezvous() {
         .unwrap();
 
     // 3. Connect Client using the code
-    let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
-        host_key_policy: HostKeyPolicy::AcceptAll,
-    });
+    let client_opts = ClientOptions::new(client_state.clone())
+        .security(SecurityConfig {
+            host_key_policy: HostKeyPolicy::AcceptAll,
+        })
+        .relay_mode(RelayMode::Disabled);
 
     // Discovery can take a few seconds as it relies on Gossip propagation
     let session = Client::connect(

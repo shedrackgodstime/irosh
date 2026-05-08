@@ -196,27 +196,35 @@ impl Client {
         )
         .await?;
 
-        let connection: iroh::endpoint::Connection =
-            match tokio::time::timeout(Self::CONNECT_TIMEOUT, endpoint.connect(target_addr, &alpn))
-                .await
+        let mut last_err = None;
+        for attempt in 1..=3 {
+            if attempt > 1 {
+                tracing::debug!("Retrying P2P connection (attempt {}/3)...", attempt);
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+
+            match tokio::time::timeout(
+                Self::CONNECT_TIMEOUT,
+                endpoint.connect(target_addr.clone(), &alpn),
+            )
+            .await
             {
-                Ok(Ok(connection)) => connection,
+                Ok(Ok(connection)) => return Ok((connection, endpoint)),
                 Ok(Err(err)) => {
-                    endpoint.close().await;
-                    return Err(ClientError::ConnectFailed { source: err }.into());
+                    last_err = Some(ClientError::ConnectFailed { source: err });
                 }
                 Err(_) => {
-                    endpoint.close().await;
-                    return Err(ClientError::ConnectFailed {
+                    last_err = Some(ClientError::ConnectFailed {
                         source: iroh::endpoint::ConnectError::from(
                             iroh::endpoint::ConnectionError::Reset,
                         ),
-                    }
-                    .into());
+                    });
                 }
-            };
+            }
+        }
 
-        Ok((connection, endpoint))
+        endpoint.close().await;
+        Err(last_err.expect("Loop ran at least once").into())
     }
 
     /// Performs the SSH handshake and metadata exchange over an existing P2P connection.
@@ -400,8 +408,21 @@ impl Client {
             return Ok(ResolvedTarget::Ticket(peer.ticket));
         }
 
-        // 3. Fallback to assuming it is a Wormhole code.
-        // We no longer require a hyphen, allowing custom single-word codes.
+        // 3. Heuristic check: Is this a malformed ticket?
+        // If it starts with known prefixes or is suspiciously long, it's likely a broken ticket.
+        let is_suspiciously_long = target.len() > 64;
+        let has_ticket_prefix = target.starts_with("endpoint")
+            || target.starts_with("ticket")
+            || target.starts_with("node")
+            || target.starts_with("{");
+
+        if is_suspiciously_long || has_ticket_prefix {
+            return Err(crate::error::IroshError::InvalidTarget {
+                raw: format!("{} (Hint: This looks like a malformed ticket)", target),
+            });
+        }
+
+        // 4. Fallback to assuming it is a Wormhole code.
         Ok(ResolvedTarget::WormholeCode(target.to_string()))
     }
 

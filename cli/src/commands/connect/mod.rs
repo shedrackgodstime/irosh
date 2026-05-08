@@ -27,16 +27,24 @@ use crate::context::CliContext;
 
 /// Entry point for the shortcut 'irosh <target>'
 pub async fn exec_shortcut(target: &str, ctx: &CliContext) -> Result<()> {
-    exec_internal(Some(target.to_string()), None, ctx).await
+    exec_internal(Some(target.to_string()), None, None, None, ctx).await
 }
 
 /// Entry point for 'irosh connect <target>'
-pub async fn exec(target: Option<String>, forward: Option<String>, ctx: &CliContext) -> Result<()> {
-    exec_internal(target, forward, ctx).await
+pub async fn exec(
+    target: Option<String>,
+    code: Option<String>,
+    ticket: Option<String>,
+    forward: Option<String>,
+    ctx: &CliContext,
+) -> Result<()> {
+    exec_internal(target, code, ticket, forward, ctx).await
 }
 
 async fn exec_internal(
     target_str: Option<String>,
+    code_str: Option<String>,
+    ticket_str: Option<String>,
     forward_str: Option<String>,
     ctx: &CliContext,
 ) -> Result<()> {
@@ -55,52 +63,61 @@ async fn exec_internal(
         options = options.relay_mode(mode);
     }
 
-    // Resolve target if not provided
-    let raw_target = match target_str {
-        Some(t) => t,
-        None => {
-            let peers = irosh::storage::list_peers(&state)?;
-            if peers.is_empty() {
-                Ui::warn("Address book is empty", "You haven't saved any peers yet.");
-                Ui::info("To connect, you can:");
-                Ui::info("  1. Use a wormhole code:   irosh <code-word>");
-                Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
-                Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
-                println!();
-                anyhow::bail!("No target specified.");
+    // Resolve connection target
+    let target = if let Some(t) = ticket_str {
+        Ui::info("Connecting via explicit ticket...");
+        irosh::ResolvedTarget::Ticket(t.parse()?)
+    } else if let Some(c) = code_str {
+        Ui::info(&format!("Connecting via explicit wormhole: {}", c));
+        irosh::ResolvedTarget::WormholeCode(c)
+    } else {
+        let raw_target = match target_str {
+            Some(t) => t,
+            None => {
+                let peers = irosh::storage::list_peers(&state)?;
+                if peers.is_empty() {
+                    Ui::warn("Address book is empty", "You haven't saved any peers yet.");
+                    Ui::info("To connect, you can:");
+                    Ui::info("  1. Use a wormhole code:   irosh <code-word>");
+                    Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
+                    Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
+                    println!();
+                    anyhow::bail!("No target specified.");
+                }
+
+                let items: Vec<String> = peers
+                    .iter()
+                    .map(|p| format!("[{}] {}", p.name, display::shorten_ticket(&p.ticket)))
+                    .collect();
+
+                let selection = Ui::select("Select a peer to connect", &items);
+                match selection {
+                    Some(idx) => peers[idx].name.clone(),
+                    None => anyhow::bail!("Connection cancelled."),
+                }
             }
+        };
 
-            let items: Vec<String> = peers
-                .iter()
-                .map(|p| format!("[{}] {}", p.name, display::shorten_ticket(&p.ticket)))
-                .collect();
+        let resolved = Client::parse_target(options.state(), &raw_target)?;
 
-            let selection = Ui::select("Select a peer to connect", &items);
-            match selection {
-                Some(idx) => peers[idx].name.clone(),
-                None => anyhow::bail!("Connection cancelled."),
+        match &resolved {
+            irosh::ResolvedTarget::Ticket(_) => {
+                let is_alias = irosh::storage::list_peers(&state)?
+                    .iter()
+                    .any(|p| p.name == raw_target);
+
+                if is_alias {
+                    Ui::info(&format!("Connecting to saved peer: {}", raw_target));
+                } else {
+                    Ui::info("Connecting via direct ticket...");
+                }
+            }
+            irosh::ResolvedTarget::WormholeCode(code) => {
+                Ui::info(&format!("Attempting wormhole connection: {}", code));
             }
         }
+        resolved
     };
-
-    let target = Client::parse_target(options.state(), &raw_target)?;
-
-    match &target {
-        irosh::ResolvedTarget::Ticket(_) => {
-            let is_alias = irosh::storage::list_peers(&state)?
-                .iter()
-                .any(|p| p.name == raw_target);
-
-            if is_alias {
-                Ui::info(&format!("Connecting to saved peer: {}", raw_target));
-            } else {
-                Ui::info("Connecting via direct ticket...");
-            }
-        }
-        irosh::ResolvedTarget::WormholeCode(code) => {
-            Ui::info(&format!("Attempting wormhole connection: {}", code));
-        }
-    }
 
     let pb = Ui::spinner("Establishing connection...");
     options = options.password_prompter(CliPasswordPrompter {

@@ -21,16 +21,28 @@ pub trait CommandExec {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Connect to a peer
+    /// Connect to a remote peer (alias, ticket, or wormhole)
+    #[command(
+        long_about = "Connects to a remote irosh peer to start an interactive shell.\n\nExamples:\n  irosh connect my-server           # Using a saved alias\n  irosh connect --code apple-pie    # Using a wormhole code\n  irosh connect <ticket-string>     # Using a raw ticket"
+    )]
     Connect {
         /// Target peer (alias, ticket, or wormhole code)
         target: Option<String>,
+        /// Explicitly connect via wormhole code
+        #[arg(long, short = 'c')]
+        code: Option<String>,
+        /// Explicitly connect via ticket
+        #[arg(long, short = 't')]
+        ticket: Option<String>,
         /// Forward a local port to a remote address (L:port:R:port)
         #[arg(long, short = 'L')]
         forward: Option<String>,
     },
 
     /// Run the server in the foreground
+    #[command(
+        long_about = "Starts the irosh server in the current terminal. This is useful for temporary sessions or debugging. Use 'system start' for background hosting."
+    )]
     Host {
         /// Secret for stealth mode
         #[arg(long)]
@@ -38,6 +50,9 @@ pub enum Commands {
     },
 
     /// Start or manage discovery wormholes
+    #[command(
+        long_about = "Wormholes allow two devices to pair securely using a simple human-readable code word.\n\nExamples:\n  irosh wormhole                # Generate a random pairing code\n  irosh wormhole my-custom-code # Use a specific code"
+    )]
     Wormhole {
         /// Custom code or keyword (status, disable)
         code: Option<String>,
@@ -49,7 +64,7 @@ pub enum Commands {
         persistent: bool,
     },
 
-    /// Manage the background service
+    /// Manage the background daemon (install, start, stop)
     System {
         #[command(subcommand)]
         action: SystemAction,
@@ -93,8 +108,20 @@ pub enum Commands {
 impl CommandExec for Commands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
-            Commands::Connect { target, forward } => {
-                connect::exec(target.clone(), forward.clone(), ctx).await
+            Commands::Connect {
+                target,
+                code,
+                ticket,
+                forward,
+            } => {
+                connect::exec(
+                    target.clone(),
+                    code.clone(),
+                    ticket.clone(),
+                    forward.clone(),
+                    ctx,
+                )
+                .await
             }
             Commands::Host { secret } => host::exec(secret.clone(), ctx).await,
             Commands::Wormhole {

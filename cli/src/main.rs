@@ -12,7 +12,11 @@ use ui::Ui;
 
 #[derive(Parser)]
 #[command(name = "irosh")]
-#[command(version, about = "P2P SSH sessions over Iroh", long_about = None)]
+#[command(
+    version,
+    about = "Secure P2P SSH sessions with zero configuration",
+    long_about = "Irosh provides secure, encrypted terminal sessions and file transfers over the Iroh P2P network.\n\nKey Features:\n  - Zero-Config: Connect through NATs and firewalls without port forwarding.\n  - Wormhole: Pair new devices using human-readable code words.\n  - Stealth Mode: Use shared secrets to make your server invisible to unauthorized scans.\n  - Integrated Transfers: Seamlessly 'put' and 'get' files over the P2P tunnel."
+)]
 pub struct Args {
     /// Override default state directory
     #[arg(long, env = "IROSH_STATE")]
