@@ -1,6 +1,7 @@
 use crate::context::CliContext;
 use crate::ui::Ui;
 use anyhow::Result;
+use console::style;
 use irosh::{Server, ServerOptions};
 
 pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
@@ -55,7 +56,10 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
     };
 
     Ui::p2p("Server is starting...");
-    Ui::success(&format!("Server listening! Ticket: {}", ready.ticket));
+    Ui::success(&format!(
+        "Server listening! Ticket: {}",
+        style(&ready.ticket).magenta()
+    ));
     Ui::info("Press Ctrl+C to stop the server.");
 
     server.run().await?;

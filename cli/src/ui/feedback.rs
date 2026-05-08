@@ -1,9 +1,10 @@
+use console::{Emoji, style};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
 
 /// [C7] Warning Banner (non-blocking).
 pub fn warn(title: &str, message: &str) {
-    eprintln!("warning: {}", title);
+    eprintln!("{}: {}", style("warning").yellow().bold(), title);
     for line in message.lines() {
         eprintln!("    {}", line);
     }
@@ -15,7 +16,7 @@ pub fn spinner(message: &str) -> ProgressBar {
     pb.set_style(
         ProgressStyle::default_spinner()
             .tick_chars("-\\|/")
-            .template("{spinner} {msg}")
+            .template("{spinner:.cyan} {msg}")
             .expect("Valid template"),
     );
     pb.set_message(message.to_string());
@@ -25,21 +26,21 @@ pub fn spinner(message: &str) -> ProgressBar {
 
 /// [C9] Success / Failure Banner.
 pub fn success(msg: &str) {
-    println!("{}", msg);
+    println!("{} {}", style(Emoji("✔", "v")).green().bold(), msg);
 }
 
 pub fn error(msg: &str) {
-    eprintln!("error: {}", msg);
+    eprintln!("{}: {}", style("error").red().bold(), msg);
 }
 
 pub fn info(msg: &str) {
-    eprintln!("{}", msg);
+    eprintln!("{} {}", style(Emoji("ℹ", "i")).blue().bold(), msg);
 }
 
 pub fn security(msg: &str) {
-    eprintln!("security: {}", msg);
+    eprintln!("{} {}", style(Emoji("🔒", "*")).magenta().bold(), msg);
 }
 
 pub fn p2p(msg: &str) {
-    eprintln!("{}", msg);
+    eprintln!("{} {}", style(Emoji("📡", ">")).cyan().bold(), msg);
 }

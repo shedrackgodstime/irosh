@@ -1,6 +1,7 @@
 use crate::context::CliContext;
 use crate::ui::Ui;
 use anyhow::Result;
+use console::style;
 use irosh::{IpcClient, IpcCommand, IpcResponse, Server, ServerOptions, StateConfig};
 use std::path::Path;
 
@@ -139,9 +140,12 @@ async fn handle_enable_daemon(
         IpcResponse::Ok => {
             Ui::success(&format!(
                 "Wormhole active in background! Code: {}",
-                final_code
+                style(&final_code).magenta().bold()
             ));
-            Ui::info(&format!("Run 'irosh {}' on the other machine.", final_code));
+            Ui::info(&format!(
+                "Run 'irosh connect {}' on the other machine.",
+                style(&final_code).magenta()
+            ));
         }
         IpcResponse::Error(e) => Ui::error(&format!("Daemon rejected: {}", e)),
         _ => anyhow::bail!("Unexpected response from daemon"),
@@ -168,9 +172,12 @@ async fn handle_foreground_wormhole(
 
     Ui::success(&format!(
         "Wormhole active (Foreground)! Code: {}",
-        final_code
+        style(&final_code).magenta().bold()
     ));
-    Ui::info(&format!("Run 'irosh {}' on the other machine.", final_code));
+    Ui::info(&format!(
+        "Run 'irosh connect {}' on the other machine.",
+        style(&final_code).magenta()
+    ));
     Ui::info("Waiting for peer... (Ctrl+C to cancel)");
 
     let (tx, _) = tokio::sync::oneshot::channel();

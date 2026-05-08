@@ -24,6 +24,7 @@ server    = ["transport", "storage", "dep:russh", "dep:portable-pty"]
 client    = ["transport", "storage", "dep:russh"]
 storage   = ["dep:serde", "dep:serde_json"]
 transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets"]
+console = ["dep:console"]
 
 [dependencies]
 # iroh: core P2P transport, endpoint management, hole-punching.
@@ -75,6 +76,7 @@ sha2 = "0.10"
 walkdir = "2"
 argon2 = "0.5.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "json"] }
+console = { version = "0.16.3", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

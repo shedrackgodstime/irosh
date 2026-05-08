@@ -47,18 +47,22 @@ async fn main() {
         "irosh=warn,error"
     };
 
-    tracing_subscriber::fmt()
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
-        .with_target(false)
+        .with_target(args.verbose)
         .with_ansi(false)
-        .with_level(false)
-        .without_time()
+        .with_level(args.verbose)
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_file(false)
-        .with_line_number(false)
-        .init();
+        .with_line_number(false);
+
+    if args.verbose {
+        builder.init();
+    } else {
+        builder.without_time().init();
+    }
 
     let ctx = match CliContext::new(args) {
         Ok(c) => c,

@@ -2339,6 +2339,7 @@ name = "irosh"
 version = "0.2.0"
 dependencies = [
  "argon2",
+ "console 0.16.3",
  "data-encoding",
  "dirs",
  "futures",
@@ -2374,6 +2375,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "console 0.16.3",
  "dialoguer",
  "dirs",
  "indicatif",
