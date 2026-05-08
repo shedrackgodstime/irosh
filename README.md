@@ -120,9 +120,9 @@ async fn main() -> irosh::Result<()> {
 
 ## Documentation
 
-- [**Technical Manual**](src/README.md) — Architectural details, feature flags, and library integration.
+- [**Technical Manual (Library)**](src/README.md) — Architectural details, feature flags, and library integration.
 - [**API Reference**](https://docs.rs/irosh) — Full technical documentation for Rust developers.
-- [**Documentation Roadmap**](docs/ROADMAP.md) — Future development plans and documentation chapters.
+- [**Development Roadmap**](docs/ROADMAP.md) — Stability goals and the path to v1.0.
 
 ---
 

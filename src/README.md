@@ -21,7 +21,7 @@ async fn main() -> irosh::Result<()> {
     let options = ServerOptions::new(StateConfig::new("./state".into()));
     let (ready, server) = Server::bind(options).await?;
     
-    println!("Server Ticket: {}", ready.ticket);
+    println!("Server Ticket: {}", ready.ticket());
     server.run().await
 }
 ```
