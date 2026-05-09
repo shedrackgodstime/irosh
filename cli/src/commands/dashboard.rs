@@ -9,8 +9,8 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     let ipc_client = IpcClient::new(state_root);
     let daemon_status = ipc_client.send(IpcCommand::GetStatus).await;
 
-    println!("\n  Irosh v{} - Dashboard", env!("CARGO_PKG_VERSION"));
-    println!("  ----------------------------------------------------");
+    eprintln!("\n  Irosh v{} - Dashboard", env!("CARGO_PKG_VERSION"));
+    eprintln!("  ----------------------------------------------------");
 
     // 1. Daemon & Connectivity
     match daemon_status {
@@ -19,18 +19,18 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
             active_sessions,
             ..
         }) => {
-            println!("  Server Daemon:    RUNNING");
-            println!("  Active Sessions:  {}", active_sessions);
+            eprintln!("  Server Daemon:    RUNNING");
+            eprintln!("  Active Sessions:  {}", active_sessions);
             let wormhole_status = if wormhole_active {
                 "ACTIVE"
             } else {
                 "INACTIVE"
             };
-            println!("  Wormhole Status:  {}", wormhole_status);
+            eprintln!("  Wormhole Status:  {}", wormhole_status);
         }
         _ => {
-            println!("  Server Daemon:    STOPPED");
-            println!("  Tip: Run 'irosh system start' to enable P2P hosting.");
+            eprintln!("  Server Daemon:    STOPPED");
+            eprintln!("  Tip: Run 'irosh system start' to enable P2P hosting.");
         }
     }
 
@@ -40,9 +40,9 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
         let addr = irosh::iroh::EndpointAddr::from(identity.secret_key.public());
         let ticket = irosh::transport::ticket::Ticket::new(addr);
 
-        println!("\n  Local Identity");
-        println!("  Node ID:          {}", &node_id[..16]);
-        println!(
+        eprintln!("\n  Local Identity");
+        eprintln!("  Node ID:          {}", &node_id[..16]);
+        eprintln!(
             "  Public Ticket:    {}",
             crate::display::shorten_ticket(&ticket)
         );
@@ -52,12 +52,12 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     let trusted_keys = storage::list_authorized_keys(&state).unwrap_or_default();
     let saved_peers = storage::list_peers(&state).unwrap_or_default();
 
-    println!("\n  Security & Peers");
-    println!("  Trusted Devices:  {}", trusted_keys.len());
-    println!("  Address Book:     {} saved peers", saved_peers.len());
+    eprintln!("\n  Security & Peers");
+    eprintln!("  Trusted Devices:  {}", trusted_keys.len());
+    eprintln!("  Address Book:     {} saved peers", saved_peers.len());
 
-    println!("  ----------------------------------------------------");
-    println!("  Quick Connect: irosh <alias|ticket|code>\n");
+    eprintln!("  ----------------------------------------------------");
+    eprintln!("  Quick Connect: irosh <alias|ticket|code>\n");
 
     Ok(())
 }

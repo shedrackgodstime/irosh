@@ -1,7 +1,6 @@
 use crate::context::CliContext;
 use crate::ui::Ui;
 use anyhow::Result;
-use console::style;
 use irosh::{Server, ServerOptions};
 
 pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
@@ -17,7 +16,7 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
     }
 
     let config = irosh::storage::load_config(&state)?;
-    let mut options = ServerOptions::new(state);
+    let mut options = ServerOptions::new(state.clone());
 
     // Apply global config overrides
     if let Some(secret) = secret.or(config.stealth_secret) {
@@ -55,12 +54,28 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
         }
     };
 
+    let identity = irosh::storage::load_or_generate_identity(&state).await?;
+    let fingerprint = identity
+        .ssh_key
+        .public_key()
+        .fingerprint(irosh::russh::keys::ssh_key::HashAlg::Sha256);
+
     Ui::p2p("Server is starting...");
-    Ui::success(&format!(
-        "Server listening! Ticket: {}",
-        style(&ready.ticket).magenta()
-    ));
+    Ui::machine_identity(
+        ready.endpoint_id(),
+        &fingerprint.to_string(),
+        &ready.ticket.to_string(),
+        "Hosting",
+    );
     Ui::info("Press Ctrl+C to stop the server.");
+
+    let shutdown = server.shutdown_handle();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            Ui::info("Shutting down gracefully...");
+            shutdown.close().await;
+        }
+    });
 
     server.run().await?;
 

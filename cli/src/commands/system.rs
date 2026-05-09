@@ -35,26 +35,28 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
         }
         SystemAction::Status => {
             let status = service::query_service_status().await;
-            println!("\n  System Service Status");
-            println!("  ----------------------------------------------------");
+            eprintln!("\n  System Service Status");
+            eprintln!("  ----------------------------------------------------");
             match status {
                 ServiceStatus::Active(manager) => {
-                    println!("  Status:    ACTIVE");
-                    println!("  Manager:   {}", manager);
+                    eprintln!("  Status:    ACTIVE");
+                    eprintln!("  Manager:   {}", manager);
                 }
                 ServiceStatus::Inactive => {
-                    println!("  Status:    INACTIVE");
-                    println!("  Notice:    Service is installed but not running.");
+                    eprintln!("  Status:    INACTIVE");
+                    eprintln!("  Notice:    Service is installed but not running.");
                 }
                 ServiceStatus::NotFound => {
-                    println!("  Status:    NOT INSTALLED");
-                    println!("  Action:    Run 'irosh system install' to enable background tasks.");
+                    eprintln!("  Status:    NOT INSTALLED");
+                    eprintln!(
+                        "  Action:    Run 'irosh system install' to enable background tasks."
+                    );
                 }
                 ServiceStatus::Unknown => {
-                    println!("  Status:    UNKNOWN");
+                    eprintln!("  Status:    UNKNOWN");
                 }
             }
-            println!("  ----------------------------------------------------\n");
+            eprintln!("  ----------------------------------------------------\n");
         }
         SystemAction::Logs { follow } => {
             irosh::sys::service::view_logs(follow).await?;

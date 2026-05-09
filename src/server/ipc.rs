@@ -26,6 +26,8 @@ pub enum IpcCommand {
     DisableWormhole,
     /// Query the current status of the daemon.
     GetStatus,
+    /// Request a graceful shutdown of the daemon.
+    Shutdown,
 }
 
 /// Internal version of IpcCommand that includes a response channel.
@@ -40,6 +42,9 @@ pub enum InternalCommand {
         tx: tokio::sync::oneshot::Sender<IpcResponse>,
     },
     GetStatus {
+        tx: tokio::sync::oneshot::Sender<IpcResponse>,
+    },
+    Shutdown {
         tx: tokio::sync::oneshot::Sender<IpcResponse>,
     },
 }
@@ -108,8 +113,13 @@ impl IpcServer {
         #[cfg(windows)]
         {
             // Windows named pipes follow a specific format.
-            // We use a name derived from the state directory hash or a fixed name.
-            PathBuf::from(r"\\.\pipe\irosh-service")
+            // We use a name derived from the state directory to avoid collisions
+            // between multiple users or instances.
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.state_dir.hash(&mut hasher);
+            let hash = hasher.finish();
+            PathBuf::from(format!(r"\\.\pipe\irosh-service-{:x}", hash))
         }
     }
 
@@ -203,6 +213,7 @@ where
         },
         IpcCommand::DisableWormhole => InternalCommand::DisableWormhole { tx: res_tx },
         IpcCommand::GetStatus => InternalCommand::GetStatus { tx: res_tx },
+        IpcCommand::Shutdown => InternalCommand::Shutdown { tx: res_tx },
     };
 
     let response = if control_tx.send(internal_cmd).await.is_ok() {

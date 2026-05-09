@@ -191,6 +191,14 @@ async fn handle_foreground_wormhole(
         .await
         .map_err(|_| anyhow::anyhow!("Server channel closed"))?;
 
+    let shutdown = server.shutdown_handle();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            Ui::info("Shutting down wormhole server...");
+            shutdown.close().await;
+        }
+    });
+
     server.run().await?;
     Ok(())
 }

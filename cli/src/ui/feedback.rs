@@ -26,7 +26,7 @@ pub fn spinner(message: &str) -> ProgressBar {
 
 /// [C9] Success / Failure Banner.
 pub fn success(msg: &str) {
-    println!("{} {}", style(Emoji("✔", "v")).green().bold(), msg);
+    eprintln!("{} {}", style(Emoji("✔", "v")).green().bold(), msg);
 }
 
 pub fn error(msg: &str) {

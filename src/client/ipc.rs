@@ -19,7 +19,13 @@ impl IpcClient {
         #[cfg(unix)]
         let socket_path = _state_dir.join("irosh.sock");
         #[cfg(windows)]
-        let socket_path = PathBuf::from(r"\\.\pipe\irosh-service");
+        let socket_path = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            _state_dir.hash(&mut hasher);
+            let hash = hasher.finish();
+            PathBuf::from(format!(r"\\.\pipe\irosh-service-{:x}", hash))
+        };
 
         Self { socket_path }
     }

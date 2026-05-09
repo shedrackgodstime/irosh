@@ -629,6 +629,11 @@ impl Server {
                                     active_sessions: sessions.len(),
                                 });
                             }
+                            ipc::InternalCommand::Shutdown { tx } => {
+                                info!("Graceful shutdown requested via IPC");
+                                shutdown_requested = true;
+                                let _ = tx.send(ipc::IpcResponse::Ok);
+                            }
                         }
                     }
                 }
@@ -644,7 +649,7 @@ impl Server {
                             });
 
                             if self.shutdown_on_wormhole_success {
-                                info!("Shutdown on wormhole success requested. Waiting for session to close.");
+                                info!("Shutdown on wormhole success requested. Server will exit after all sessions close.");
                                 shutdown_requested = true;
                             }
                             wormhole = None;

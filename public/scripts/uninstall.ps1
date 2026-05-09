@@ -32,15 +32,42 @@ Write-Host "--------------------------------------------------" -ForegroundColor
 
 $Found = $false
 
-# --- Remove binaries ---
-$InstallDir = Join-Path $env:LOCALAPPDATA "irosh\bin"
+# --- Detect Privileges ---
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
+# --- Stop and Uninstall Service ---
+$InstallDir = Join-Path $env:LOCALAPPDATA "irosh\bin"
+$Irosh = Join-Path $InstallDir "irosh.exe"
+
+if (Test-Path $Irosh) {
+    Write-Host "[*] Cleaning up background service..." -ForegroundColor Yellow
+    try {
+        # Try to stop and uninstall gracefully using the binary
+        & $Irosh system stop | Out-Null
+        & $Irosh system uninstall | Out-Null
+    } catch {
+        # Fallback to direct schtasks if binary fails
+        schtasks /delete /tn irosh /f 2>$null
+    }
+} else {
+    # If binary is gone, try direct cleanup anyway
+    schtasks /delete /tn irosh /f 2>$null
+}
+
+# --- Cleanup Firewall Rules (Admin only) ---
+if ($isAdmin) {
+    Write-Host "[*] Removing firewall rules..." -ForegroundColor Yellow
+    Remove-NetFirewallRule -DisplayName "Irosh P2P (UDP-In)" -ErrorAction SilentlyContinue
+}
+
+# --- Remove binaries ---
 if (Test-Path $InstallDir) {
-    $Irosh = Join-Path $InstallDir "irosh.exe"
     $LegacyServer = Join-Path $InstallDir "irosh-server.exe"
     $LegacyClient = Join-Path $InstallDir "irosh-client.exe"
     
     if (Test-Path $Irosh) {
+        # Final safety: Ensure process is killed if still alive
+        taskkill /IM irosh.exe /F 2>$null
         Remove-Item $Irosh -Force
         Write-Host "✅ Removed irosh.exe" -ForegroundColor Green
         $Found = $true

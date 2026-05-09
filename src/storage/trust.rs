@@ -68,7 +68,7 @@ fn ensure_trust_dirs(state: &StateConfig) -> Result<()> {
 }
 
 fn server_key_path(state: &StateConfig, node_id: &str) -> PathBuf {
-    let safe_id = node_id.replace(['/', '\\', '.'], "_");
+    let safe_id = node_id.replace(['/', '\\', '.', ':'], "_");
     state
         .root()
         .join("trust")
@@ -77,7 +77,7 @@ fn server_key_path(state: &StateConfig, node_id: &str) -> PathBuf {
 }
 
 fn client_key_path(state: &StateConfig, node_id: &str) -> PathBuf {
-    let safe_id = node_id.replace(['/', '\\', '.'], "_");
+    let safe_id = node_id.replace(['/', '\\', '.', ':'], "_");
     state
         .root()
         .join("trust")

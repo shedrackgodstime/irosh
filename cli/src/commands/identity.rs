@@ -16,12 +16,12 @@ pub async fn exec(action: IdentityAction, ctx: &CliContext) -> Result<()> {
             let identity = storage::load_or_generate_identity(options.state()).await?;
             let fingerprint = identity.ssh_key.public_key().fingerprint(HashAlg::Sha256);
 
-            println!("\n  Machine Identity");
-            println!("  ----------------------------------------------------");
-            println!("  Node ID:     {}", ready.endpoint_id());
-            println!("  Fingerprint: {}", fingerprint);
-            println!("  Ticket:      {}", ready.ticket());
-            println!("  ----------------------------------------------------\n");
+            Ui::machine_identity(
+                ready.endpoint_id(),
+                &fingerprint.to_string(),
+                &ready.ticket().to_string(),
+                "Local",
+            );
         }
         IdentityAction::Rotate => {
             Ui::warn(

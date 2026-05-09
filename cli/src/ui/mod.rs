@@ -50,4 +50,14 @@ impl Ui {
     pub fn input(prompt: &str, default: Option<&str>) -> Option<String> {
         prompts::input(prompt, default)
     }
+
+    pub fn machine_identity(node_id: &str, fingerprint: &str, ticket: &str, label: &str) {
+        use console::style;
+        eprintln!("\n  Machine Identity ({})", label);
+        eprintln!("  ----------------------------------------------------");
+        eprintln!("  Node ID:     {}", node_id);
+        eprintln!("  Fingerprint: {}", fingerprint);
+        eprintln!("  Ticket:      {}", style(ticket).cyan().bold());
+        eprintln!("  ----------------------------------------------------\n");
+    }
 }

@@ -137,9 +137,24 @@ impl ServerHandler {
             }
             #[cfg(windows)]
             {
-                let mut command_builder = CommandBuilder::new(windows_command_processor());
-                command_builder.arg("/C");
-                command_builder.arg(command);
+                let exe = windows_command_processor();
+                let is_powershell = exe.to_lowercase().contains("powershell")
+                    || exe.to_lowercase().contains("pwsh");
+                let flag = if is_powershell { "-Command" } else { "/C" };
+
+                // Enforce UTF-8 encoding for the remote session to ensure compatibility with irosh output
+                let final_command = if is_powershell {
+                    format!(
+                        "$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {}",
+                        command
+                    )
+                } else {
+                    format!("chcp 65001 >nul && {}", command)
+                };
+
+                let mut command_builder = CommandBuilder::new(exe);
+                command_builder.arg(flag);
+                command_builder.arg(final_command);
                 command_builder
             }
             #[cfg(not(any(unix, windows)))]
@@ -607,7 +622,49 @@ impl ServerHandler {
 
 #[cfg(windows)]
 fn windows_command_processor() -> String {
-    std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    use std::path::Path;
+
+    // 1. Try to find PowerShell Core (pwsh.exe) in PATH
+    if let Ok(output) = std::process::Command::new("where.exe")
+        .arg("pwsh.exe")
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
+            if !path.is_empty() && Path::new(&path).exists() {
+                return path;
+            }
+        }
+    }
+
+    // 2. Try to find Windows PowerShell in standard location
+    if let Ok(systemroot) = std::env::var("SystemRoot") {
+        let ps_path = format!(
+            r"{}\System32\WindowsPowerShell\v1.0\powershell.exe",
+            systemroot
+        );
+        if Path::new(&ps_path).exists() {
+            return ps_path;
+        }
+    }
+
+    // 3. Fallback to COMSPEC or cmd.exe
+    if let Ok(comspec) = std::env::var("COMSPEC") {
+        if Path::new(&comspec).is_absolute() && Path::new(&comspec).exists() {
+            return comspec;
+        }
+    }
+
+    // Absolute fallback
+    if let Ok(systemroot) = std::env::var("SystemRoot") {
+        return format!(r"{}\System32\cmd.exe", systemroot);
+    }
+    "C:\\Windows\\System32\\cmd.exe".to_string()
 }
 
 fn preview_bytes(bytes: &[u8]) -> String {

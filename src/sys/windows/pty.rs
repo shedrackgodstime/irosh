@@ -3,6 +3,8 @@
 use crate::error::{ClientError, IroshError, Result};
 pub use portable_pty::PtySize;
 use std::fmt;
+use tokio::sync::mpsc;
+use windows_sys::Win32::System::Console::*;
 
 /// Places the current physical Windows terminal into raw mode and restores it
 /// automatically on `Drop`. This captures keystrokes without local processing.
@@ -27,7 +29,6 @@ impl RawTerminal {
     /// Puts the standard input handle into raw mode and enables VT processing on stdout.
     pub fn new(_fd: i32) -> Result<Self> {
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-        use windows_sys::Win32::System::Console::*;
 
         unsafe {
             let in_handle = GetStdHandle(STD_INPUT_HANDLE);
@@ -57,6 +58,8 @@ impl RawTerminal {
                 0
             };
 
+            // For raw mode, we want to disable line input, echo, and processed input.
+            // We also enable VT input to get sequences like arrows as VT codes.
             let raw_in_mode = (in_mode
                 & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
                 | ENABLE_VIRTUAL_TERMINAL_INPUT;
@@ -83,7 +86,6 @@ impl RawTerminal {
 
 impl Drop for RawTerminal {
     fn drop(&mut self) {
-        use windows_sys::Win32::System::Console::SetConsoleMode;
         unsafe {
             let _ = SetConsoleMode(self.in_handle, self.in_original_mode);
             if self.out_original_mode != 0 {
@@ -95,7 +97,6 @@ impl Drop for RawTerminal {
 
 /// Probes the physical terminal size.
 pub fn current_terminal_size() -> PtySize {
-    use windows_sys::Win32::System::Console::*;
     unsafe {
         let handle = GetStdHandle(STD_OUTPUT_HANDLE);
         let mut info = std::mem::zeroed::<CONSOLE_SCREEN_BUFFER_INFO>();
@@ -111,26 +112,83 @@ pub fn current_terminal_size() -> PtySize {
     crate::session::pty::default_pty_size()
 }
 
-/// A wrapper around standard stdin for Windows.
+/// Events that can occur on a Windows terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalEvent {
+    /// Raw data received from stdin.
+    Data(Vec<u8>),
+    /// The terminal window was resized.
+    Resize(PtySize),
+}
+
+/// A robust asynchronous terminal input and event reader for Windows.
+///
+/// Uses a dedicated background thread to poll `ReadConsoleInputW`, allowing
+/// concurrent capture of both raw keystrokes and console events (like resize).
 pub struct AsyncStdin {
-    inner: tokio::io::Stdin,
+    rx: mpsc::UnboundedReceiver<TerminalEvent>,
 }
 
 impl AsyncStdin {
+    /// Spawns the background input polling thread.
     pub fn new() -> Result<Self> {
-        Ok(Self {
-            inner: tokio::io::stdin(),
-        })
-    }
-}
+        let (tx, rx) = mpsc::unbounded_channel();
 
-impl tokio::io::AsyncRead for AsyncStdin {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
+        std::thread::Builder::new()
+            .name("irosh-win-input".to_string())
+            .spawn(move || {
+                let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+                let mut buffer = [unsafe { std::mem::zeroed::<INPUT_RECORD>() }; 128];
+
+                loop {
+                    let mut read = 0;
+                    if unsafe { ReadConsoleInputW(handle, buffer.as_mut_ptr(), 128, &mut read) }
+                        == 0
+                    {
+                        break;
+                    }
+
+                    for i in 0..read {
+                        let record = buffer[i as usize];
+                        match record.EventType as u32 {
+                            KEY_EVENT => {
+                                let key = unsafe { record.Event.KeyEvent };
+                                if key.bKeyDown != 0 {
+                                    // Use the Unicode character if available
+                                    let c = unsafe { key.uChar.UnicodeChar };
+                                    if c != 0 {
+                                        let mut utf8 = [0u8; 4];
+                                        let s = char::from_u32(c as u32)
+                                            .unwrap_or(' ')
+                                            .encode_utf8(&mut utf8);
+                                        if tx
+                                            .send(TerminalEvent::Data(s.as_bytes().to_vec()))
+                                            .is_err()
+                                        {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            WINDOW_BUFFER_SIZE_EVENT => {
+                                let _ = tx.send(TerminalEvent::Resize(current_terminal_size()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            })
+            .map_err(|e| IroshError::Client(ClientError::TerminalIo { source: e }))?;
+
+        Ok(Self { rx })
+    }
+
+    /// Polls for the next terminal event (data or resize).
+    pub fn poll_next(
+        &mut self,
         cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    ) -> std::task::Poll<Option<TerminalEvent>> {
+        self.rx.poll_recv(cx)
     }
 }
 

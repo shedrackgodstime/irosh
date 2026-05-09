@@ -40,6 +40,22 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::*;
+        unsafe {
+            let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+            let mut mode = 0;
+            if GetConsoleMode(stdout, &mut mode) != 0 {
+                SetConsoleMode(stdout, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            }
+            let stderr = GetStdHandle(STD_ERROR_HANDLE);
+            if GetConsoleMode(stderr, &mut mode) != 0 {
+                SetConsoleMode(stderr, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            }
+        }
+    }
+
     let args = Args::parse();
 
     // Initialize professional monochrome logging
@@ -51,11 +67,37 @@ async fn main() {
         "irosh=warn,error"
     };
 
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+    #[cfg(windows)]
+    struct CrlfWriter<W: std::io::Write>(W);
+    #[cfg(windows)]
+    impl<W: std::io::Write> std::io::Write for CrlfWriter<W> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let mut last = 0;
+            for (i, &byte) in buf.iter().enumerate() {
+                if byte == b'\n' {
+                    self.0.write_all(&buf[last..i])?;
+                    self.0.write_all(b"\r\n")?;
+                    last = i + 1;
+                }
+            }
+            self.0.write_all(&buf[last..])?;
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.flush()
+        }
+    }
+
+    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+
+    #[cfg(windows)]
+    let builder = builder.with_writer(move || CrlfWriter(std::io::stderr()));
+    #[cfg(not(windows))]
+    let builder = builder.with_writer(std::io::stderr);
+
+    let builder = builder
         .with_target(args.verbose)
-        .with_ansi(false)
+        .with_ansi(true)
         .with_level(args.verbose)
         .with_thread_ids(false)
         .with_thread_names(false)

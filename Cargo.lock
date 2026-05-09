@@ -2387,6 +2387,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width 0.1.14",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
