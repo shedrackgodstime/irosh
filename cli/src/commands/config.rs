@@ -11,6 +11,25 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
 
     match action {
         ConfigAction::List => {
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct ConfigListJson {
+                    stealth_secret: Option<String>,
+                    relay_url: Option<String>,
+                    log_level: String,
+                    wormhole_timeout: u64,
+                    default_user: Option<String>,
+                }
+                crate::output::print_success(ConfigListJson {
+                    stealth_secret: config.stealth_secret.clone(),
+                    relay_url: config.relay_url.clone(),
+                    log_level: config.log_level.clone(),
+                    wormhole_timeout: config.wormhole_timeout,
+                    default_user: config.default_user.clone(),
+                });
+                return Ok(());
+            }
+
             println!("\n  Global Configuration");
             println!("  ----------------------------------------------------");
             println!("  {:<18} {:<30}", "SETTING", "VALUE");
@@ -49,7 +68,7 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     .as_deref()
                     .unwrap_or("<iroh-default>")
                     .to_string(),
-                "log-level" => config.log_level,
+                "log-level" => config.log_level.clone(),
                 "wormhole-timeout" => format!("{}s", config.wormhole_timeout),
                 "default-user" => config
                     .default_user
@@ -57,10 +76,28 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     .unwrap_or("<system-user>")
                     .to_string(),
                 _ => {
+                    if ctx.args.json {
+                        crate::output::print_error(&format!("Unknown key: {}", key), "invalid_key");
+                        return Ok(());
+                    }
                     Ui::error(&format!("Unknown configuration key: {}", key));
                     anyhow::bail!("Invalid key.");
                 }
             };
+
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct ConfigGetJson {
+                    key: String,
+                    value: String,
+                }
+                crate::output::print_success(ConfigGetJson {
+                    key: key.clone(),
+                    value: val,
+                });
+                return Ok(());
+            }
+
             Ui::info(&format!("{} = {}", key, val));
         }
         ConfigAction::Set { key, value } => {

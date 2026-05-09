@@ -118,6 +118,21 @@ async fn handle_status(client: &IpcClient) -> Result<()> {
             wormhole_code,
             active_sessions,
         } => {
+            if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+                #[derive(serde::Serialize)]
+                struct WormholeStatusJson {
+                    active: bool,
+                    code: Option<String>,
+                    sessions: usize,
+                }
+                crate::output::print_success(WormholeStatusJson {
+                    active: wormhole_active,
+                    code: wormhole_code,
+                    sessions: active_sessions,
+                });
+                return Ok(());
+            }
+
             if wormhole_active {
                 Ui::success(&format!(
                     "Wormhole active! Code: {}",

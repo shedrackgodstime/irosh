@@ -4,6 +4,9 @@ use std::io::IsTerminal;
 
 /// [C1] Danger Confirmation Prompt (requires typing a specific word).
 pub fn danger_confirm(message: &str, expected: &str) -> bool {
+    if crate::output::YES_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+        return true;
+    }
     if !std::io::stdin().is_terminal() {
         return false;
     }
@@ -22,6 +25,9 @@ pub fn danger_confirm(message: &str, expected: &str) -> bool {
 
 /// [C2] Soft Confirmation Prompt (y/N).
 pub fn soft_confirm(message: &str) -> bool {
+    if crate::output::YES_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+        return true;
+    }
     if !std::io::stdin().is_terminal() {
         return false;
     }
@@ -35,7 +41,19 @@ pub fn soft_confirm(message: &str) -> bool {
 
 /// [C3] Password Set Prompt (with confirmation).
 pub fn password_set() -> Option<String> {
+    if let Ok(pw) = std::env::var("IROSH_PASSWORD") {
+        return Some(pw);
+    }
+
     if !std::io::stdin().is_terminal() {
+        // Try reading from stdin if piped
+        let mut buf = String::new();
+        if std::io::stdin().read_line(&mut buf).is_ok() {
+            let trimmed = buf.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
         return None;
     }
 
@@ -48,7 +66,19 @@ pub fn password_set() -> Option<String> {
 
 /// [C4] Password Input Prompt (single, hidden).
 pub fn password_input(prompt: &str) -> Option<String> {
+    if let Ok(pw) = std::env::var("IROSH_PASSWORD") {
+        return Some(pw);
+    }
+
     if !std::io::stdin().is_terminal() {
+        // Try reading from stdin if piped
+        let mut buf = String::new();
+        if std::io::stdin().read_line(&mut buf).is_ok() {
+            let trimmed = buf.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
         return None;
     }
 

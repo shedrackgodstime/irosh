@@ -29,9 +29,25 @@ pub async fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
             }
         }
         PasswdAction::Status => {
+            let is_set = storage::load_shadow_file(&state)?.is_some();
+
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct PasswdStatusResponse {
+                    is_set: bool,
+                    security: Option<&'static str>,
+                }
+
+                crate::output::print_success(PasswdStatusResponse {
+                    is_set,
+                    security: if is_set { Some("argon2id") } else { None },
+                });
+                return Ok(());
+            }
+
             println!("\n  Node Password Status");
             println!("  ----------------------------------------------------");
-            if storage::load_shadow_file(&state)?.is_some() {
+            if is_set {
                 println!("  Status:    ACTIVE");
                 println!("  Security:  Argon2id Hashed");
             } else {

@@ -35,6 +35,41 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
         }
         SystemAction::Status => {
             let status = service::query_service_status().await;
+
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct SystemStatusResponse {
+                    state: &'static str,
+                    manager: Option<String>,
+                    message: &'static str,
+                }
+
+                let response = match status {
+                    ServiceStatus::Active(ref manager) => SystemStatusResponse {
+                        state: "active",
+                        manager: Some(manager.clone()),
+                        message: "Service is running.",
+                    },
+                    ServiceStatus::Inactive => SystemStatusResponse {
+                        state: "inactive",
+                        manager: None,
+                        message: "Service is installed but not running.",
+                    },
+                    ServiceStatus::NotFound => SystemStatusResponse {
+                        state: "not_installed",
+                        manager: None,
+                        message: "Service is not installed.",
+                    },
+                    ServiceStatus::Unknown => SystemStatusResponse {
+                        state: "unknown",
+                        manager: None,
+                        message: "Service status is unknown.",
+                    },
+                };
+                crate::output::print_success(response);
+                return Ok(());
+            }
+
             eprintln!("\n  System Service Status");
             eprintln!("  ----------------------------------------------------");
             match status {

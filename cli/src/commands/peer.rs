@@ -11,6 +11,32 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
     match action {
         PeerAction::List => {
             let peers = storage::list_peers(state)?;
+
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct PeerInfoJson {
+                    name: String,
+                    ticket: String,
+                }
+                #[derive(serde::Serialize)]
+                struct PeerListResponse {
+                    total: usize,
+                    peers: Vec<PeerInfoJson>,
+                }
+                let response = PeerListResponse {
+                    total: peers.len(),
+                    peers: peers
+                        .into_iter()
+                        .map(|p| PeerInfoJson {
+                            name: p.name,
+                            ticket: p.ticket.to_string(),
+                        })
+                        .collect(),
+                };
+                crate::output::print_success(response);
+                return Ok(());
+            }
+
             if peers.is_empty() {
                 Ui::info(
                     "Your address book is empty. Add peers with 'irosh peer add' or use a wormhole code.",
@@ -67,18 +93,41 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
         }
         PeerAction::Info { name } => {
             if let Some(p) = storage::get_peer(state, &name)? {
+                let addr = p.ticket.to_addr();
+                let relay = addr.relay_urls().next().map(|r| r.to_string());
+
+                if ctx.args.json {
+                    #[derive(serde::Serialize)]
+                    struct PeerDetailResponse {
+                        name: String,
+                        node_id: String,
+                        ticket: String,
+                        relay: Option<String>,
+                    }
+                    crate::output::print_success(PeerDetailResponse {
+                        name: name.clone(),
+                        node_id: addr.id.to_string(),
+                        ticket: p.ticket.to_string(),
+                        relay: relay.clone(),
+                    });
+                    return Ok(());
+                }
+
                 println!("\n  Peer Detail: {}", name);
                 println!("  ----------------------------------------------------");
                 println!("  Alias:     {}", name);
-                println!("  Node ID:   {}", p.ticket.to_addr().id);
+                println!("  Node ID:   {}", addr.id);
                 println!("  Ticket:    {}", p.ticket);
 
-                let addr = p.ticket.to_addr();
-                if let Some(relay) = addr.relay_urls().next() {
-                    println!("  Relay:     {}", relay);
+                if let Some(r) = relay {
+                    println!("  Relay:     {}", r);
                 }
                 println!("  ----------------------------------------------------\n");
             } else {
+                if ctx.args.json {
+                    crate::output::print_error(&format!("Peer '{}' not found", name), "not_found");
+                    return Ok(());
+                }
                 Ui::error(&format!("Peer '{}' not found in address book.", name));
             }
         }

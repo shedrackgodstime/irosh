@@ -3,6 +3,7 @@
 mod commands;
 mod context;
 mod display;
+pub mod output;
 mod ui;
 
 use clap::Parser;
@@ -29,6 +30,14 @@ pub struct Args {
     /// Specific log level override (e.g. 'debug', 'trace')
     #[arg(long, global = true)]
     pub log: Option<String>,
+
+    /// Output results as JSON for automation
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Automatically confirm all danger prompts
+    #[arg(short = 'y', long, global = true)]
+    pub yes: bool,
 
     /// Shortcut target for connection (alias, ticket, or wormhole code)
     #[arg(index = 1)]
@@ -57,6 +66,13 @@ async fn main() {
     }
 
     let args = Args::parse();
+
+    if args.json {
+        crate::output::JSON_MODE.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    if args.yes {
+        crate::output::YES_MODE.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 
     // Initialize professional monochrome logging
     let filter = if args.verbose {
@@ -113,8 +129,12 @@ async fn main() {
     let ctx = match CliContext::new(args) {
         Ok(c) => c,
         Err(e) => {
-            use crate::ui::Ui;
-            Ui::error(&format!("Initialization failed: {}", e));
+            if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::output::print_error(&format!("Initialization failed: {}", e), "init_failed");
+            } else {
+                use crate::ui::Ui;
+                Ui::error(&format!("Initialization failed: {}", e));
+            }
             std::process::exit(1);
         }
     };
@@ -136,11 +156,15 @@ async fn main() {
     };
 
     if let Err(e) = res {
-        if ctx.args.verbose {
-            Ui::error(&format!("{:#}", e));
+        if ctx.args.json {
+            crate::output::print_error(&format!("{:#}", e), "command_failed");
         } else {
-            Ui::error(&format!("{}", e));
-            eprintln!("  Tip: Run with --verbose for full diagnostic details.");
+            if ctx.args.verbose {
+                Ui::error(&format!("{:#}", e));
+            } else {
+                Ui::error(&format!("{}", e));
+                eprintln!("  Tip: Run with --verbose for full diagnostic details.");
+            }
         }
         std::process::exit(1);
     }

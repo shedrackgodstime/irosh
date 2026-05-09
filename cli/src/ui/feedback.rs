@@ -1,5 +1,7 @@
+use crate::output::JSON_MODE;
 use console::{Emoji, style};
 use indicatif::{ProgressBar, ProgressStyle};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 /// [C7] Warning Banner (non-blocking).
@@ -12,6 +14,9 @@ pub fn warn(title: &str, message: &str) {
 
 /// [C8] Spinner / Progress Indicator.
 pub fn spinner(message: &str) -> ProgressBar {
+    if JSON_MODE.load(Ordering::SeqCst) {
+        return ProgressBar::hidden();
+    }
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
@@ -26,7 +31,9 @@ pub fn spinner(message: &str) -> ProgressBar {
 
 /// [C9] Success / Failure Banner.
 pub fn success(msg: &str) {
-    eprintln!("{} {}", style(Emoji("✔", "v")).green().bold(), msg);
+    if !JSON_MODE.load(Ordering::SeqCst) {
+        eprintln!("{} {}", style(Emoji("✔", "v")).green().bold(), msg);
+    }
 }
 
 pub fn error(msg: &str) {
@@ -34,13 +41,19 @@ pub fn error(msg: &str) {
 }
 
 pub fn info(msg: &str) {
-    eprintln!("{} {}", style(Emoji("ℹ", "i")).blue().bold(), msg);
+    if !JSON_MODE.load(Ordering::SeqCst) {
+        eprintln!("{} {}", style(Emoji("ℹ", "i")).blue().bold(), msg);
+    }
 }
 
 pub fn security(msg: &str) {
-    eprintln!("{} {}", style(Emoji("🔒", "*")).magenta().bold(), msg);
+    if !JSON_MODE.load(Ordering::SeqCst) {
+        eprintln!("{} {}", style(Emoji("🔒", "*")).magenta().bold(), msg);
+    }
 }
 
 pub fn p2p(msg: &str) {
-    eprintln!("{} {}", style(Emoji("📡", ">")).cyan().bold(), msg);
+    if !JSON_MODE.load(Ordering::SeqCst) {
+        eprintln!("{} {}", style(Emoji("📡", ">")).cyan().bold(), msg);
+    }
 }

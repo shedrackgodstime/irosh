@@ -11,6 +11,37 @@ pub async fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
     match action {
         TrustAction::List => {
             let keys = storage::load_all_authorized_clients(&state)?;
+
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct TrustedDeviceJson {
+                    identity: String,
+                    fingerprint: String,
+                    unknown: bool,
+                }
+                #[derive(serde::Serialize)]
+                struct TrustListResponse {
+                    total: usize,
+                    devices: Vec<TrustedDeviceJson>,
+                }
+                let response = TrustListResponse {
+                    total: keys.len(),
+                    devices: keys
+                        .into_iter()
+                        .map(|(id, k)| {
+                            let fingerprint = k.fingerprint(HashAlg::Sha256).to_string();
+                            TrustedDeviceJson {
+                                unknown: id == fingerprint,
+                                identity: id,
+                                fingerprint,
+                            }
+                        })
+                        .collect(),
+                };
+                crate::output::print_success(response);
+                return Ok(());
+            }
+
             if keys.is_empty() {
                 Ui::info("Vault is empty. No devices are trusted yet.");
                 return Ok(());

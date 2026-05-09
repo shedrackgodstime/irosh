@@ -16,6 +16,24 @@ pub async fn exec(action: IdentityAction, ctx: &CliContext) -> Result<()> {
             let identity = storage::load_or_generate_identity(options.state()).await?;
             let fingerprint = identity.ssh_key.public_key().fingerprint(HashAlg::Sha256);
 
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct IdentityShowResponse {
+                    node_id: String,
+                    fingerprint: String,
+                    ticket: String,
+                    kind: &'static str,
+                }
+
+                crate::output::print_success(IdentityShowResponse {
+                    node_id: ready.endpoint_id().to_string(),
+                    fingerprint: fingerprint.to_string(),
+                    ticket: ready.ticket().to_string(),
+                    kind: "local",
+                });
+                return Ok(());
+            }
+
             Ui::machine_identity(
                 ready.endpoint_id(),
                 &fingerprint.to_string(),
