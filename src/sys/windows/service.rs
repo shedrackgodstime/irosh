@@ -105,7 +105,10 @@ async fn install_service(state: Option<PathBuf>) -> Result<()> {
         };
 
         let _service = manager
-            .create_service(&service_info, windows_service::service::ServiceAccess::START)
+            .create_service(
+                &service_info,
+                windows_service::service::ServiceAccess::START,
+            )
             .map_err(|e| ServerError::ServiceManagement {
                 details: format!("failed to create service: {}", e),
             })?;
@@ -130,15 +133,21 @@ fn uninstall_service() -> Result<()> {
             })?;
 
     let service = manager
-        .open_service(SERVICE_NAME, windows_service::service::ServiceAccess::DELETE | windows_service::service::ServiceAccess::STOP)
+        .open_service(
+            SERVICE_NAME,
+            windows_service::service::ServiceAccess::DELETE
+                | windows_service::service::ServiceAccess::STOP,
+        )
         .map_err(|e| ServerError::ServiceManagement {
             details: format!("failed to open service: {}", e),
         })?;
 
     let _ = service.stop();
-    service.delete().map_err(|e| ServerError::ServiceManagement {
-        details: format!("failed to delete service: {}", e),
-    })?;
+    service
+        .delete()
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to delete service: {}", e),
+        })?;
 
     info!("Service '{}' uninstalled.", SERVICE_NAME);
     Ok(())
@@ -177,8 +186,8 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
     // Try IPC shutdown first for grace
     let state_dir = state.clone().unwrap_or_else(|| {
         dirs::home_dir()
-            .map(|h| h.join(".irosh"))
-            .unwrap_or_else(|| PathBuf::from(".irosh"))
+            .map(|h| h.join(".irosh").join("server"))
+            .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
     });
 
     let client = crate::IpcClient::new(state_dir);
@@ -191,17 +200,19 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
 
     // Fallback to SCM stop (Synchronous block to ensure non-Send handles are dropped)
     {
-        let manager =
-            ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT)
-                .map_err(|e| {
-                    let details = if format!("{:?}", e).contains("Access is denied") {
-                        "failed to open SCM: Access denied. Please run this command as Administrator."
-                            .to_string()
-                    } else {
-                        format!("failed to open SCM: {}", e)
-                    };
-                    ServerError::ServiceManagement { details }
-                })?;
+        let manager = ServiceManager::local_computer(
+            None::<&std::ffi::OsStr>,
+            ServiceManagerAccess::CONNECT,
+        )
+        .map_err(|e| {
+            let details = if format!("{:?}", e).contains("Access is denied") {
+                "failed to open SCM: Access denied. Please run this command as Administrator."
+                    .to_string()
+            } else {
+                format!("failed to open SCM: {}", e)
+            };
+            ServerError::ServiceManagement { details }
+        })?;
 
         let service = manager
             .open_service(SERVICE_NAME, windows_service::service::ServiceAccess::STOP)
@@ -267,13 +278,13 @@ pub fn run_service() -> std::result::Result<(), windows_service::Error> {
     windows_service::service_dispatcher::start(SERVICE_NAME, ffi_service_main)
 }
 
-fn irosh_service_main(_arguments: Vec<OsString>) {
-    if let Err(e) = irosh_service_run() {
+fn irosh_service_main(arguments: Vec<OsString>) {
+    if let Err(e) = irosh_service_run(arguments) {
         error!("Service execution failed: {:?}", e);
     }
 }
 
-fn irosh_service_run() -> Result<()> {
+fn irosh_service_run(arguments: Vec<OsString>) -> Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
@@ -313,12 +324,25 @@ fn irosh_service_run() -> Result<()> {
     })?;
 
     rt.block_on(async {
-        // We use default state for service for now
-        let state_dir = dirs::home_dir()
-            .map(|h| h.join(".irosh"))
-            .unwrap_or_else(|| PathBuf::from(".irosh"));
+        // Parse arguments to find state directory.
+        // Note: arguments[0] is the service name.
+        let mut state_dir = None;
+        let mut i = 1;
+        while i < arguments.len() {
+            if (arguments[i] == "--state" || arguments[i] == "-s") && i + 1 < arguments.len() {
+                state_dir = Some(PathBuf::from(&arguments[i + 1]));
+                break;
+            }
+            i += 1;
+        }
 
-        let state = crate::config::StateConfig::new(state_dir);
+        let state_root = state_dir.unwrap_or_else(|| {
+            dirs::home_dir()
+                .map(|h| h.join(".irosh").join("server"))
+                .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
+        });
+
+        let state = crate::config::StateConfig::new(state_root);
         let config = crate::storage::load_config(&state).unwrap_or_default();
 
         let mut options = crate::ServerOptions::new(state);

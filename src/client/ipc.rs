@@ -40,8 +40,6 @@ impl IpcClient {
 
         stream.write_all(&buf).await?;
         // Shutdown writing so the server knows the command is complete.
-        // For Unix sockets, we use shutdown(Write).
-        #[cfg(unix)]
         stream.shutdown().await?;
 
         let mut res_buf = Vec::new();

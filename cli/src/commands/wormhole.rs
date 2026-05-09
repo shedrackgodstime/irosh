@@ -16,8 +16,24 @@ pub async fn exec(
 
     let ipc_client = IpcClient::new(state_root.clone());
 
-    // Check if daemon is running
-    let daemon_running = ipc_client.send(IpcCommand::GetStatus).await.is_ok();
+    // Check if daemon is running. On slow machines (like Windows services starting up),
+    // we retry a few times if the service is known to be active but IPC fails.
+    let mut daemon_running = ipc_client.send(IpcCommand::GetStatus).await.is_ok();
+    if !daemon_running && ctx.args.state.is_none() {
+        if let irosh::sys::service::ServiceStatus::Active(_) =
+            irosh::sys::service::query_service_status().await
+        {
+            let mut retries = 0;
+            while retries < 6 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if ipc_client.send(IpcCommand::GetStatus).await.is_ok() {
+                    daemon_running = true;
+                    break;
+                }
+                retries += 1;
+            }
+        }
+    }
 
     match code.as_deref() {
         Some("status") => {

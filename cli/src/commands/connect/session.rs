@@ -14,7 +14,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
     let mut stderr = tokio::io::stderr();
     let mut transfer_context = TransferContext::new();
 
-    let _interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
 
     // On Unix, SIGWINCH tells us when the terminal is resized.
     // We use the same workaround as cli_old: wrap in Option and use
@@ -91,7 +91,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
             _ = async {
                 #[cfg(unix)]
                 if let Some(s) = sigwinch.as_mut() {
-                    s.recv().await;
+                    let _ = s.recv().await;
                 } else {
                     std::future::pending::<()>().await;
                 }
