@@ -63,6 +63,12 @@ async fn main() {
                 SetConsoleMode(stderr, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
             }
         }
+
+        // Attempt to run as a service. This will succeed if started by the SCM,
+        // and fail immediately if started from a console.
+        if irosh::sys::windows::service::run_service().is_ok() {
+            return;
+        }
     }
 
     let args = Args::parse();

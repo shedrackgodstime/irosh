@@ -1,196 +1,220 @@
-//! Windows implementation of service management (Task Scheduler).
+//! Windows implementation of service management (Service Control Manager).
 
 use crate::error::{Result, ServerError};
 use crate::sys::service::{ServiceAction, ServiceStatus};
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
+
+use std::ffi::OsString;
+use windows_service::{
+    define_windows_service,
+    service::{
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState,
+        ServiceStatus as WinServiceStatus, ServiceType,
+    },
+    service_control_handler::{self, ServiceControlHandlerResult},
+    service_manager::{ServiceManager, ServiceManagerAccess},
+};
+
+const SERVICE_NAME: &str = "irosh";
+const SERVICE_DISPLAY_NAME: &str = "Irosh P2P SSH Service";
 
 pub async fn query_service_status() -> ServiceStatus {
-    let output = std::process::Command::new("schtasks")
-        .args(["/query", "/tn", "irosh", "/fo", "LIST"])
-        .output();
+    let manager = match ServiceManager::local_computer(
+        None::<&std::ffi::OsStr>,
+        ServiceManagerAccess::CONNECT,
+    ) {
+        Ok(m) => m,
+        Err(_) => return ServiceStatus::Unknown,
+    };
 
-    match output {
-        Ok(out) if out.status.success() => {
-            let text = String::from_utf8_lossy(&out.stdout);
-            if text.contains("Running") {
-                ServiceStatus::Active("Task Scheduler".to_string())
-            } else {
-                ServiceStatus::Inactive
-            }
-        }
-        Ok(_) => ServiceStatus::NotFound,
+    let service = match manager.open_service(
+        SERVICE_NAME,
+        windows_service::service::ServiceAccess::QUERY_STATUS,
+    ) {
+        Ok(s) => s,
+        Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(1060) => {
+            return ServiceStatus::NotFound;
+        } // ERROR_SERVICE_DOES_NOT_EXIST
+        Err(_) => return ServiceStatus::Unknown,
+    };
+
+    match service.query_status() {
+        Ok(status) => match status.current_state {
+            ServiceState::Running => ServiceStatus::Active("SCM".to_string()),
+            ServiceState::Stopped => ServiceStatus::Inactive,
+            ServiceState::StartPending
+            | ServiceState::StopPending
+            | ServiceState::ContinuePending
+            | ServiceState::PausePending
+            | ServiceState::Paused => ServiceStatus::Active("SCM (transitioning)".to_string()),
+        },
         Err(_) => ServiceStatus::Unknown,
     }
 }
 
 pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Result<()> {
+    match action {
+        ServiceAction::Install => install_service(state).await,
+        ServiceAction::Uninstall => uninstall_service(),
+        ServiceAction::Start => start_service(),
+        ServiceAction::Stop => stop_service(state).await,
+    }
+}
+
+async fn install_service(state: Option<PathBuf>) -> Result<()> {
     let exe = std::env::current_exe().map_err(|e| ServerError::ServiceManagement {
         details: format!("failed to get current exe path: {}", e),
     })?;
-    let exe_str = exe.display().to_string();
 
+    // Perform SCM installation in a synchronous scope to ensure non-Send types are dropped
+    {
+        let manager = ServiceManager::local_computer(
+            None::<&std::ffi::OsStr>,
+            ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+        )
+        .map_err(|e| {
+            let details = if format!("{:?}", e).contains("Access is denied") {
+                "failed to open SCM: Access denied. Please run this command as Administrator."
+                    .to_string()
+            } else {
+                format!("failed to open SCM: {}", e)
+            };
+            ServerError::ServiceManagement { details }
+        })?;
+
+        let mut launch_arguments: Vec<OsString> = vec!["host".into()];
+        if let Some(p) = state {
+            launch_arguments.push("--state".into());
+            launch_arguments.push(p.into_os_string());
+        }
+
+        let service_info = windows_service::service::ServiceInfo {
+            name: SERVICE_NAME.to_string().into(),
+            display_name: SERVICE_DISPLAY_NAME.to_string().into(),
+            service_type: ServiceType::OWN_PROCESS,
+            start_type: windows_service::service::ServiceStartType::AutoStart,
+            error_control: windows_service::service::ServiceErrorControl::Normal,
+            executable_path: exe,
+            dependencies: Vec::new(),
+            account_name: None,
+            account_password: None,
+            launch_arguments,
+        };
+
+        let _service = manager
+            .create_service(&service_info, windows_service::service::ServiceAccess::START)
+            .map_err(|e| ServerError::ServiceManagement {
+                details: format!("failed to create service: {}", e),
+            })?;
+    }
+
+    info!("Service '{}' installed successfully.", SERVICE_NAME);
+    start_service()?;
+    Ok(())
+}
+
+fn uninstall_service() -> Result<()> {
+    let manager =
+        ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT)
+            .map_err(|e| {
+                let details = if format!("{:?}", e).contains("Access is denied") {
+                    "failed to open SCM: Access denied. Please run this command as Administrator."
+                        .to_string()
+                } else {
+                    format!("failed to open SCM: {}", e)
+                };
+                ServerError::ServiceManagement { details }
+            })?;
+
+    let service = manager
+        .open_service(SERVICE_NAME, windows_service::service::ServiceAccess::DELETE | windows_service::service::ServiceAccess::STOP)
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to open service: {}", e),
+        })?;
+
+    let _ = service.stop();
+    service.delete().map_err(|e| ServerError::ServiceManagement {
+        details: format!("failed to delete service: {}", e),
+    })?;
+
+    info!("Service '{}' uninstalled.", SERVICE_NAME);
+    Ok(())
+}
+
+fn start_service() -> Result<()> {
+    let manager =
+        ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT)
+            .map_err(|e| {
+                let details = if format!("{:?}", e).contains("Access is denied") {
+                    "failed to open SCM: Access denied. Please run this command as Administrator."
+                        .to_string()
+                } else {
+                    format!("failed to open SCM: {}", e)
+                };
+                ServerError::ServiceManagement { details }
+            })?;
+
+    let service = manager
+        .open_service(SERVICE_NAME, windows_service::service::ServiceAccess::START)
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to open service: {}", e),
+        })?;
+
+    service
+        .start::<&std::ffi::OsStr>(&[])
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to start service: {}", e),
+        })?;
+
+    info!("Service '{}' started.", SERVICE_NAME);
+    Ok(())
+}
+
+async fn stop_service(state: Option<PathBuf>) -> Result<()> {
+    // Try IPC shutdown first for grace
     let state_dir = state.clone().unwrap_or_else(|| {
         dirs::home_dir()
             .map(|h| h.join(".irosh"))
             .unwrap_or_else(|| PathBuf::from(".irosh"))
     });
-    let log_path = state_dir.join("daemon.log");
 
-    let state_arg = if let Some(p) = state {
-        format!("/state \"{}\"", p.display())
-    } else {
-        String::new()
-    };
-
-    let task_name = "irosh";
-
-    match action {
-        ServiceAction::Install => {
-            // To capture output on Windows Task Scheduler, we wrap the command in cmd /c
-            // and redirect stdout/stderr to a log file.
-            let cmd_processor = "C:\\Windows\\System32\\cmd.exe";
-            let cmd_args = format!(
-                r#"/c "{}" host {} >> "{}" 2>&1"#,
-                exe_str,
-                state_arg,
-                log_path.display()
-            );
-
-            let task_xml = format!(
-                r#"<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <Boot />
-    <Logon />
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>true</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
-    <RestartCount>3</RestartCount>
-    <RestartInterval>PT1M</RestartInterval>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>{}</Command>
-      <Arguments>{}</Arguments>
-    </Exec>
-  </Actions>
-</Task>"#,
-                cmd_processor, cmd_args
-            );
-
-            let temp_dir = std::env::temp_dir();
-            let xml_path = temp_dir.join("irosh-task.xml");
-
-            {
-                use std::io::Write;
-                let mut file = std::fs::File::create(&xml_path).map_err(|e| {
-                    ServerError::ServiceManagement {
-                        details: format!("failed to create temp xml file: {}", e),
-                    }
-                })?;
-                file.write_all(&[0xFF, 0xFE])
-                    .map_err(|e| ServerError::ServiceManagement {
-                        details: format!("failed to write BOM to xml file: {}", e),
-                    })?; // UTF-16 LE BOM
-                for c in task_xml.encode_utf16() {
-                    let bytes = c.to_le_bytes();
-                    file.write_all(&bytes)
-                        .map_err(|e| ServerError::ServiceManagement {
-                            details: format!("failed to write UTF-16 content to xml file: {}", e),
-                        })?;
-                }
-            }
-
-            std::process::Command::new("schtasks")
-                .args([
-                    "/create",
-                    "/tn",
-                    task_name,
-                    "/xml",
-                    &xml_path.display().to_string(),
-                    "/f",
-                ])
-                .status()
-                .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("schtasks /create failed: {}", e),
-                })?;
-
-            let _ = std::fs::remove_file(&xml_path);
-
-            info!("Windows Task Scheduler task created: {}", task_name);
-            info!("Logs will be captured in: {}", log_path.display());
-
-            // Start the service immediately after installation
-            let _ = std::process::Command::new("schtasks")
-                .args(["/run", "/tn", task_name])
-                .status();
-
-            info!("Service started.");
-        }
-        ServiceAction::Uninstall => {
-            let _ = std::process::Command::new("schtasks")
-                .args(["/delete", "/tn", task_name, "/f"])
-                .status();
-            info!("Task Scheduler task removed.");
-        }
-        ServiceAction::Start => {
-            std::process::Command::new("schtasks")
-                .args(["/run", "/tn", task_name])
-                .status()
-                .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("schtasks /run failed: {}", e),
-                })?;
-            info!("Task started.");
-        }
-        ServiceAction::Stop => {
-            // First try a graceful shutdown via IPC
-            let client = crate::IpcClient::new(state_dir.clone());
-            if let Ok(res) = client.send(crate::server::ipc::IpcCommand::Shutdown).await {
-                match res {
-                    crate::server::ipc::IpcResponse::Ok => {
-                        info!("Graceful shutdown requested via IPC.");
-                        return Ok(());
-                    }
-                    crate::server::ipc::IpcResponse::Error(e) => {
-                        warn!("IPC shutdown failed: {}. Falling back to taskkill.", e);
-                    }
-                    _ => {}
-                }
-            }
-
-            // Fallback: Taskkill ensures the cmd process and its child irosh are killed.
-            let _ = std::process::Command::new("taskkill")
-                .args(["/IM", "irosh.exe", "/F"])
-                .status();
-            info!("Task stopped.");
+    let client = crate::IpcClient::new(state_dir);
+    if let Ok(res) = client.send(crate::server::ipc::IpcCommand::Shutdown).await {
+        if matches!(res, crate::server::ipc::IpcResponse::Ok) {
+            info!("Graceful shutdown requested via IPC.");
+            return Ok(());
         }
     }
 
+    // Fallback to SCM stop (Synchronous block to ensure non-Send handles are dropped)
+    {
+        let manager =
+            ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT)
+                .map_err(|e| {
+                    let details = if format!("{:?}", e).contains("Access is denied") {
+                        "failed to open SCM: Access denied. Please run this command as Administrator."
+                            .to_string()
+                    } else {
+                        format!("failed to open SCM: {}", e)
+                    };
+                    ServerError::ServiceManagement { details }
+                })?;
+
+        let service = manager
+            .open_service(SERVICE_NAME, windows_service::service::ServiceAccess::STOP)
+            .map_err(|e| ServerError::ServiceManagement {
+                details: format!("failed to open service: {}", e),
+            })?;
+
+        service.stop().map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to stop service: {}", e),
+        })?;
+    }
+
+    info!("Service '{}' stopped.", SERVICE_NAME);
     Ok(())
 }
 
@@ -201,10 +225,7 @@ pub async fn view_logs(follow: bool) -> Result<()> {
     let log_path = state_dir.join("daemon.log");
 
     if !log_path.exists() {
-        info!(
-            "No log file found at {}. Is the service running?",
-            log_path.display()
-        );
+        info!("No log file found at {}.", log_path.display());
         return Ok(());
     }
 
@@ -234,6 +255,119 @@ pub async fn view_logs(follow: bool) -> Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+// --- Service Dispatcher Logic ---
+
+define_windows_service!(ffi_service_main, irosh_service_main);
+
+pub fn run_service() -> std::result::Result<(), windows_service::Error> {
+    windows_service::service_dispatcher::start(SERVICE_NAME, ffi_service_main)
+}
+
+fn irosh_service_main(_arguments: Vec<OsString>) {
+    if let Err(e) = irosh_service_run() {
+        error!("Service execution failed: {:?}", e);
+    }
+}
+
+fn irosh_service_run() -> Result<()> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+    let event_handler = move |control_event| -> ServiceControlHandlerResult {
+        match control_event {
+            ServiceControl::Stop | ServiceControl::Interrogate => {
+                let _ = tx.blocking_send(());
+                ServiceControlHandlerResult::NoError
+            }
+            _ => ServiceControlHandlerResult::NotImplemented,
+        }
+    };
+
+    let status_handle =
+        service_control_handler::register(SERVICE_NAME, event_handler).map_err(|e| {
+            ServerError::ServiceManagement {
+                details: format!("failed to register service handler: {}", e),
+            }
+        })?;
+
+    status_handle
+        .set_service_status(WinServiceStatus {
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: ServiceState::Running,
+            controls_accepted: ServiceControlAccept::STOP,
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: std::time::Duration::default(),
+            process_id: None,
+        })
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to set service status: {}", e),
+        })?;
+
+    // Start a tokio runtime for the server
+    let rt = tokio::runtime::Runtime::new().map_err(|e| ServerError::ServiceManagement {
+        details: format!("failed to start tokio runtime: {}", e),
+    })?;
+
+    rt.block_on(async {
+        // We use default state for service for now
+        let state_dir = dirs::home_dir()
+            .map(|h| h.join(".irosh"))
+            .unwrap_or_else(|| PathBuf::from(".irosh"));
+
+        let state = crate::config::StateConfig::new(state_dir);
+        let config = crate::storage::load_config(&state).unwrap_or_default();
+
+        let mut options = crate::ServerOptions::new(state);
+        if let Some(relay_url) = &config.relay_url {
+            if let Ok(mode) = crate::transport::iroh::parse_relay_mode(relay_url) {
+                options = options.relay_mode(mode, Some(relay_url.clone()));
+            }
+        }
+        if let Some(secret) = &config.stealth_secret {
+            options = options.secret(secret);
+        }
+
+        let (_, server) =
+            crate::Server::bind(options)
+                .await
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("server bind failed: {}", e),
+                })?;
+
+        let shutdown = server.shutdown_handle();
+
+        tokio::select! {
+            _ = rx.recv() => {
+                info!("Service stop requested via SCM.");
+                shutdown.close().await;
+            }
+            res = server.run() => {
+                if let Err(e) = res {
+                    error!("Server run loop exited with error: {}", e);
+                }
+            }
+        }
+
+        Ok::<(), ServerError>(())
+    })?;
+
+    status_handle
+        .set_service_status(WinServiceStatus {
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: ServiceState::Stopped,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: std::time::Duration::default(),
+            process_id: None,
+        })
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to set service status: {}", e),
+        })?;
 
     Ok(())
 }

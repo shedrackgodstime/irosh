@@ -14,7 +14,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
     let mut stderr = tokio::io::stderr();
     let mut transfer_context = TransferContext::new();
 
-    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let _interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
 
     // On Unix, SIGWINCH tells us when the terminal is resized.
     // We use the same workaround as cli_old: wrap in Option and use
@@ -30,12 +30,10 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
 
     loop {
         tokio::select! {
-            // DATA from stdin: use read_data() which uses readable_mut().await
-            // This is the correct high-level Tokio API that properly re-registers
-            // the waker on each select! iteration, preventing the terminal freeze.
-            data = stdin.read_data() => {
-                match data {
-                    Some(data) => {
+            // EVENTS from stdin: keystrokes OR resizes
+            event = stdin.next_event() => {
+                match event {
+                    Some(irosh::sys::TerminalEvent::Data(data)) => {
                         let (to_remote, to_local, actions) =
                             input_engine.process_local(&data);
 
@@ -43,8 +41,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                             session.send(&to_remote).await?;
                         }
 
-                        // Local echo/erase feedback (e.g. showing `~` when armed,
-                        // then erasing it once the escape command is resolved).
+                        // Local echo/erase feedback
                         if !to_local.is_empty() {
                             stdout.write_all(&to_local).await?;
                             stdout.flush().await?;
@@ -64,9 +61,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                     // Send \r so the remote shell reprints its prompt.
                                     let _ = session.send(b"\r").await;
                                 }
-                                EscapeAction::CommandPrompt => {
-                                    // Mode switch and prompt printing now handled internally by input_engine
-                                }
+                                EscapeAction::CommandPrompt => {}
                                 EscapeAction::RunLocal(cmd) => {
                                     if !execute_local_command(&mut session, &mut input_engine, &mut stdout, &mut stdin, &mut transfer_context, cmd).await? {
                                         return Ok(());
@@ -82,6 +77,9 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                             }
                         }
                     }
+                    Some(irosh::sys::TerminalEvent::Resize(size)) => {
+                        let _ = session.resize(size).await;
+                    }
                     None => {
                         session.eof().await?;
                         break;
@@ -89,7 +87,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                 }
             }
 
-            // RESIZE: on Unix via SIGWINCH; arm never fires on Windows.
+            // RESIZE: on Unix via SIGWINCH (redundant if AsyncStdin handles it, but kept for legacy/safety)
             _ = async {
                 #[cfg(unix)]
                 if let Some(s) = sigwinch.as_mut() {

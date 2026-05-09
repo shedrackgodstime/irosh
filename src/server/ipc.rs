@@ -166,7 +166,11 @@ impl IpcServer {
             loop {
                 let mut server = ServerOptions::new()
                     .first_pipe_instance(true)
-                    .create(&*path.to_string_lossy())?;
+                    .create(&*path.to_string_lossy())
+                    .map_err(|e| IpcError::BindFailed {
+                        path: path.clone(),
+                        source: e,
+                    })?;
 
                 server.connect().await?;
 

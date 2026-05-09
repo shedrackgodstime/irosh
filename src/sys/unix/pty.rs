@@ -114,16 +114,27 @@ impl AsyncStdin {
     /// "terminal freeze" caused by dropped wakers on edge-triggered epoll.
     ///
     /// Returns `None` on EOF.
-    pub async fn read_data(&mut self) -> Option<Vec<u8>> {
+    /// Reads the next terminal event (Data or Resize).
+    pub async fn next_event(&mut self) -> Option<TerminalEvent> {
         use std::io::Read;
         loop {
             let mut guard = self.inner.readable_mut().await.ok()?;
             let mut buf = [0u8; 4096];
             match guard.try_io(|inner| inner.get_ref().read(&mut buf)) {
                 Ok(Ok(0)) => return None,
-                Ok(Ok(n)) => return Some(buf[..n].to_vec()),
+                Ok(Ok(n)) => return Some(TerminalEvent::Data(buf[..n].to_vec())),
                 Ok(Err(_)) => return None,
                 Err(_would_block) => continue,
+            }
+        }
+    }
+
+    /// Reads the next chunk of raw stdin bytes.
+    pub async fn read_data(&mut self) -> Option<Vec<u8>> {
+        loop {
+            match self.next_event().await? {
+                TerminalEvent::Data(data) => return Some(data),
+                TerminalEvent::Resize(_) => continue,
             }
         }
     }

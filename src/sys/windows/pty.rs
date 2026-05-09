@@ -154,18 +154,39 @@ impl AsyncStdin {
                             KEY_EVENT => {
                                 let key = unsafe { record.Event.KeyEvent };
                                 if key.bKeyDown != 0 {
-                                    // Use the Unicode character if available
-                                    let c = unsafe { key.uChar.UnicodeChar };
-                                    if c != 0 {
-                                        let mut utf8 = [0u8; 4];
-                                        let s = char::from_u32(c as u32)
-                                            .unwrap_or(' ')
-                                            .encode_utf8(&mut utf8);
+                                    // 1. Handle Virtual Key translation for VT sequences
+                                    let vt_seq = match key.wVirtualKeyCode as u32 {
+                                        0x26 => Some("\x1b[A"),  // Up
+                                        0x28 => Some("\x1b[B"),  // Down
+                                        0x27 => Some("\x1b[C"),  // Right
+                                        0x25 => Some("\x1b[D"),  // Left
+                                        0x24 => Some("\x1b[H"),  // Home
+                                        0x23 => Some("\x1b[F"),  // End
+                                        0x2E => Some("\x1b[3~"), // Delete
+                                        _ => None,
+                                    };
+
+                                    if let Some(seq) = vt_seq {
                                         if tx
-                                            .send(TerminalEvent::Data(s.as_bytes().to_vec()))
+                                            .send(TerminalEvent::Data(seq.as_bytes().to_vec()))
                                             .is_err()
                                         {
                                             return;
+                                        }
+                                    } else {
+                                        // 2. Fallback to Unicode char if available
+                                        let c = unsafe { key.uChar.UnicodeChar };
+                                        if c != 0 {
+                                            let mut utf8 = [0u8; 4];
+                                            let s = char::from_u32(c as u32)
+                                                .unwrap_or(' ')
+                                                .encode_utf8(&mut utf8);
+                                            if tx
+                                                .send(TerminalEvent::Data(s.as_bytes().to_vec()))
+                                                .is_err()
+                                            {
+                                                return;
+                                            }
                                         }
                                     }
                                 }
@@ -183,14 +204,18 @@ impl AsyncStdin {
         Ok(Self { rx })
     }
 
+    /// Reads the next terminal event (Data or Resize).
+    pub async fn next_event(&mut self) -> Option<TerminalEvent> {
+        self.rx.recv().await
+    }
+
     /// Reads the next chunk of raw input data.
-    /// On Windows, this receives from the background input thread's channel.
     /// Returns `None` when the channel is closed (process exiting).
     pub async fn read_data(&mut self) -> Option<Vec<u8>> {
         loop {
             match self.rx.recv().await? {
                 TerminalEvent::Data(data) => return Some(data),
-                TerminalEvent::Resize(_) => continue, // resize handled separately
+                TerminalEvent::Resize(_) => continue, // resize handled separately via next_event
             }
         }
     }
