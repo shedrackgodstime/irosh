@@ -25,6 +25,11 @@ Opening the command line will provide an `irosh> ` prompt for dynamic session ma
 *   `-KL[bind_address:]port` — Cancel local forward.
 *   `-KR[bind_address:]port` — Cancel remote forward.
 *   `-KD[bind_address:]port` — Cancel dynamic forward.
+*   `lls [path]` — List local files for transfer.
+*   `lcd <path>` — Change local transfer directory.
+*   `lpwd` — Show current local transfer directory.
+*   `put [-r] <local> [remote]` — Upload file/dir to peer.
+*   `get [-r] <remote> [local]` — Download file/dir from peer.
 
 ---
 

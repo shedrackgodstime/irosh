@@ -37,6 +37,9 @@ pub enum Commands {
         /// Forward a local port to a remote address (L:port:R:port)
         #[arg(long, short = 'L')]
         forward: Option<String>,
+        /// Secret for stealth mode
+        #[arg(long, short = 's')]
+        secret: Option<String>,
     },
 
     /// Run the server in the foreground
@@ -113,12 +116,14 @@ impl CommandExec for Commands {
                 code,
                 ticket,
                 forward,
+                secret,
             } => {
                 connect::exec(
                     target.clone(),
                     code.clone(),
                     ticket.clone(),
                     forward.clone(),
+                    secret.clone(),
                     ctx,
                 )
                 .await

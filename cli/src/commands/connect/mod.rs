@@ -5,7 +5,14 @@ use irosh::sys::{RawTerminal, current_terminal_size};
 use irosh::{Client, ClientOptions, PtyOptions};
 use std::io::IsTerminal;
 
+mod ansi;
+mod completion;
+mod editor;
+mod history;
+mod input;
+mod prompt;
 mod session;
+mod transfer;
 mod tunnels;
 
 #[derive(Debug, Clone)]
@@ -27,7 +34,7 @@ use crate::context::CliContext;
 
 /// Entry point for the shortcut 'irosh <target>'
 pub async fn exec_shortcut(target: &str, ctx: &CliContext) -> Result<()> {
-    exec_internal(Some(target.to_string()), None, None, None, ctx).await
+    exec_internal(Some(target.to_string()), None, None, None, None, ctx).await
 }
 
 /// Entry point for 'irosh connect <target>'
@@ -36,9 +43,10 @@ pub async fn exec(
     code: Option<String>,
     ticket: Option<String>,
     forward: Option<String>,
+    secret: Option<String>,
     ctx: &CliContext,
 ) -> Result<()> {
-    exec_internal(target, code, ticket, forward, ctx).await
+    exec_internal(target, code, ticket, forward, secret, ctx).await
 }
 
 async fn exec_internal(
@@ -46,6 +54,7 @@ async fn exec_internal(
     code_str: Option<String>,
     ticket_str: Option<String>,
     forward_str: Option<String>,
+    secret_str: Option<String>,
     ctx: &CliContext,
 ) -> Result<()> {
     let state = ctx.state.clone();
@@ -54,7 +63,7 @@ async fn exec_internal(
     let mut options = ClientOptions::new(state.clone());
 
     // Apply global config overrides
-    if let Some(secret) = &config.stealth_secret {
+    if let Some(secret) = secret_str.or(config.stealth_secret) {
         options = options.secret(secret);
     }
 
@@ -214,5 +223,7 @@ async fn exec_internal(
     // Handle port forwarding
     tunnels::setup_forwarding(&mut session, forward_str).await?;
 
-    session::drive_session(session).await
+    let input_engine = input::InputEngine::new(&state);
+
+    session::drive_session(session, input_engine).await
 }

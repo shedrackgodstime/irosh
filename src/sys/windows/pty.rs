@@ -183,7 +183,19 @@ impl AsyncStdin {
         Ok(Self { rx })
     }
 
-    /// Polls for the next terminal event (data or resize).
+    /// Reads the next chunk of raw input data.
+    /// On Windows, this receives from the background input thread's channel.
+    /// Returns `None` when the channel is closed (process exiting).
+    pub async fn read_data(&mut self) -> Option<Vec<u8>> {
+        loop {
+            match self.rx.recv().await? {
+                TerminalEvent::Data(data) => return Some(data),
+                TerminalEvent::Resize(_) => continue, // resize handled separately
+            }
+        }
+    }
+
+    /// Low-level poll function. Prefer `read_data()` for use in `tokio::select!`.
     pub fn poll_next(
         &mut self,
         cx: &mut std::task::Context<'_>,

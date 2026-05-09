@@ -2383,6 +2383,7 @@ dependencies = [
  "rand 0.9.4",
  "serde_json",
  "shell-words",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
