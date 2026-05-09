@@ -209,15 +209,9 @@ pub async fn handle_put_command(
             }
         }) => res,
         _ = async {
-            loop {
-                // Poll stdin via our non-blocking `read_data()` wrapper to watch for cancellation
-                if let Some(data) = stdin.read_data().await {
-                    if data.contains(&0x03) { // Ctrl+C
-                        break;
-                    }
-                } else {
-                    break; // EOF
-                }
+            // Poll stdin to watch for Ctrl+C cancellation; EOF also terminates.
+            while let Some(data) = stdin.read_data().await {
+                if data.contains(&0x03) { break; } // Ctrl+C
             }
         } => {
             return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
@@ -237,20 +231,61 @@ pub async fn handle_put_command(
             if let Some(pb) = pb {
                 pb.finish_and_clear();
             }
-            let msg = format!("{:#}", err);
-            if msg.contains("recursive flag not set") {
-                stdout.write_all(format!("\x1b[2K\rUpload failed. Error: '{}' is a directory (use -r for recursive)", local_name).as_bytes()).await?;
-            } else if msg.contains("not found") {
-                stdout
-                    .write_all(
-                        format!(
-                            "\x1b[2K\rUpload failed. Error: '{}' not found on local",
-                            local_name
-                        )
-                        .as_bytes(),
-                    )
-                    .await?;
-            } else {
+
+            use irosh::error::{ClientError, IroshError};
+            let mut handled = false;
+
+            if let IroshError::Client(client_err) = &err {
+                match client_err {
+                    ClientError::TransferTargetInvalid { reason }
+                        if reason.contains("recursive flag not set") =>
+                    {
+                        stdout
+                            .write_all(
+                                format!(
+                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory (use -r for recursive)",
+                                    local_name
+                                )
+                                .as_bytes(),
+                            )
+                            .await?;
+                        handled = true;
+                    }
+                    ClientError::TransferRejected { failure }
+                        if failure.code
+                            == irosh::transport::transfer::TransferFailureCode::IsDirectory =>
+                    {
+                        stdout
+                            .write_all(
+                                format!(
+                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory on remote (use -r for recursive)",
+                                    remote_path.display()
+                                )
+                                .as_bytes(),
+                            )
+                            .await?;
+                        handled = true;
+                    }
+                    ClientError::FileIo { source, .. }
+                        if source.kind() == std::io::ErrorKind::NotFound =>
+                    {
+                        stdout
+                            .write_all(
+                                format!(
+                                    "\x1b[2K\rUpload failed. Error: '{}' not found on local",
+                                    local_name
+                                )
+                                .as_bytes(),
+                            )
+                            .await?;
+                        handled = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            if !handled {
+                let msg = format!("{:#}", err);
                 stdout
                     .write_all(format!("\x1b[2K\rUpload failed. Error: {}", msg).as_bytes())
                     .await?;
@@ -319,15 +354,9 @@ pub async fn handle_get_command(
             }
         }) => res,
         _ = async {
-            loop {
-                // Poll stdin via our non-blocking `read_data()` wrapper to watch for cancellation
-                if let Some(data) = stdin.read_data().await {
-                    if data.contains(&0x03) { // Ctrl+C
-                        break;
-                    }
-                } else {
-                    break; // EOF
-                }
+            // Poll stdin to watch for Ctrl+C cancellation; EOF also terminates.
+            while let Some(data) = stdin.read_data().await {
+                if data.contains(&0x03) { break; } // Ctrl+C
             }
         } => {
             return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
@@ -347,20 +376,62 @@ pub async fn handle_get_command(
             if let Some(pb) = pb {
                 pb.finish_and_clear();
             }
-            let msg = format!("{:#}", err);
-            if msg.contains("recursive flag not set") {
-                stdout.write_all(format!("\x1b[2K\rDownload failed. Error: '{}' is a directory (use -r for recursive)", remote_name).as_bytes()).await?;
-            } else if msg.contains("not found") {
-                stdout
-                    .write_all(
-                        format!(
-                            "\x1b[2K\rDownload failed. Error: '{}' not found on remote",
-                            remote_name
-                        )
-                        .as_bytes(),
-                    )
-                    .await?;
-            } else {
+
+            use irosh::error::{ClientError, IroshError};
+            let mut handled = false;
+
+            if let IroshError::Client(client_err) = &err {
+                match client_err {
+                    ClientError::TransferTargetInvalid { reason }
+                        if reason.contains("recursive flag not set") =>
+                    {
+                        stdout
+                            .write_all(
+                                format!(
+                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory (use -r for recursive)",
+                                    remote_name
+                                )
+                                .as_bytes(),
+                            )
+                            .await?;
+                        handled = true;
+                    }
+                    ClientError::TransferRejected { failure }
+                        if failure.code
+                            == irosh::transport::transfer::TransferFailureCode::IsDirectory =>
+                    {
+                        stdout
+                            .write_all(
+                                format!(
+                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory on remote (use -r for recursive)",
+                                    remote_name
+                                )
+                                .as_bytes(),
+                            )
+                            .await?;
+                        handled = true;
+                    }
+                    ClientError::TransferRejected { failure }
+                        if failure.code
+                            == irosh::transport::transfer::TransferFailureCode::NotFound =>
+                    {
+                        stdout
+                            .write_all(
+                                format!(
+                                    "\x1b[2K\rDownload failed. Error: '{}' not found on remote",
+                                    remote_name
+                                )
+                                .as_bytes(),
+                            )
+                            .await?;
+                        handled = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            if !handled {
+                let msg = format!("{:#}", err);
                 stdout
                     .write_all(format!("\x1b[2K\rDownload failed. Error: {}", msg).as_bytes())
                     .await?;

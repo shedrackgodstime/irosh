@@ -118,11 +118,8 @@ impl Session {
             .map_err(TransportError::from)?
         {
             TransferFrame::GetReady(ready) => (ready.size, ready.mode),
-            TransferFrame::Error(details) => {
-                return Err(ClientError::TransferRejected {
-                    details: format!("remote rejected file {:?}: {}", remote, details),
-                }
-                .into());
+            TransferFrame::Error(failure) => {
+                return Err(ClientError::TransferRejected { failure }.into());
             }
             other => {
                 return Err(ClientError::DownloadFailed {
@@ -178,15 +175,9 @@ impl Session {
                     }
                     break;
                 }
-                TransferFrame::Error(details) => {
+                TransferFrame::Error(failure) => {
                     let _ = tokio::fs::remove_file(&temp_path).await;
-                    return Err(ClientError::TransferRejected {
-                        details: format!(
-                            "remote error during data stream for {:?}: {}",
-                            remote, details
-                        ),
-                    }
-                    .into());
+                    return Err(ClientError::TransferRejected { failure }.into());
                 }
                 other => {
                     let _ = tokio::fs::remove_file(&temp_path).await;
@@ -256,11 +247,8 @@ impl Session {
             .map_err(TransportError::from)?
         {
             TransferFrame::GetReady(_) => {}
-            TransferFrame::Error(details) => {
-                return Err(ClientError::TransferRejected {
-                    details: details.to_string(),
-                }
-                .into());
+            TransferFrame::Error(failure) => {
+                return Err(ClientError::TransferRejected { failure }.into());
             }
             other => {
                 return Err(ClientError::DownloadFailed {
@@ -351,11 +339,8 @@ impl Session {
                     let _ = complete;
                     return Ok(());
                 }
-                TransferFrame::Error(details) => {
-                    return Err(ClientError::TransferRejected {
-                        details: details.to_string(),
-                    }
-                    .into());
+                TransferFrame::Error(failure) => {
+                    return Err(ClientError::TransferRejected { failure }.into());
                 }
                 other => {
                     return Err(ClientError::DownloadFailed {
@@ -386,11 +371,8 @@ impl Session {
             .map_err(crate::error::TransportError::from)?
         {
             crate::transport::transfer::TransferFrame::ExistsResponse(res) => Ok(res.is_dir),
-            crate::transport::transfer::TransferFrame::Error(e) => {
-                Err(crate::error::ClientError::TransferRejected {
-                    details: e.to_string(),
-                }
-                .into())
+            crate::transport::transfer::TransferFrame::Error(failure) => {
+                Err(crate::error::ClientError::TransferRejected { failure }.into())
             }
             other => Err(crate::error::ClientError::DownloadFailed {
                 details: format!("unexpected frame during is_dir check: {:?}", other),

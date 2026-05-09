@@ -26,6 +26,7 @@ pub enum LocalCommand {
         local: Option<String>,
         recursive: bool,
     },
+    Unknown(String),
 }
 
 /// Parses a line typed at the `irosh>` prompt into a `LocalCommand`.
@@ -40,15 +41,15 @@ pub fn parse_local_command(buf: &[u8]) -> Option<LocalCommand> {
     let keyword = parts.first()?.as_str();
 
     match keyword {
-        "help" | "?" => Some(LocalCommand::Help),
-        "lpwd" | "pwd" => Some(LocalCommand::Lpwd),
-        "lls" | "ls" => Some(LocalCommand::Lls(parts.get(1).cloned())),
-        "lcd" | "cd" => parts.get(1).map(|p| LocalCommand::Lcd(p.clone())),
+        "help" | "?" | "~?" | "~help" => Some(LocalCommand::Help),
+        "lpwd" | "pwd" | "~lpwd" | "~pwd" => Some(LocalCommand::Lpwd),
+        "lls" | "ls" | "~lls" | "~ls" => Some(LocalCommand::Lls(parts.get(1).cloned())),
+        "lcd" | "cd" | "~lcd" | "~cd" => parts.get(1).map(|p| LocalCommand::Lcd(p.clone())),
         "paths" => Some(LocalCommand::Paths),
-        "exit" => Some(LocalCommand::Exit),
-        "disconnect" => Some(LocalCommand::Disconnect),
-        "clear" | "cls" => Some(LocalCommand::Clear),
-        "put" => {
+        "exit" | "~exit" => Some(LocalCommand::Exit),
+        "disconnect" | "~disconnect" => Some(LocalCommand::Disconnect),
+        "clear" | "cls" | "~clear" | "~cls" => Some(LocalCommand::Clear),
+        "put" | "~put" => {
             let mut recursive = false;
             let mut args = Vec::new();
             for arg in &parts[1..] {
@@ -65,10 +66,10 @@ pub fn parse_local_command(buf: &[u8]) -> Option<LocalCommand> {
                     recursive,
                 })
             } else {
-                None // usage error, caller can just print help
+                Some(LocalCommand::Unknown("put (missing path)".to_string()))
             }
         }
-        "get" => {
+        "get" | "~get" => {
             let mut recursive = false;
             let mut args = Vec::new();
             for arg in &parts[1..] {
@@ -85,10 +86,10 @@ pub fn parse_local_command(buf: &[u8]) -> Option<LocalCommand> {
                     recursive,
                 })
             } else {
-                None // usage error
+                Some(LocalCommand::Unknown("get (missing path)".to_string()))
             }
         }
-        _ => Some(LocalCommand::Help), // Unknown command
+        _ => Some(LocalCommand::Unknown(keyword.to_string())),
     }
 }
 
@@ -131,9 +132,7 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Disconnect => {
-            stdout
-                .write_all(b"[irosh] Disconnecting...\r\n")
-                .await?;
+            stdout.write_all(b"[irosh] Disconnecting...\r\n").await?;
             stdout.flush().await?;
             return Ok(false);
         }
@@ -150,8 +149,7 @@ pub async fn execute_local_command(
                 transfer_context.local_root = new_path.clone();
                 stdout
                     .write_all(
-                        format!("Changed local directory to: {}", new_path.display())
-                            .as_bytes(),
+                        format!("Changed local directory to: {}", new_path.display()).as_bytes(),
                     )
                     .await?;
             } else {
@@ -251,6 +249,18 @@ pub async fn execute_local_command(
                 recursive,
             )
             .await;
+            print_prompt!();
+        }
+        LocalCommand::Unknown(cmd) => {
+            stdout
+                .write_all(
+                    format!(
+                        "Unknown command: '{}'. Type 'help' for available commands.",
+                        cmd
+                    )
+                    .as_bytes(),
+                )
+                .await?;
             print_prompt!();
         }
     }

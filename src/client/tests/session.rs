@@ -53,3 +53,38 @@ async fn exec_emits_stdout_and_close_events() {
     .await
     .expect("Test timed out");
 }
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
+async fn capture_exec_collects_stdout_and_stderr() {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let server_state = temp_state_dir("server-exec-cap");
+        let client_state = temp_state_dir("client-exec-cap");
+        let (mut session, server_task) = connect_test_session(&server_state, &client_state).await;
+
+        let output = session
+            .capture_exec("echo out-msg && echo err-msg >&2")
+            .await
+            .expect("capture_exec failed");
+
+        let combined_output = String::from_utf8(output.stdout).unwrap();
+
+        assert!(
+            combined_output.contains("out-msg"),
+            "missing stdout msg: {combined_output}"
+        );
+        assert!(
+            combined_output.contains("err-msg"),
+            "missing stderr msg: {combined_output}"
+        );
+        assert_eq!(output.exit_status, 0);
+
+        let _ = session.disconnect().await;
+        let _ = server_task.await.unwrap();
+    })
+    .await
+    .expect("Test timed out");
+}

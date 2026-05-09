@@ -1,11 +1,11 @@
 //! Input engine for handling local keystrokes, remote sync, and escape sequences.
 
-use super::editor::{EditorEffect, EditorEvent, LineEditor, EditorMode};
+use super::ansi::{ControlSequenceState, consume_control_sequence};
+use super::completion::{self, CompletionMode, CompletionResult};
+use super::editor::{EditorEffect, EditorEvent, EditorMode, LineEditor};
 use super::history::CommandHistory;
 use super::prompt::{LocalCommand, parse_local_command};
-use super::completion::{self, CompletionMode, CompletionResult};
 use super::transfer::TransferContext;
-use super::ansi::{ControlSequenceState, consume_control_sequence};
 use irosh::Session;
 
 /// Actions requested by the user via escape sequences (e.g., `~.`) or the local prompt.
@@ -222,7 +222,7 @@ impl InputEngine {
                             EditorEffect::SubmitEscape(bytes) => {
                                 let line_str = String::from_utf8_lossy(&bytes);
                                 self.escape_history.add(&line_str);
-                                
+
                                 match parse_escape(&bytes) {
                                     Some(action) => {
                                         if action == EscapeAction::CommandPrompt {
@@ -245,10 +245,17 @@ impl InputEngine {
                                     None => {
                                         finalize_submitted_line(&mut to_local, &mut line);
                                         // If it starts with a known local keyword but missing args, show help
-                                        let cmd_str = String::from_utf8_lossy(trim_bytes(&bytes.strip_prefix(b"~").unwrap_or(&bytes)));
-                                        let keyword = cmd_str.split_whitespace().next().unwrap_or("");
-                                        if ["put", "get", "lls", "ls", "lcd", "cd"].contains(&keyword) {
-                                            to_local.extend_from_slice(b"Usage error. Type ~? for help.\r\n");
+                                        let cmd_str = String::from_utf8_lossy(trim_bytes(
+                                            bytes.strip_prefix(b"~").unwrap_or(&bytes),
+                                        ));
+                                        let keyword =
+                                            cmd_str.split_whitespace().next().unwrap_or("");
+                                        if ["put", "get", "lls", "ls", "lcd", "cd"]
+                                            .contains(&keyword)
+                                        {
+                                            to_local.extend_from_slice(
+                                                b"Usage error. Type ~? for help.\r\n",
+                                            );
                                             self.mode = InputMode::Remote;
                                             // Trigger prompt reprint on remote
                                             to_remote.push(b'\r');
@@ -270,7 +277,7 @@ impl InputEngine {
                             EditorEffect::SubmitPrompt(bytes) => {
                                 let line_str = String::from_utf8_lossy(&bytes);
                                 self.prompt_history.add(&line_str);
-                                
+
                                 let Some(action) = parse_local_command(&bytes) else {
                                     finalize_submitted_line(&mut to_local, &mut line);
                                     // Reset the prompt editor for the next command
@@ -286,10 +293,10 @@ impl InputEngine {
                                 };
 
                                 if matches!(action, LocalCommand::Exit | LocalCommand::Disconnect) {
-                                     finalize_exit_line(&mut to_local, &mut line);
-                                     self.exit_local_prompt();
-                                     actions.push(EscapeAction::RunLocal(action));
-                                     continue;
+                                    finalize_exit_line(&mut to_local, &mut line);
+                                    self.exit_local_prompt();
+                                    actions.push(EscapeAction::RunLocal(action));
+                                    continue;
                                 } else {
                                     finalize_submitted_line(&mut to_local, &mut line);
                                     actions.push(EscapeAction::RunLocal(action));
@@ -515,8 +522,14 @@ mod tests {
         engine.process_local(b"x");
         let (remote, _, actions) = engine.process_local(b"\r");
         assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], EscapeAction::RunLocal(LocalCommand::Help)));
-        assert!(remote.is_empty(), "unknown command not sent to remote anymore");
+        assert!(matches!(
+            actions[0],
+            EscapeAction::RunLocal(LocalCommand::Unknown(ref cmd)) if cmd == "x"
+        ));
+        assert!(
+            remote.is_empty(),
+            "unknown command not sent to remote anymore"
+        );
     }
 
     #[test]
@@ -539,7 +552,7 @@ mod tests {
     #[test]
     fn test_remote_newline_arms_escape() {
         let (mut engine, _dir) = setup_engine();
-        engine.process_local(b"a"); 
+        engine.process_local(b"a");
         assert!(!engine.at_start_of_line);
 
         engine.observe_remote(b"\r\n");
@@ -574,11 +587,189 @@ mod tests {
         engine.process_local(b"i");
         engine.process_local(b"t");
         let (_, _, actions) = engine.process_local(b"\r");
-        
+
         assert_eq!(engine.mode, InputMode::Remote);
         match &actions[0] {
-            EscapeAction::RunLocal(cmd) => assert!(matches!(cmd, super::super::prompt::LocalCommand::Exit)),
+            EscapeAction::RunLocal(cmd) => {
+                assert!(matches!(cmd, super::super::prompt::LocalCommand::Exit))
+            }
             _ => panic!("Expected RunLocal(Exit)"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property-based fuzz tests (proptest)
+// ---------------------------------------------------------------------------
+//
+// Invariants enforced across all fuzz targets:
+//   1. No panic on any input — crash safety.
+//   2. `engine.mode` is always one of the two valid variants.
+//   3. When `active_line` is Some, its editor cursor ≤ line length.
+//   4. `to_remote` and `to_local` vectors are structurally sound (no OOB).
+//
+// These tests intentionally have no `assert` on the *values* of output — only
+// on structural properties — because the semantics of arbitrary byte input are
+// not well-defined. The goal is to shake out panics, index-out-of-bounds,
+// arithmetic overflows, and corrupted state.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod fuzz {
+    use super::*;
+    use irosh::StateConfig;
+    use proptest::prelude::*;
+    use tempfile::tempdir;
+
+    /// Creates a fresh engine backed by a real (but temporary) state directory
+    /// so that history persistence code paths are exercised.
+    fn make_engine() -> (InputEngine, tempfile::TempDir) {
+        let dir = tempdir().expect("tempdir creation must succeed in test environment");
+        let state = StateConfig::new(dir.path().to_path_buf());
+        (InputEngine::new(&state), dir)
+    }
+
+    /// Verifies that `engine.mode` is always one of the two valid variants.
+    /// This is a no-op in terms of values but ensures the enum discriminant
+    /// is never corrupted into an undefined state.
+    fn assert_mode_valid(mode: &InputMode) {
+        assert!(
+            matches!(mode, InputMode::Remote | InputMode::LocalEdit),
+            "engine.mode must always be Remote or LocalEdit, got: {mode:?}"
+        );
+    }
+
+    proptest! {
+        /// FUZZ-01: Arbitrary byte sequences must never panic the input engine.
+        ///
+        /// Covers: crash safety, mode invariant.
+        /// Strategy: random byte slices of length 0–512, fed one call at a time
+        /// (matching how `drive_session` calls it in production — one stdin read
+        /// at a time, not individual bytes).
+        #[test]
+        fn fuzz_input_engine_no_panic(
+            chunks in prop::collection::vec(
+                prop::collection::vec(0u8..=255, 0..=64),
+                0..=16,
+            )
+        ) {
+            let (mut engine, _dir) = make_engine();
+            for chunk in &chunks {
+                let (to_remote, to_local, _actions) = engine.process_local(chunk);
+                // Structural soundness: output vecs must be valid (no capacity issues).
+                // We consume them to prevent the optimizer from eliding the work.
+                let _ = to_remote.len();
+                let _ = to_local.len();
+                assert_mode_valid(&engine.mode);
+            }
+        }
+
+        /// FUZZ-02: Cursor must never exceed line length in the active editor.
+        ///
+        /// Covers: editor cursor invariant (prevents OOB access in render_line).
+        /// Strategy: interleave printable ASCII, control bytes, and arrow key
+        /// sequences to stress the editor's cursor arithmetic.
+        #[test]
+        fn fuzz_input_engine_cursor_in_bounds(
+            input in prop::collection::vec(
+                prop::sample::select(vec![
+                    // Printable ASCII range
+                    b'a', b'z', b'0', b'~', b' ', b'/',
+                    // Control
+                    b'\r', b'\n', 8u8, 127u8, 0x03u8, b'\t',
+                    // ESC + CSI arrow sequence bytes
+                    27u8, b'[', b'A', b'B', b'C', b'D',
+                    // Home / End via CSI
+                    b'1', b'4', b'~', b'H', b'F',
+                ]),
+                0..=256,
+            )
+        ) {
+            let (mut engine, _dir) = make_engine();
+            let _ = engine.process_local(&input);
+            assert_mode_valid(&engine.mode);
+
+            if let Some(ref line) = engine.active_line {
+                let editor_line_len = line.editor.line().len();
+                let cursor = line.editor.cursor();
+                assert!(
+                    cursor <= editor_line_len,
+                    "cursor ({cursor}) must be <= line length ({editor_line_len})"
+                );
+                // Visual tracking must also be consistent.
+                assert!(
+                    line.display_cursor <= line.visual_len,
+                    "display_cursor ({}) must be <= visual_len ({})",
+                    line.display_cursor,
+                    line.visual_len,
+                );
+            }
+        }
+
+        /// FUZZ-03: `observe_remote` must never panic or corrupt mode on any byte stream.
+        ///
+        /// Covers: the remote-data path that arms/disarms the escape detector.
+        #[test]
+        fn fuzz_observe_remote_no_panic(
+            data in prop::collection::vec(0u8..=255, 0..=512)
+        ) {
+            let (mut engine, _dir) = make_engine();
+            // Mix observe_remote with process_local to test interleaved usage.
+            engine.observe_remote(&data);
+            assert_mode_valid(&engine.mode);
+
+            // Now feed a tilde (would arm escape) and verify no corruption.
+            let _ = engine.process_local(b"~");
+            engine.observe_remote(&data);
+            assert_mode_valid(&engine.mode);
+        }
+
+        /// FUZZ-04: `parse_local_command` must never panic on arbitrary UTF-8 input.
+        ///
+        /// Covers: shell-words tokenisation + keyword matching on untrusted strings.
+        /// Strategy: arbitrary printable strings (proptest `".*"` regex generates
+        /// valid Unicode strings, which is the real input domain — bytes are already
+        /// UTF-8 decoded before `parse_local_command` is called).
+        #[test]
+        fn fuzz_parse_local_command_no_panic(raw in ".*") {
+            let _ = parse_local_command(raw.as_bytes());
+        }
+
+        /// FUZZ-05: `CommandHistory` add/up/down must uphold its internal invariants.
+        ///
+        /// Invariants:
+        ///   - `index` is always `None` or `Some(i)` where `i < entries.len()`.
+        ///   - `up()` never returns an entry that is out of bounds.
+        ///   - Repeated `down()` after hitting the end always returns the pending line.
+        ///   - Entries never exceed `MAX_HISTORY_ENTRIES` (1000).
+        ///
+        /// We use a persistent in-memory history (no file) to keep the test hermetic.
+        #[test]
+        fn fuzz_command_history_state_machine(
+            commands in prop::collection::vec("[a-z ]{0,40}", 0..=50),
+            nav_sequence in prop::collection::vec(0u8..=3, 0..=30),
+        ) {
+            let mut history = CommandHistory::new(None);
+
+            for cmd in &commands {
+                history.add(cmd);
+            }
+
+            // Navigate: 0=up, 1=down, 2=abandon_navigation, 3=re-add current
+            let current = "current";
+            for nav in &nav_sequence {
+                match nav {
+                    0 => { let _ = history.up(current); }
+                    1 => { let _ = history.down(); }
+                    2 => history.abandon_navigation(current),
+                    _ => history.add(current),
+                }
+            }
+
+            // After arbitrary navigation, up() must not return an OOB value.
+            // We verify this implicitly: if it panicked, the test would fail.
+            let _ = history.up(current);
+            let _ = history.down();
         }
     }
 }

@@ -19,12 +19,12 @@ impl Session {
             .map_err(TransportError::from)?;
         match res {
             TransferFrame::CwdResponse(res) => Ok(std::path::PathBuf::from(res.path)),
-            TransferFrame::Error(details) => Err(ClientError::TransferRejected {
-                details: details.to_string(),
-            }
-            .into()),
+            TransferFrame::Error(failure) => Err(ClientError::TransferRejected { failure }.into()),
             other => Err(ClientError::TransferFailed {
-                details: format!("remote cwd failed with unexpected frame: {other:?}"),
+                failure: crate::transport::transfer::TransferFailure::new(
+                    crate::transport::transfer::TransferFailureCode::UnexpectedFrame,
+                    format!("remote cwd failed with unexpected frame: {other:?}"),
+                ),
             }
             .into()),
         }
@@ -49,12 +49,12 @@ impl Session {
             .map_err(TransportError::from)?;
         match res {
             TransferFrame::ExistsResponse(res) => Ok(res.exists),
-            TransferFrame::Error(details) => Err(ClientError::TransferRejected {
-                details: details.to_string(),
-            }
-            .into()),
+            TransferFrame::Error(failure) => Err(ClientError::TransferRejected { failure }.into()),
             other => Err(ClientError::TransferFailed {
-                details: format!("remote exists failed with unexpected frame: {other:?}"),
+                failure: crate::transport::transfer::TransferFailure::new(
+                    crate::transport::transfer::TransferFailureCode::UnexpectedFrame,
+                    format!("remote exists failed with unexpected frame: {other:?}"),
+                ),
             }
             .into()),
         }

@@ -311,12 +311,16 @@ pub enum ClientError {
     TransferTargetInvalid { reason: &'static str },
 
     /// The remote peer rejected the transfer request.
-    #[error("transfer rejected by remote: {details}")]
-    TransferRejected { details: String },
+    #[error("transfer rejected by remote: {failure}")]
+    TransferRejected {
+        failure: crate::transport::transfer::TransferFailure,
+    },
 
     /// A transfer-related control operation failed.
-    #[error("transfer control operation failed: {details}")]
-    TransferFailed { details: String },
+    #[error("transfer control operation failed: {failure}")]
+    TransferFailed {
+        failure: crate::transport::transfer::TransferFailure,
+    },
 
     /// The session transport is not available (disconnected or not initialized).
     #[error("transport unavailable: {details}")]
@@ -363,8 +367,10 @@ pub enum ServerError {
     },
 
     /// A file transfer operation failed on the server.
-    #[error("server transfer error: {details}")]
-    TransferFailed { details: String },
+    #[error("server transfer error: {failure}")]
+    TransferFailed {
+        failure: crate::transport::transfer::TransferFailure,
+    },
 
     /// The remote peer provided an invalid transfer path.
     #[error("invalid transfer path: {details}")]

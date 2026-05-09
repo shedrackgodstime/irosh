@@ -5,12 +5,31 @@ All notable changes to the `irosh` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-10
+
+### Added
+- **Structured Transfer Errors**: Replaced string-based error checking with a robust `TransferFailureCode` protocol for precise error reporting (NotFound, PermissionDenied, IsDirectory).
+- **Interactive Parity**: Restored legacy V1 `~`-prefixed aliases (`~put`, `~get`, `~lls`, etc.) to the local command prompt.
+- **Enhanced Tab Completion**: Fixed and optimized path completion for both local and remote filesystems.
+- **Shortcut Connect Hardening**: Improved target parsing to reliably distinguish between tickets, aliases, and wormhole codes.
+
+### Changed
+- **Codebase Hardening**: Performed a total audit, pruning over 500 lines of dead code and stale `#[allow(dead_code)]` attributes.
+- **Zero-Warning Compliance**: Achieved 100% Clippy compliance with warnings-as-errors across the entire workspace.
+- **Dependency Optimization**: Pruned unused crates like `futures` and `futures-lite` to reduce binary size and compilation time.
+
+### Fixed
+- **Recursive Path Logic**: Resolved a regression where relative paths were incorrectly reported during recursive directory uploads.
+- **CLI Prompt UX**: Fixed the "silent help" bug where unrecognized commands would trigger the help screen without an error message.
+- **Type-Safe Connection**: Resolved nested result flattening bugs in the SSH handshake timeout logic.
+
 ## [0.2.0] - 2026-05-07
 
 ### Added
 - **Unified CLI Consolidation**: Replaced the fragmented 3-binary architecture with a single, professional `irosh` binary.
 - **Wormhole Rendezvous**: Implemented human-friendly ad-hoc pairing codes for secure peer discovery without tickets.
 - **Unified Authenticator**: Introduced a master security engine with live-reloading support for authorized keys and passwords.
+- **Wormhole Rate Limiting**: Added mandatory rate-limiting that burns the pairing session after 3 failed password attempts to prevent brute-force attacks.
 - **Daemon-First Architecture**: Enabled IPC-based background control, allowing the CLI to orchestrate the system service seamlessly.
 - **Cross-Platform Service Management**: Unified background service installation for Linux (systemd), macOS (launchd), and Windows.
 - **Visual Progress Bars**: Integrated `indicatif` for high-end progress bars during file transfers.

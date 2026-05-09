@@ -2,6 +2,9 @@ use anyhow::Result;
 use irosh::Session;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use proptest::prelude::*;
+
 use super::transfer::TransferContext;
 
 const ESCAPE_KEYWORDS: &[&str] = &["~?", "~help", "~~", "~.", "~C", "~put", "~get"];
@@ -300,7 +303,7 @@ fn active_token<'a>(parsed: &'a ParsedLine<'a>) -> Option<&'a Token> {
 
 fn local_completion_parts(raw: &str, resolved: &Path) -> (PathBuf, String, String) {
     if raw.is_empty() {
-        return (PathBuf::from("."), String::new(), String::new());
+        return (resolved.to_path_buf(), String::new(), String::new());
     }
 
     if raw.ends_with('/') {
@@ -327,7 +330,12 @@ fn local_completion_parts(raw: &str, resolved: &Path) -> (PathBuf, String, Strin
 }
 
 fn parse_line(raw: &str, cursor: usize) -> ParsedLine<'_> {
-    let cursor = cursor.min(raw.len());
+    let mut cursor = cursor.min(raw.len());
+    // Ensure cursor is at a valid char boundary
+    while cursor > 0 && !raw.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    let cursor = cursor;
     let mut tokens = Vec::new();
 
     let mut token_start = None;
@@ -406,5 +414,14 @@ fn parse_line(raw: &str, cursor: usize) -> ParsedLine<'_> {
         raw,
         cursor,
         tokens,
+    }
+}
+
+#[cfg(test)]
+proptest! {
+    /// Bruteforce test: Ensure that NO input string or cursor position can cause the tokenizer to panic.
+    #[test]
+    fn fuzz_completion_tokenizer(raw in ".*", cursor in 0usize..1000) {
+        let _ = parse_line(&raw, cursor);
     }
 }

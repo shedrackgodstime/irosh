@@ -1,6 +1,6 @@
 [package]
 name = "irosh-cli"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Shedrack Godstime <shedrackgodstime@gmail.com>"]
@@ -16,7 +16,7 @@ name = "irosh"
 path = "src/main.rs"
 
 [dependencies]
-irosh = { version = "0.2.0", path = "..", features = ["server", "client", "storage", "transport"] }
+irosh = { version = "0.3.0", path = "..", features = ["server", "client", "storage", "transport"] }
 anyhow = "1.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
@@ -35,3 +35,4 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_F
 
 [dev-dependencies]
 tempfile = "3.27.0"
+proptest = "1.6"

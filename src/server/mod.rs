@@ -50,7 +50,6 @@ pub struct ServerOptions {
     pub(crate) relay_url: Option<String>,
     authorized_keys: Vec<russh::keys::ssh_key::PublicKey>,
     authenticator: Option<Arc<dyn Authenticator>>,
-    wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
     pub(crate) shutdown_on_wormhole_success: bool,
 }
 
@@ -65,7 +64,6 @@ impl Clone for ServerOptions {
             relay_url: self.relay_url.clone(),
             authorized_keys: self.authorized_keys.clone(),
             authenticator: self.authenticator.clone(),
-            wormhole_confirmation: self.wormhole_confirmation.clone(),
             shutdown_on_wormhole_success: self.shutdown_on_wormhole_success,
         }
     }
@@ -83,7 +81,6 @@ impl ServerOptions {
             relay_url: None,
             authorized_keys: Vec::new(),
             authenticator: None,
-            wormhole_confirmation: None,
             shutdown_on_wormhole_success: false,
         }
     }
@@ -128,19 +125,6 @@ impl ServerOptions {
         self
     }
 
-    /// Sets a confirmation callback for interactive wormhole pairing.
-    ///
-    /// When set, the server will invoke this callback to prompt the operator
-    /// before authorizing a wormhole pairing request. This is used by the
-    /// foreground CLI to display a y/n prompt.
-    pub fn wormhole_confirmation(
-        mut self,
-        callback: impl crate::auth::ConfirmationCallback,
-    ) -> Self {
-        self.wormhole_confirmation = Some(Arc::new(callback));
-        self
-    }
-
     /// Disables the IPC control server. Useful for foreground/ephemeral servers.
     pub fn disable_ipc(mut self) -> Self {
         self.ipc_enabled = false;
@@ -163,11 +147,6 @@ impl ServerOptions {
 
     pub(crate) fn secret_value(&self) -> Option<&str> {
         self.secret.as_deref()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn authorized_key_list(&self) -> &[russh::keys::ssh_key::PublicKey] {
-        &self.authorized_keys
     }
 }
 
@@ -236,9 +215,6 @@ pub struct Server {
     control_rx: tokio::sync::mpsc::Receiver<ipc::InternalCommand>,
     ticket: crate::transport::ticket::Ticket,
     gossip: iroh_gossip::net::Gossip,
-    /// Reserved for future server-side interactive pairing confirmation prompts.
-    #[allow(dead_code)]
-    wormhole_confirmation: Option<Arc<dyn crate::auth::ConfirmationCallback>>,
     shutdown_on_wormhole_success: bool,
 }
 
@@ -344,7 +320,6 @@ impl Server {
             });
         }
         struct ActiveWormhole {
-            #[allow(dead_code)]
             code: String,
             password: Option<String>,
             persistent: bool,
@@ -356,6 +331,7 @@ impl Server {
 
         let mut wormhole: Option<ActiveWormhole> = None;
         let (success_tx, mut success_rx) = tokio::sync::mpsc::channel(1);
+        let (failure_tx, mut failure_rx) = tokio::sync::mpsc::channel(1);
         let mut shutdown_requested = false;
 
         loop {
@@ -462,6 +438,7 @@ impl Server {
                                     success_flag: wh.success.clone(),
                                     failed_attempts: wh.failed_attempts.clone(),
                                     success_tx: Some(success_tx.clone()),
+                                    failure_tx: Some(failure_tx.clone()),
                                 },
                             );
 
@@ -523,6 +500,7 @@ impl Server {
                     if let Some(wh) = &wormhole {
                         let fails = wh.failed_attempts.load(Ordering::Relaxed);
                         let success = wh.success.load(Ordering::Relaxed);
+
 
                         if fails >= 3 {
                             warn!("Wormhole rate limit exceeded ({} failed attempts). Burning wormhole.", fails);
@@ -654,6 +632,18 @@ impl Server {
                             }
                             wormhole = None;
                         }
+                    }
+                }
+                _ = failure_rx.recv() => {
+                    if let Some(wh) = &wormhole {
+                        warn!("Wormhole rate limit exceeded. Burning wormhole.");
+                        wh.task.abort();
+                        wh.expiry_task.abort();
+                        let code = wh.code.clone();
+                        tokio::spawn(async move {
+                            let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+                        });
+                        wormhole = None;
                     }
                 }
             }

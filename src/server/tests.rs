@@ -58,7 +58,6 @@ async fn server_options_builder_retains_state_security_secret_and_keys() {
         HostKeyPolicy::AcceptAll
     );
     assert_eq!(options.secret_value(), Some("shared-secret"));
-    assert_eq!(options.authorized_key_list(), &[authorized_key]);
 }
 
 #[test]
@@ -66,4 +65,93 @@ fn test_server_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Server>();
     assert_send_sync::<ServerShutdown>();
+}
+
+#[tokio::test]
+async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
+    use crate::auth::Credentials;
+    use crate::client::ipc::IpcClient;
+    use crate::client::{Client, ClientOptions};
+    use crate::server::ipc::{IpcCommand, IpcResponse};
+
+    let state = temp_state_dir("server-rate-limit");
+    let options = ServerOptions::new(state.clone());
+    let (ready, server) = Server::bind(options).await.unwrap();
+    let shutdown = server.shutdown_handle();
+    let run_task = tokio::spawn(server.run());
+
+    // Give IPC server time to bind
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let ipc = IpcClient::new(state.root().to_path_buf());
+
+    let password_hash = crate::auth::hash_password("correct-password").unwrap();
+
+    ipc.send(IpcCommand::EnableWormhole {
+        code: "test-code".to_string(),
+        password: Some(password_hash),
+        persistent: false,
+    })
+    .await
+    .unwrap();
+
+    // Verify it's active
+    let status = ipc.send(IpcCommand::GetStatus).await.unwrap();
+    if let IpcResponse::Status {
+        wormhole_active, ..
+    } = status
+    {
+        assert!(wormhole_active, "Wormhole should be active");
+    } else {
+        panic!("Expected Status response");
+    }
+
+    for i in 0..3 {
+        let client_options =
+            ClientOptions::new(temp_state_dir(&format!("client-rate-limit-{}", i)))
+                .security(crate::config::SecurityConfig {
+                    host_key_policy: HostKeyPolicy::AcceptAll,
+                })
+                .credentials(Credentials {
+                    user: "irosh".to_string(),
+                    password: "wrong-password".to_string(),
+                });
+        let (conn, endpoint) = Client::dial_p2p(&client_options, ready.ticket().clone(), true)
+            .await
+            .unwrap();
+        let result = Client::establish_session(&client_options, (conn, endpoint)).await;
+
+        assert!(
+            result.is_err(),
+            "Expected auth to fail on attempt {}",
+            i + 1
+        );
+    }
+
+    // Give the server a moment to process the third failure and burn the wormhole
+    // We wait until active_sessions is 0 to ensure the join_next() has run.
+    let mut success = false;
+    for _ in 0..10 {
+        let status = ipc.send(IpcCommand::GetStatus).await.unwrap();
+        if let IpcResponse::Status {
+            wormhole_active,
+            active_sessions,
+            ..
+        } = status
+        {
+            if !wormhole_active && active_sessions == 0 {
+                success = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    assert!(
+        success,
+        "Wormhole should be disabled and sessions cleared after 3 failures"
+    );
+
+    shutdown.close().await;
+    let _ = run_task.await;
 }

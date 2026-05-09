@@ -6,7 +6,6 @@ const MAX_HISTORY_ENTRIES: usize = 1000;
 
 /// Manages persistent and in-memory history for local commands.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct CommandHistory {
     path: Option<PathBuf>,
     entries: Vec<String>,

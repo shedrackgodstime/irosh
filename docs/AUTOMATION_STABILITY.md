@@ -29,15 +29,7 @@ Automation scripts (sh, ps1) and AI agents cannot respond to interactive prompts
 
 ---
 
-## 3. Stealth Mode (Ghost Discovery)
-Stealth mode is a P2P security feature that makes a node invisible to unauthorized discovery.
 
-### Logic:
-*   **Silent Handshake**: The server silently drops any incoming QUIC/ALPN connection requests that do not include a valid "Secret Knock."
-*   **Shared Secret (PSK)**: The client must provide a Pre-Shared Key (provided via `--secret` or `IROSH_SECRET`) during the initial P2P handshake.
-*   **No Fingerprinting**: The goal is to ensure the server does not reveal its existence to scanners, making it appear "Offline" to anyone without the secret.
-
----
 
 ## 4. Professional Error Handling
 *   **Exit Codes**: Use standard Unix exit codes (0 for success, 1 for general error, 69 for service issues, etc.).

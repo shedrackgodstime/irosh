@@ -252,7 +252,10 @@ impl ShellContext {
     pub(crate) async fn resolve_path(self, raw: &str) -> Result<PathBuf> {
         if raw.trim().is_empty() {
             return Err(ServerError::TransferFailed {
-                details: "transfer path is empty".to_string(),
+                failure: crate::transport::transfer::TransferFailure::new(
+                    crate::transport::transfer::TransferFailureCode::PathInvalid,
+                    "transfer path is empty",
+                ),
             }
             .into());
         }

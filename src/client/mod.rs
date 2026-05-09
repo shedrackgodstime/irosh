@@ -463,10 +463,7 @@ impl Session {
         {
             crate::transport::transfer::TransferFrame::CompletionResponse(res) => Ok(res.matches),
             crate::transport::transfer::TransferFrame::Error(failure) => {
-                Err(ClientError::TransferRejected {
-                    details: failure.to_string(),
-                }
-                .into())
+                Err(ClientError::TransferRejected { failure }.into())
             }
             other => Err(ClientError::DownloadFailed {
                 details: format!("unexpected completion frame: {other:?}"),

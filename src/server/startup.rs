@@ -134,7 +134,6 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
             control_tx,
             control_rx,
             ticket,
-            wormhole_confirmation: options.wormhole_confirmation.clone(),
             shutdown_on_wormhole_success: options.shutdown_on_wormhole_success,
         },
     ))

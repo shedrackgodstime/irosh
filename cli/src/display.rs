@@ -10,12 +10,3 @@ pub fn shorten_ticket(ticket: &Ticket) -> String {
     }
     format!("{}...{}", &s[..12], &s[s.len() - 8..])
 }
-
-/// Shortens a NodeID for display.
-#[allow(dead_code)]
-pub fn shorten_node_id(node_id: &str) -> String {
-    if node_id.len() <= 16 {
-        return node_id.to_string();
-    }
-    format!("{}...", &node_id[..12])
-}

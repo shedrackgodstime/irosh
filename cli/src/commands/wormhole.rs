@@ -66,6 +66,27 @@ pub async fn exec(
         anyhow::bail!("Security initiation block.");
     }
 
+    // Security guard: if the user provided a custom code with no password protection,
+    // enforce a minimum length. The code itself is the only secret, so a short code
+    // (e.g. "x" or "test") is trivially guessable.
+    let is_password_protected = passwd || has_node_password;
+    if let Some(ref custom_code) = code {
+        if !is_password_protected && custom_code.len() < 8 {
+            Ui::error(&format!(
+                "Custom wormhole code '{}' is too short ({} chars).",
+                custom_code,
+                custom_code.len()
+            ));
+            Ui::info(
+                "Requirement: codes must be at least 8 characters when no session password is set.",
+            );
+            Ui::info("Options:");
+            Ui::info("  1. Use a longer code:   irosh wormhole my-longer-code");
+            Ui::info("  2. Add a password:      irosh wormhole --passwd my-code");
+            anyhow::bail!("Wormhole code too short.");
+        }
+    }
+
     // If the user passed --passwd, prompt and hash the password now.
     // This is identical treatment to `irosh passwd set`.
     let password_hash: Option<String> = if passwd {

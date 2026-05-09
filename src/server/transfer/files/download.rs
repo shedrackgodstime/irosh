@@ -34,7 +34,10 @@ pub(crate) async fn handle_get_request(
     let (mut source, helper_source) = spawn_download_helper(context, &source_path).await?;
     {
         let mut stdout = source.stdout().ok_or_else(|| ServerError::TransferFailed {
-            details: "download source pipe unavailable".to_string(),
+            failure: TransferFailure::new(
+                TransferFailureCode::Internal,
+                "download source pipe unavailable",
+            ),
         })?;
 
         write_get_ready(
@@ -54,7 +57,10 @@ pub(crate) async fn handle_get_request(
                     .read(&mut buffer)
                     .await
                     .map_err(|e| ServerError::TransferFailed {
-                        details: format!("reading download source failed: {e}"),
+                        failure: TransferFailure::new(
+                            TransferFailureCode::Internal,
+                            format!("reading download source failed: {e}"),
+                        ),
                     })?;
             if count == 0 {
                 break;
@@ -70,7 +76,10 @@ pub(crate) async fn handle_get_request(
             .wait_with_output()
             .await
             .map_err(|e| ServerError::TransferFailed {
-                details: format!("waiting for download helper failed: {e}"),
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("waiting for download helper failed: {e}"),
+                ),
             })?;
         if !output.status.success() {
             write_transfer_error(
@@ -133,12 +142,18 @@ async fn handle_recursive_get_request(
         let walk = walkdir::WalkDir::new(&source_root);
         for entry in walk {
             let entry = entry.map_err(|e| ServerError::TransferFailed {
-                details: format!("failed to walk remote directory: {e}"),
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("failed to walk remote directory: {e}"),
+                ),
             })?;
 
             let relative = entry.path().strip_prefix(&source_root).map_err(|_| {
                 ServerError::TransferFailed {
-                    details: "failed to resolve relative path during remote walk".to_string(),
+                    failure: TransferFailure::new(
+                        TransferFailureCode::Internal,
+                        "failed to resolve relative path during remote walk",
+                    ),
                 }
             })?;
 
@@ -148,7 +163,10 @@ async fn handle_recursive_get_request(
 
             let is_dir = entry.file_type().is_dir();
             let metadata = entry.metadata().map_err(|e| ServerError::TransferFailed {
-                details: format!("failed to read remote metadata: {e}"),
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("failed to read remote metadata: {e}"),
+                ),
             })?;
 
             let size = if is_dir { 0 } else { metadata.len() };
@@ -192,14 +210,20 @@ async fn handle_recursive_get_request(
             context.configure(&mut find_cmd);
 
             let mut child = find_cmd.spawn().map_err(|e| ServerError::TransferFailed {
-                details: format!("failed to spawn find for recursive walk: {e}"),
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("failed to spawn find for recursive walk: {e}"),
+                ),
             })?;
 
             let stdout = child
                 .stdout
                 .take()
                 .ok_or_else(|| ServerError::TransferFailed {
-                    details: "find stdout unavailable".to_string(),
+                    failure: TransferFailure::new(
+                        TransferFailureCode::Internal,
+                        "find stdout unavailable",
+                    ),
                 })?;
 
             use tokio::io::{AsyncBufReadExt, BufReader};
@@ -268,7 +292,10 @@ async fn stream_file_content(
 ) -> Result<()> {
     let (mut source, _) = spawn_download_helper(context, path).await?;
     let mut stdout = source.stdout().ok_or_else(|| ServerError::TransferFailed {
-        details: "download source pipe unavailable".to_string(),
+        failure: TransferFailure::new(
+            TransferFailureCode::Internal,
+            "download source pipe unavailable",
+        ),
     })?;
 
     let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
@@ -277,7 +304,10 @@ async fn stream_file_content(
             .read(&mut buffer)
             .await
             .map_err(|e| ServerError::TransferFailed {
-                details: format!("reading download source failed: {e}"),
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("reading download source failed: {e}"),
+                ),
             })?;
         if count == 0 {
             break;

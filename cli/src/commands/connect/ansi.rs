@@ -1,5 +1,8 @@
 use super::editor::EditorEvent;
 
+#[cfg(test)]
+use proptest::prelude::*;
+
 /// State machine for parsing ANSI escape sequences.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub enum ControlSequenceState {
@@ -19,29 +22,31 @@ pub fn consume_control_sequence(state: &mut ControlSequenceState, byte: u8) -> O
             }
             None
         }
-        ControlSequenceState::Escape => {
-            match byte {
-                b'[' => {
-                    *state = ControlSequenceState::Csi;
-                    None
-                }
-                b'O' => {
-                    *state = ControlSequenceState::Ss3;
-                    None
-                }
-                _ => {
-                    *state = ControlSequenceState::None;
-                    None
-                }
+        ControlSequenceState::Escape => match byte {
+            b'[' => {
+                *state = ControlSequenceState::Csi;
+                None
             }
-        }
+            b'O' => {
+                *state = ControlSequenceState::Ss3;
+                None
+            }
+            _ => {
+                *state = ControlSequenceState::None;
+                None
+            }
+        },
         ControlSequenceState::Csi => {
             if byte == b'~' {
                 // Should not happen as params should come first
                 *state = ControlSequenceState::None;
                 None
             } else if byte.is_ascii_digit() || byte == b';' {
-                *state = ControlSequenceState::CsiParams(if byte.is_ascii_digit() { (byte - b'0') as usize } else { 0 });
+                *state = ControlSequenceState::CsiParams(if byte.is_ascii_digit() {
+                    (byte - b'0') as usize
+                } else {
+                    0
+                });
                 None
             } else {
                 let ev = match byte {
@@ -88,6 +93,18 @@ pub fn consume_control_sequence(state: &mut ControlSequenceState, byte: u8) -> O
             };
             *state = ControlSequenceState::None;
             ev
+        }
+    }
+}
+
+#[cfg(test)]
+proptest! {
+    /// Bruteforce test: Ensure that NO sequence of bytes can cause the ANSI parser to panic.
+    #[test]
+    fn fuzz_ansi_parser(input in prop::collection::vec(0..255u8, 0..500)) {
+        let mut state = ControlSequenceState::None;
+        for byte in input {
+            let _ = consume_control_sequence(&mut state, byte);
         }
     }
 }

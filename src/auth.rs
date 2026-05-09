@@ -349,6 +349,8 @@ pub struct PairingMonitor {
     pub failed_attempts: Arc<AtomicU32>,
     /// Notification channel for success.
     pub success_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    /// Notification channel for failure (rate limit reached).
+    pub failure_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 /// The master authenticator for irosh, implementing the unified security policy.
@@ -371,6 +373,8 @@ pub struct UnifiedAuthenticator {
     cached_key: Arc<StdMutex<Option<PublicKey>>>,
     /// Optional notification channel for successful pairing.
     success_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    /// Optional notification channel for failed pairing (rate limit reached).
+    failure_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl UnifiedAuthenticator {
@@ -379,17 +383,18 @@ impl UnifiedAuthenticator {
         state: StateConfig,
         policy: HostKeyPolicy,
         authorized_keys: Vec<PublicKey>,
-        _temp_password_hash: Option<String>,
+        temp_password_hash: Option<String>,
     ) -> Self {
         Self {
             state,
             policy,
             authorized_keys: Arc::new(StdMutex::new(authorized_keys)),
-            temp_password_hash: _temp_password_hash,
+            temp_password_hash,
             success_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             failed_attempts: Arc::new(AtomicU32::new(0)),
             cached_key: Arc::new(StdMutex::new(None)),
             success_tx: None,
+            failure_tx: None,
         }
     }
 
@@ -399,18 +404,19 @@ impl UnifiedAuthenticator {
         state: StateConfig,
         policy: HostKeyPolicy,
         authorized_keys: Vec<PublicKey>,
-        _temp_password_hash: Option<String>,
+        temp_password_hash: Option<String>,
         monitor: PairingMonitor,
     ) -> Self {
         Self {
             state,
             policy,
             authorized_keys: Arc::new(StdMutex::new(authorized_keys)),
-            temp_password_hash: _temp_password_hash,
+            temp_password_hash,
             success_flag: monitor.success_flag,
             failed_attempts: monitor.failed_attempts,
             cached_key: Arc::new(StdMutex::new(None)),
             success_tx: monitor.success_tx,
+            failure_tx: monitor.failure_tx,
         }
     }
 
@@ -446,25 +452,29 @@ impl UnifiedAuthenticator {
         // Refresh from disk to catch 'irosh passwd set' without restart
         let node_hash = crate::storage::load_shadow_file(&self.state).unwrap_or_default();
         if let Some(hash) = node_hash {
-            let parsed_hash = PasswordHash::new(&hash)
-                .map_err(|reason| AuthError::VerificationFailed { reason })?;
-            if argon2
-                .verify_password(password.as_bytes(), &parsed_hash)
-                .is_ok()
-            {
-                return Ok(true);
+            if let Ok(parsed_hash) = PasswordHash::new(&hash) {
+                if argon2
+                    .verify_password(password.as_bytes(), &parsed_hash)
+                    .is_ok()
+                {
+                    return Ok(true);
+                }
+            } else {
+                warn!("Invalid shadow file hash format.");
             }
         }
 
         // 2. Check Temp Password (Invite Pattern)
         if let Some(hash) = &self.temp_password_hash {
-            let parsed_hash = PasswordHash::new(hash)
-                .map_err(|reason| AuthError::VerificationFailed { reason })?;
-            if argon2
-                .verify_password(password.as_bytes(), &parsed_hash)
-                .is_ok()
-            {
-                return Ok(true);
+            if let Ok(parsed_hash) = PasswordHash::new(hash) {
+                if argon2
+                    .verify_password(password.as_bytes(), &parsed_hash)
+                    .is_ok()
+                {
+                    return Ok(true);
+                }
+            } else {
+                warn!("Invalid temp password hash format.");
             }
         }
 
@@ -494,6 +504,10 @@ impl Authenticator for UnifiedAuthenticator {
     }
 
     fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
+        if self.failed_attempts.load(Ordering::Relaxed) >= 3 {
+            warn!("Authentication rejected: Rate limit exceeded.");
+            return Ok(false);
+        }
         let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
 
         {
@@ -548,6 +562,11 @@ impl Authenticator for UnifiedAuthenticator {
     }
 
     fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
+        if self.failed_attempts.load(Ordering::Relaxed) >= 3 {
+            warn!("Authentication rejected: Rate limit exceeded.");
+            return Ok(false);
+        }
+
         if self.check_password_match(password)? {
             // Password accepted! Now we must authorize the key that was cached during the publickey step.
             if let Ok(cache) = self.cached_key.lock() {
@@ -566,7 +585,13 @@ impl Authenticator for UnifiedAuthenticator {
             }
         }
 
-        self.failed_attempts.fetch_add(1, Ordering::Relaxed);
+        let fails = self.failed_attempts.fetch_add(1, Ordering::Relaxed) + 1;
+        if fails >= 3 {
+            warn!("Wormhole rate limit reached (3 failures).");
+            if let Some(tx) = &self.failure_tx {
+                let _ = tx.try_send(());
+            }
+        }
         Ok(false)
     }
 }
@@ -665,5 +690,187 @@ mod tests {
         let creds = Credentials::new("admin", "pass123");
         assert_eq!(creds.user, "admin");
         assert_eq!(creds.password, "pass123");
+    }
+
+    // -----------------------------------------------------------------------
+    // UnifiedAuthenticator — wormhole / temp-password security paths
+    // -----------------------------------------------------------------------
+
+    /// Helper: generate a deterministic ed25519 public key from a seed byte.
+    fn make_key(seed_byte: u8) -> russh::keys::ssh_key::PublicKey {
+        use russh::keys::ssh_key::PrivateKey;
+        use russh::keys::ssh_key::private::Ed25519Keypair;
+        let mut seed = [0u8; 32];
+        seed[0] = seed_byte;
+        PrivateKey::from(Ed25519Keypair::from_seed(&seed))
+            .public_key()
+            .clone()
+    }
+
+    /// A wormhole temp-password lets an unknown key authenticate and get
+    /// permanently added to the vault on first success.
+    #[test]
+    fn unified_auth_temp_password_admits_new_key_and_stores_it() -> crate::Result<()> {
+        let state = temp_state("unified-wormhole-admit");
+        let password = "wormhole-secret";
+        let hash = hash_password(password)?;
+
+        let auth =
+            UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], Some(hash));
+
+        let unknown_key = make_key(0xAB);
+
+        // Step 1: public-key check must FAIL (forces password challenge).
+        assert!(
+            !auth.check_public_key("user", &unknown_key)?,
+            "unknown key should be rejected to force password challenge"
+        );
+
+        // Step 2: correct password must succeed and store the key in the vault.
+        assert!(
+            auth.check_password("user", password)?,
+            "correct wormhole password must succeed"
+        );
+        assert!(
+            auth.was_successful(),
+            "success flag must be set after pairing"
+        );
+
+        // Step 3: vault must now contain the key.
+        let vault = crate::storage::load_all_authorized_clients(&state)?;
+        assert_eq!(vault.len(), 1, "paired key must be persisted to vault");
+
+        // Step 4: the key is now trusted — subsequent connection must succeed
+        // without a password, even on a freshly loaded authenticator.
+        let auth2 = UnifiedAuthenticator::new(
+            state.clone(),
+            HostKeyPolicy::Strict,
+            vault.into_iter().map(|(_, k)| k).collect(),
+            None,
+        );
+        assert!(
+            auth2.check_public_key("user", &unknown_key)?,
+            "previously-paired key must be trusted on subsequent connection"
+        );
+
+        Ok(())
+    }
+
+    /// Wrong wormhole passwords must be rejected and each attempt must
+    /// increment the failed-attempts counter (used by the server for rate-limiting).
+    #[test]
+    fn unified_auth_wrong_password_increments_failure_counter() -> crate::Result<()> {
+        let state = temp_state("unified-wormhole-fail-count");
+        let hash = hash_password("correct-password")?;
+
+        let auth =
+            UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], Some(hash));
+
+        let key = make_key(0x01);
+
+        // Force the key into the cache (simulates the SSH handshake sequence).
+        let _ = auth.check_public_key("user", &key)?;
+
+        // Three wrong attempts.
+        assert!(!auth.check_password("user", "wrong-1")?);
+        assert!(!auth.check_password("user", "wrong-2")?);
+        assert!(!auth.check_password("user", "wrong-3")?);
+
+        assert_eq!(
+            auth.failed_attempts(),
+            3,
+            "three failures must be recorded precisely"
+        );
+        assert!(
+            !auth.was_successful(),
+            "success flag must remain false after only failures"
+        );
+
+        Ok(())
+    }
+
+    /// Under Strict policy with a non-empty vault, unknown keys must be
+    /// rejected immediately — no password challenge offered.
+    #[test]
+    fn unified_auth_strict_policy_rejects_stranger_immediately() -> crate::Result<()> {
+        let state = temp_state("unified-strict-reject");
+        let trusted_key = make_key(0x01);
+        let stranger_key = make_key(0x02);
+
+        // Persist the trusted key to disk so `refresh_keys` sees it.
+        let fingerprint = trusted_key
+            .fingerprint(russh::keys::HashAlg::Sha256)
+            .to_string();
+        crate::storage::trust::write_authorized_client(&state, &fingerprint, &trusted_key)?;
+
+        let auth = UnifiedAuthenticator::new(state, HostKeyPolicy::Strict, vec![trusted_key], None);
+
+        assert!(
+            !auth.check_public_key("user", &stranger_key)?,
+            "Strict policy with a non-empty vault must reject unknown keys"
+        );
+        Ok(())
+    }
+
+    /// `supported_methods` must dynamically include `Password` when and
+    /// only when a temp password hash is active — i.e. the method set must
+    /// match the live security state.
+    #[test]
+    fn unified_auth_advertises_password_method_when_temp_hash_present() -> crate::Result<()> {
+        let state = temp_state("unified-methods");
+        let hash = hash_password("temp-pass")?;
+
+        let auth_no_pw =
+            UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], None);
+        assert!(
+            !auth_no_pw
+                .supported_methods()
+                .contains(&AuthMethod::Password),
+            "without a temp hash, Password must not be advertised"
+        );
+
+        let auth_with_pw =
+            UnifiedAuthenticator::new(state, HostKeyPolicy::Tofu, vec![], Some(hash));
+        assert!(
+            auth_with_pw
+                .supported_methods()
+                .contains(&AuthMethod::Password),
+            "with a temp hash, Password must be advertised"
+        );
+
+        Ok(())
+    }
+
+    /// When the vault is non-empty but no password is configured, an unknown
+    /// key must be rejected — there is no mechanism to admit it.
+    #[test]
+    fn unified_auth_claimed_vault_no_password_rejects_unknown_key() -> crate::Result<()> {
+        let state = temp_state("unified-claimed-vault");
+        let existing_key = make_key(0x01);
+        let newcomer_key = make_key(0x02);
+
+        // Pre-populate the vault by running a TOFU first-connection.
+        let bootstrap = UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], None);
+        assert!(bootstrap.check_public_key("user", &existing_key)?);
+
+        // Load vault keys into a fresh authenticator — no password.
+        let vault = crate::storage::load_all_authorized_clients(&state)?;
+        let auth = UnifiedAuthenticator::new(
+            state,
+            HostKeyPolicy::Tofu,
+            vault.into_iter().map(|(_, k)| k).collect(),
+            None,
+        );
+
+        assert!(
+            !auth.check_public_key("user", &newcomer_key)?,
+            "claimed vault with no password must reject unknown keys"
+        );
+        assert!(
+            auth.check_public_key("user", &existing_key)?,
+            "claimed vault must still accept the existing trusted key"
+        );
+
+        Ok(())
     }
 }

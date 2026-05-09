@@ -148,11 +148,8 @@ impl Session {
                     .into());
                 }
             }
-            TransferFrame::Error(details) => {
-                return Err(ClientError::TransferRejected {
-                    details: details.to_string(),
-                }
-                .into());
+            TransferFrame::Error(failure) => {
+                return Err(ClientError::TransferRejected { failure }.into());
             }
             other => {
                 return Err(ClientError::UploadFailed {
@@ -202,10 +199,7 @@ impl Session {
                 ),
             }
             .into()),
-            TransferFrame::Error(details) => Err(ClientError::TransferRejected {
-                details: details.to_string(),
-            }
-            .into()),
+            TransferFrame::Error(failure) => Err(ClientError::TransferRejected { failure }.into()),
             other => Err(ClientError::UploadFailed {
                 details: format!("unexpected completion frame: {other:?}"),
             }
@@ -249,11 +243,8 @@ impl Session {
             .map_err(TransportError::from)?
         {
             TransferFrame::PutReady(_) => {}
-            TransferFrame::Error(details) => {
-                return Err(ClientError::TransferRejected {
-                    details: details.to_string(),
-                }
-                .into());
+            TransferFrame::Error(failure) => {
+                return Err(ClientError::TransferRejected { failure }.into());
             }
             other => {
                 return Err(ClientError::UploadFailed {
@@ -374,10 +365,7 @@ impl Session {
                 ),
             }
             .into()),
-            TransferFrame::Error(details) => Err(ClientError::TransferRejected {
-                details: details.to_string(),
-            }
-            .into()),
+            TransferFrame::Error(failure) => Err(ClientError::TransferRejected { failure }.into()),
             other => Err(ClientError::UploadFailed {
                 details: format!("unexpected completion frame: {other:?}"),
             }

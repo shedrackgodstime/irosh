@@ -72,6 +72,10 @@ pub enum TransferFailureCode {
     AtomicRenameFailed,
     /// The remote server explicitly rejected the transfer request.
     Rejected,
+    /// The requested path was not found on the filesystem.
+    NotFound,
+    /// The requested path is a directory but the recursive flag was not set.
+    IsDirectory,
     /// An unrecoverable internal error occurred in the transfer engine.
     Internal,
 }
@@ -102,6 +106,8 @@ impl TransferFailure {
             TransferFailureCode::HelperFailed => "transfer helper failed",
             TransferFailureCode::AtomicRenameFailed => "atomic rename failed",
             TransferFailureCode::Rejected => "transfer rejected",
+            TransferFailureCode::NotFound => "path not found",
+            TransferFailureCode::IsDirectory => "path is a directory",
             TransferFailureCode::Internal => "transfer internal error",
         }
     }

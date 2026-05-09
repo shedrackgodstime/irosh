@@ -146,9 +146,7 @@ impl LineEditor {
                     EditorEffect::NoOp
                 }
             }
-            EditorEvent::Tab => {
-                EditorEffect::RequestCompletion
-            }
+            EditorEvent::Tab => EditorEffect::RequestCompletion,
             EditorEvent::Submit => {
                 let submitted = self.line.clone();
                 match self.mode {

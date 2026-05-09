@@ -41,7 +41,10 @@ pub(crate) async fn handle_put_request(
     let mut received = 0u64;
     {
         let mut stdin = sink.stdin().ok_or_else(|| ServerError::TransferFailed {
-            details: "upload helper sink unavailable".to_string(),
+            failure: TransferFailure::new(
+                TransferFailureCode::Internal,
+                "upload helper sink unavailable",
+            ),
         })?;
 
         write_put_ready(
@@ -190,7 +193,10 @@ async fn handle_recursive_put_request(
                     {
                         let mut stdin =
                             sink.stdin().ok_or_else(|| ServerError::TransferFailed {
-                                details: "upload helper sink unavailable".to_string(),
+                                failure: TransferFailure::new(
+                                    TransferFailureCode::Internal,
+                                    "upload helper sink unavailable",
+                                ),
                             })?;
                         loop {
                             match read_next_frame(stream)
@@ -208,8 +214,9 @@ async fn handle_recursive_put_request(
                                 TransferFrame::EntryComplete(_) => break,
                                 other => {
                                     return Err(ServerError::TransferFailed {
-                                        details: format!(
-                                            "unexpected frame during recursive entry stream: {other:?}"
+                                        failure: TransferFailure::new(
+                                            TransferFailureCode::UnexpectedFrame,
+                                            format!("unexpected frame during recursive entry stream: {other:?}"),
                                         ),
                                     }
                                     .into());
@@ -223,9 +230,12 @@ async fn handle_recursive_put_request(
                     if entry_failed || helper_res.is_err() {
                         context.remove_file_if_present(&prepared.part_arg).await;
                         return Err(ServerError::TransferFailed {
-                            details: format!(
-                                "recursive entry upload failed: {}",
-                                helper_res.err().map(|e| e.to_string()).unwrap_or_default()
+                            failure: TransferFailure::new(
+                                TransferFailureCode::HelperFailed,
+                                format!(
+                                    "recursive entry upload failed: {}",
+                                    helper_res.err().map(|e| e.to_string()).unwrap_or_default()
+                                ),
                             ),
                         }
                         .into());
@@ -237,7 +247,10 @@ async fn handle_recursive_put_request(
                         .await?
                     {
                         return Err(ServerError::TransferFailed {
-                            details: format!("atomic rename failed for {}", prepared.final_arg),
+                            failure: TransferFailure::new(
+                                TransferFailureCode::AtomicRenameFailed,
+                                format!("atomic rename failed for {}", prepared.final_arg),
+                            ),
                         }
                         .into());
                     }
@@ -261,14 +274,14 @@ async fn handle_recursive_put_request(
                 return Ok(());
             }
             TransferFrame::Error(e) => {
-                return Err(ServerError::TransferFailed {
-                    details: e.to_string(),
-                }
-                .into());
+                return Err(ServerError::TransferFailed { failure: e }.into());
             }
             other => {
                 return Err(ServerError::TransferFailed {
-                    details: format!("unexpected frame during recursive upload: {other:?}"),
+                    failure: TransferFailure::new(
+                        TransferFailureCode::UnexpectedFrame,
+                        format!("unexpected frame during recursive upload: {other:?}"),
+                    ),
                 }
                 .into());
             }

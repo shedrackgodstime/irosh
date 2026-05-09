@@ -330,7 +330,7 @@ impl Client {
         .await
         .map_err(|_| {
             IroshError::Client(ClientError::SshNegotiationFailed {
-                source: russh::Error::Disconnect, // Closest error we have for timeout here
+                source: russh::Error::Disconnect,
             })
         })
         .and_then(|res| res);
@@ -425,7 +425,6 @@ impl Client {
         // 4. Fallback to assuming it is a Wormhole code.
         Ok(ResolvedTarget::WormholeCode(target.to_string()))
     }
-
     #[allow(dead_code)]
     pub(crate) fn classify_connect_error(error: &IroshError) -> SessionState {
         SessionState::from_irosh_error(error)
@@ -442,7 +441,6 @@ fn lock_or_recover<T>(mutex: &Arc<StdMutex<T>>) -> MutexGuard<'_, T> {
 use std::sync::MutexGuard;
 
 impl SessionState {
-    #[allow(dead_code)]
     pub(crate) fn from_irosh_error(error: &IroshError) -> Self {
         match error {
             IroshError::AuthenticationFailed => SessionState::AuthRejected,

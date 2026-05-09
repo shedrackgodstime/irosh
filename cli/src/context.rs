@@ -1,14 +1,12 @@
 use crate::Args;
 use anyhow::{Context, Result};
-use irosh::{IpcClient, StateConfig};
+use irosh::StateConfig;
 use std::path::PathBuf;
 
 /// Shared context for all CLI commands.
 pub struct CliContext {
     pub args: Args,
     pub state: StateConfig,
-    #[allow(dead_code)]
-    pub ipc: IpcClient,
 }
 
 impl CliContext {
@@ -20,9 +18,8 @@ impl CliContext {
             .context("could not determine state directory")?;
 
         let state = StateConfig::new(state_root.clone());
-        let ipc = IpcClient::new(state_root);
 
-        Ok(Self { args, state, ipc })
+        Ok(Self { args, state })
     }
 
     /// Returns the server-specific state directory (default fallback).

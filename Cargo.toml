@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "irosh"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Shedrack Godstime <shedrackgodstime@gmail.com>"]
@@ -54,8 +54,6 @@ tracing = "0.1"
 # tokio: async runtime and traits. 
 tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "net"] }
 tokio-util = { version = "0.7" }
-futures = "0.3"
-futures-lite = "1.13"
 dirs = "6"
 
 # rand: cryptographically secure random number generation.
