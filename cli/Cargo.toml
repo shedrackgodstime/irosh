@@ -3,14 +3,20 @@ name = "irosh-cli"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
-publish = false
+authors = ["Shedrack Godstime <shedrackgodstime@gmail.com>"]
+description = "CLI for Irosh: SSH sessions over Iroh peer-to-peer transport"
+readme = "../README.md"
+repository = "https://github.com/shedrackgodstime/irosh"
+license = "MIT OR Apache-2.0"
+keywords = ["ssh", "iroh", "p2p", "remote", "shell"]
+categories = ["network-programming", "asynchronous"]
 
 [[bin]]
 name = "irosh"
 path = "src/main.rs"
 
 [dependencies]
-irosh = { path = "..", features = ["server", "client", "storage", "transport"] }
+irosh = { version = "0.2.0", path = "..", features = ["server", "client", "storage", "transport"] }
 anyhow = "1.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
