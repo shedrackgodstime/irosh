@@ -34,7 +34,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
             Ui::success("Service restarted.");
         }
         SystemAction::Status => {
-            let status = service::query_service_status().await;
+            let status = service::query_service_status(Some(state_root.clone())).await;
 
             if ctx.args.json {
                 #[derive(serde::Serialize)]
@@ -94,7 +94,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
             eprintln!("  ----------------------------------------------------\n");
         }
         SystemAction::Logs { follow } => {
-            irosh::sys::service::view_logs(follow).await?;
+            irosh::sys::service::view_logs(follow, Some(state_root)).await?;
         }
     }
     Ok(())

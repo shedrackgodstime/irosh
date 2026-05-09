@@ -162,7 +162,21 @@ impl AsyncStdin {
                                         0x25 => Some("\x1b[D"),  // Left
                                         0x24 => Some("\x1b[H"),  // Home
                                         0x23 => Some("\x1b[F"),  // End
+                                        0x21 => Some("\x1b[5~"), // PageUp
+                                        0x22 => Some("\x1b[6~"), // PageDown
+                                        0x2D => Some("\x1b[2~"), // Insert
                                         0x2E => Some("\x1b[3~"), // Delete
+                                        0x09 => {
+                                            // Handle Shift+Tab (BackTab)
+                                            if key.dwControlKeyState
+                                                & (LEFT_SHIFT_PRESSED | RIGHT_SHIFT_PRESSED)
+                                                != 0
+                                            {
+                                                Some("\x1b[Z")
+                                            } else {
+                                                None // Tab is handled by UnicodeChar fallback
+                                            }
+                                        }
                                         _ => None,
                                     };
 

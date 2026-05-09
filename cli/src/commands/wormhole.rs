@@ -21,7 +21,7 @@ pub async fn exec(
     let mut daemon_running = ipc_client.send(IpcCommand::GetStatus).await.is_ok();
     if !daemon_running && ctx.args.state.is_none() {
         if let irosh::sys::service::ServiceStatus::Active(_) =
-            irosh::sys::service::query_service_status().await
+            irosh::sys::service::query_service_status(Some(state_root.clone())).await
         {
             let mut retries = 0;
             while retries < 6 {

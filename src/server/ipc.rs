@@ -163,14 +163,21 @@ impl IpcServer {
 
             info!("IPC listener active at {}", path.display());
 
+            let mut first = true;
             loop {
-                let mut server = ServerOptions::new()
-                    .first_pipe_instance(true)
-                    .create(&*path.to_string_lossy())
-                    .map_err(|e| IpcError::BindFailed {
-                        path: path.clone(),
-                        source: e,
-                    })?;
+                let mut options = ServerOptions::new();
+                if first {
+                    options.first_pipe_instance(true);
+                    first = false;
+                }
+
+                let mut server =
+                    options
+                        .create(&*path.to_string_lossy())
+                        .map_err(|e| IpcError::BindFailed {
+                            path: path.clone(),
+                            source: e,
+                        })?;
 
                 server.connect().await?;
 

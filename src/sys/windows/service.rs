@@ -21,7 +21,8 @@ use windows_service::{
 const SERVICE_NAME: &str = "irosh";
 const SERVICE_DISPLAY_NAME: &str = "Irosh P2P SSH Service";
 
-pub async fn query_service_status() -> ServiceStatus {
+pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
+    let _ = state; // Windows uses a global service name for now
     let manager = match ServiceManager::local_computer(
         None::<&std::ffi::OsStr>,
         ServiceManagerAccess::CONNECT,
@@ -229,10 +230,12 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-pub async fn view_logs(follow: bool) -> Result<()> {
-    let state_dir = dirs::home_dir()
-        .map(|h| h.join(".irosh"))
-        .unwrap_or_else(|| PathBuf::from(".irosh"));
+pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
+    let state_dir = state.unwrap_or_else(|| {
+        dirs::home_dir()
+            .map(|h| h.join(".irosh").join("server"))
+            .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
+    });
     let log_path = state_dir.join("daemon.log");
 
     if !log_path.exists() {

@@ -147,7 +147,7 @@ async fn show_help(stdout: &mut tokio::io::Stdout) -> Result<()> {
         .write_all(b"  ~~  - Send a literal tilde character\r\n")
         .await?;
     stdout
-        .write_all(b"(Escape sequences are only recognized at the start of a line)")
+        .write_all(b"(Escape sequences are only recognized at the start of a line)\r\n")
         .await?;
     stdout.flush().await?;
     Ok(())

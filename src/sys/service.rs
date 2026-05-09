@@ -40,28 +40,31 @@ pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Re
 }
 
 /// Displays the service logs.
-pub async fn view_logs(follow: bool) -> Result<()> {
+pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     #[cfg(unix)]
-    return crate::sys::unix::service::view_logs(follow).await;
+    return crate::sys::unix::service::view_logs(follow, state).await;
 
     #[cfg(windows)]
-    return crate::sys::windows::service::view_logs(follow).await;
+    return crate::sys::windows::service::view_logs(follow, state).await;
 
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = follow;
+        let _ = (follow, state);
         Err(crate::error::IroshError::PlatformNotSupported)
     }
 }
 
 /// Queries the OS service manager for the service status.
-pub async fn query_service_status() -> ServiceStatus {
+pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     #[cfg(unix)]
-    return crate::sys::unix::service::query_service_status().await;
+    return crate::sys::unix::service::query_service_status(state).await;
 
     #[cfg(windows)]
-    return crate::sys::windows::service::query_service_status().await;
+    return crate::sys::windows::service::query_service_status(state).await;
 
     #[cfg(not(any(unix, windows)))]
-    ServiceStatus::Unknown
+    {
+        let _ = state;
+        ServiceStatus::Unknown
+    }
 }

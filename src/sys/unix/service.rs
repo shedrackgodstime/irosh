@@ -5,19 +5,22 @@ use crate::sys::service::{ServiceAction, ServiceStatus};
 use std::path::PathBuf;
 use tracing::info;
 
-pub async fn query_service_status() -> ServiceStatus {
+pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     #[cfg(target_os = "linux")]
-    return query_status_linux().await;
+    return query_status_linux(state).await;
 
     #[cfg(target_os = "macos")]
-    return query_status_macos().await;
+    return query_status_macos(state).await;
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    ServiceStatus::Unknown
+    {
+        let _ = state;
+        ServiceStatus::Unknown
+    }
 }
 
 #[cfg(target_os = "linux")]
-async fn query_status_linux() -> ServiceStatus {
+async fn query_status_linux(_state: Option<PathBuf>) -> ServiceStatus {
     let user_home = dirs::home_dir().unwrap_or_default();
     let service_file = user_home.join(".config/systemd/user/irosh.service");
     let exists = service_file.exists();
@@ -52,7 +55,7 @@ async fn query_status_linux() -> ServiceStatus {
 }
 
 #[cfg(target_os = "macos")]
-async fn query_status_macos() -> ServiceStatus {
+async fn query_status_macos(_state: Option<PathBuf>) -> ServiceStatus {
     let uid = match std::process::Command::new("id").arg("-u").output() {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(_) => return ServiceStatus::Unknown,
@@ -370,19 +373,22 @@ fn current_uid() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub async fn view_logs(follow: bool) -> Result<()> {
+pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     #[cfg(target_os = "linux")]
-    return view_logs_linux(follow).await;
+    return view_logs_linux(follow, state).await;
 
     #[cfg(target_os = "macos")]
-    return view_logs_macos(follow).await;
+    return view_logs_macos(follow, state).await;
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    Err(IroshError::PlatformNotSupported)
+    {
+        let _ = (follow, state);
+        Err(IroshError::PlatformNotSupported)
+    }
 }
 
 #[cfg(target_os = "linux")]
-async fn view_logs_linux(follow: bool) -> Result<()> {
+async fn view_logs_linux(follow: bool, _state: Option<PathBuf>) -> Result<()> {
     let mut args = vec!["--user", "-u", "irosh"];
     if follow {
         args.push("-f");
@@ -404,7 +410,7 @@ async fn view_logs_linux(follow: bool) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-async fn view_logs_macos(follow: bool) -> Result<()> {
+async fn view_logs_macos(follow: bool, _state: Option<PathBuf>) -> Result<()> {
     let user_home = dirs::home_dir().ok_or_else(|| ServerError::ServiceManagement {
         details: "could not find home directory".to_string(),
     })?;

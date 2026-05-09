@@ -124,10 +124,7 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<NodeIdentit
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect::<String>();
-        fs::write(&path, hex).map_err(|source| StorageError::FileWrite {
-            path: path.clone(),
-            source,
-        })?;
+        crate::storage::utils::atomic_write_secure(&path, hex.as_bytes())?;
         secret_key
     };
 
@@ -167,7 +164,5 @@ pub fn save_secret_key(state: &StateConfig, key: &SecretKey) -> Result<()> {
         .iter()
         .map(|b| format!("{:02x}", b))
         .collect::<String>();
-    fs::write(&path, hex)
-        .map_err(|source| StorageError::FileWrite { path, source })
-        .map_err(Into::into)
+    crate::storage::utils::atomic_write_secure(&path, hex.as_bytes())
 }
