@@ -11,42 +11,45 @@ We have just completed a massive overhaul of the Linux/Unix side of the codebase
 - **Fat Library, Thin CLI**: The `irosh` library crate does absolutely zero UI printing or argument parsing. It strictly returns typed `Result`s and structured data.
 - **Authentication & Security**: The Auth lifecycle (`src/auth.rs`) has been deeply tested to handle passwords, TOFU, and Vault checks via Argon2id.
 
-## 2. Windows Separation of Concerns
+## 2. Windows Implementation Handoff
 
-**You do NOT need to touch the Linux code.**
-The core architecture has been successfully decoupled:
-- `src/sys/unix/` and `src/sys/linux/` (Handles Linux PTY and Systemd Daemons).
-- `src/sys/windows/` (Handles Windows ConPTY and Windows Services).
+## 🚨 Critical Fixes Applied (2026-05-09)
+The following issues have been resolved to ensure the background daemon is reliable:
 
-The CLI layer dynamically interfaces with these through `src/sys/mod.rs` and `src/sys/service.rs`.
+1.  **IPC Deadlock Resolved**: Fixed a hang where `IpcClient` didn't shut down the write-half of Named Pipes on Windows, causing the server to wait forever for EOF.
+2.  **State Path Synchronization**: Fixed a mismatch where the background service used `~/.irosh/` while the CLI looked in `~/.irosh/server/`. Both are now synchronized to `~/.irosh/server/`.
+3.  **Service Startup Patience**: Added a 3-second retry loop to the `wormhole` command. This handles cases where the Windows service is reported "Running" by SCM but the Iroh network stack is still initializing.
 
-## 3. Your Objectives on Windows
+## 🛠️ Windows-Specific Architecture
+- **Binary**: `irosh.exe` is a "fat binary" containing both CLI and Server logic.
+- **Service Manager**: Integrated with Windows Service Control Manager (SCM) via the `windows-service` crate.
+- **Service Name**: `irosh`
+- **Default State**: `%USERPROFILE%\.irosh\server` (Server) and `%USERPROFILE%\.irosh\client` (CLI).
+- **IPC Mechanism**: Named Pipe: `\\.\pipe\irosh-service-<hash_of_state_dir>`
 
-Your primary goal is to finalize the background daemon implementation for Windows so that `irosh system install` and `irosh system start` work exactly like they do on Linux.
-
-1. **Windows Service Implementation**:
-   - Check `src/sys/windows/service.rs`.
-   - Implement the `ServiceControlManager` bindings (likely using `windows-service` or the `windows` crate).
-   - Ensure the daemon starts the `irosh host` process in the background.
-
-2. **Windows ConPTY**:
-   - The PTY code in `src/sys/windows/pty.rs` needs a final check to ensure the Windows Pseudo-Console handles resizing and interactive inputs flawlessly.
-
-## 4. Verification
-
-After you implement the Windows service bindings, run the following to verify the cross-platform separation has not been broken:
-
+## 📝 Action Items for Windows Development
+### 1. Verification of Background Daemon
+Run the following to ensure the IPC and Service sync is working on your machine:
 ```powershell
-# 1. Ensure the code compiles flawlessly on MSVC
-cargo check --workspace
-cargo clippy --all-targets --all-features -- -D warnings
+# 1. Install and Start
+irosh system install
 
-# 2. Test the automation pipeline locally
-$env:IROSH_PASSWORD="MySecurePassword"
-cargo run --bin irosh -- passwd set
-cargo run --bin irosh -- system status --json
+# 2. Check status via IPC (Wait ~2 seconds for Iroh to bind)
+irosh system status
+
+# 3. Enable a wormhole and verify it stays in background
+irosh wormhole --code windows-test
+irosh wormhole status
 ```
 
-**Rule of Thumb**: Do not modify the generic `cli/src/` logic. Only modify code inside `src/sys/windows/`. If you find yourself needing to change the generic CLI prompt behavior to make Windows work, stop and rethink the design!
+### 2. ConPTY Fine-Tuning
+The `src/sys/windows/pty.rs` includes a manual translation for arrow keys and special characters. If you notice specific keys (like PageUp/PageDown) aren't working in an SSH session to a Windows host, they should be added to the `match` block in `AsyncStdin::new`.
+
+### 3. Permission Validation
+Ensure that after running a command that writes state (like `irosh passwd set`), the files in `~/.irosh/server` have restricted access. Check File Explorer -> Properties -> Security (it should only show your user account).
+
+## ⚠️ No-Regression Rule
+**Do not modify the generic logic in `irosh-cli/src/commands/` or `irosh/src/server/`.**
+All Windows-specific fixes must stay within `#[cfg(windows)]` blocks or inside the `src/sys/windows/` module to ensure we don't break the Linux/macOS builds.
 
 Good luck!
