@@ -30,6 +30,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
             };
 
             #[repr(C)]
+            #[allow(non_snake_case)]
             struct PROCESS_BASIC_INFORMATION {
                 ExitStatus: NTSTATUS,
                 PebBaseAddress: *mut std::ffi::c_void,
