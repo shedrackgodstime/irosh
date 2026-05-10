@@ -39,7 +39,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
                 InheritedFromUniqueProcessId: usize,
             }
 
-            extern "system" {
+            unsafe extern "system" {
                 fn NtQueryInformationProcess(
                     ProcessHandle: HANDLE,
                     ProcessInformationClass: u32,
@@ -51,11 +51,11 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
 
             let handle =
                 unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid) };
-            if handle == 0 {
+            if handle == 0 as _ {
                 return Ok(fallback_windows());
             }
 
-            let mut pbi = std::mem::maybe_uninit::<PROCESS_BASIC_INFORMATION>::uninit();
+            let mut pbi = std::mem::MaybeUninit::<PROCESS_BASIC_INFORMATION>::uninit();
             let mut ret_len = 0;
             let status = unsafe {
                 NtQueryInformationProcess(
@@ -101,7 +101,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
             #[cfg(target_pointer_width = "32")]
             let cur_dir_offset = 0x24;
 
-            let mut unicode_str = std::mem::maybe_uninit::<UNICODE_STRING>::uninit();
+            let mut unicode_str = std::mem::MaybeUninit::<UNICODE_STRING>::uninit();
             let ok = unsafe {
                 ReadProcessMemory(
                     handle,
