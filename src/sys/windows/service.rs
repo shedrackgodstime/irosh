@@ -66,8 +66,8 @@ pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Re
 }
 
 async fn install_service(state: Option<PathBuf>) -> Result<()> {
-    let exe = std::env::current_exe().map_err(|e| ServerError::ServiceManagement {
-        details: format!("failed to get current exe path: {}", e),
+    let _exe = std::env::current_exe().map_err(|e| ServerError::ServiceManagement {
+        details: format!("failed to get current executable path: {}", e),
     })?;
 
     // Perform SCM installation in a synchronous scope to ensure non-Send types are dropped
@@ -86,23 +86,25 @@ async fn install_service(state: Option<PathBuf>) -> Result<()> {
             ServerError::ServiceManagement { details }
         })?;
 
-        let mut launch_arguments: Vec<OsString> = vec!["host".into()];
-        if let Some(p) = state {
-            launch_arguments.push("--state".into());
-            launch_arguments.push(p.into_os_string());
-        }
+        let state_dir = state.clone().unwrap_or_else(|| {
+            dirs::home_dir()
+                .map(|h| h.join(".irosh").join("server"))
+                .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
+        });
+
+        let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("irosh.exe"));
 
         let service_info = windows_service::service::ServiceInfo {
             name: SERVICE_NAME.to_string().into(),
             display_name: SERVICE_DISPLAY_NAME.to_string().into(),
-            service_type: ServiceType::OWN_PROCESS,
+            service_type: windows_service::service::ServiceType::OWN_PROCESS,
             start_type: windows_service::service::ServiceStartType::AutoStart,
             error_control: windows_service::service::ServiceErrorControl::Normal,
-            executable_path: exe,
-            dependencies: Vec::new(),
+            executable_path: exe_path,
+            dependencies: vec![],
             account_name: None,
             account_password: None,
-            launch_arguments,
+            launch_arguments: vec!["host".into(), "--state".into(), state_dir.into_os_string()],
         };
 
         let _service = manager
@@ -287,15 +289,16 @@ fn irosh_service_main(arguments: Vec<OsString>) {
     }
 }
 
-fn irosh_service_run(arguments: Vec<OsString>) -> Result<()> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
 
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
         match control_event {
-            ServiceControl::Stop | ServiceControl::Interrogate => {
-                let _ = tx.blocking_send(());
+            ServiceControl::Stop => {
+                let _ = tx.send(());
                 ServiceControlHandlerResult::NoError
             }
+            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             _ => ServiceControlHandlerResult::NotImplemented,
         }
     };
@@ -328,12 +331,12 @@ fn irosh_service_run(arguments: Vec<OsString>) -> Result<()> {
 
     rt.block_on(async {
         // Parse arguments to find state directory.
-        // Note: arguments[0] is the service name.
         let mut state_dir = None;
+        let env_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
         let mut i = 1;
-        while i < arguments.len() {
-            if (arguments[i] == "--state" || arguments[i] == "-s") && i + 1 < arguments.len() {
-                state_dir = Some(PathBuf::from(&arguments[i + 1]));
+        while i < env_args.len() {
+            if (env_args[i] == "--state" || env_args[i] == "-s") && i + 1 < env_args.len() {
+                state_dir = Some(PathBuf::from(&env_args[i + 1]));
                 break;
             }
             i += 1;
@@ -344,6 +347,49 @@ fn irosh_service_run(arguments: Vec<OsString>) -> Result<()> {
                 .map(|h| h.join(".irosh").join("server"))
                 .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
         });
+
+        // Catch panics and log them to the daemon log
+        std::panic::set_hook(Box::new(move |info| {
+            error!("SERVICE PANIC: {}", info);
+        }));
+
+        // Initialize file logging for the service in the user root for better visibility
+        let log_path = PathBuf::from("C:\\Users\\Ghost\\irosh_daemon.log");
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let _ = tracing_subscriber::fmt()
+                .with_writer(file)
+                .with_env_filter("irosh=debug,info")
+                .try_init();
+        }
+
+        info!(
+            "Service starting with state directory: {}",
+            state_root.display()
+        );
+        info!("Command line: {:?}", env_args);
+
+        // On Windows, when running as LocalSystem, the HOME and USERPROFILE
+        // environment variables point to the system profile. We want them to
+        // point to the user's home directory so that path resolution (e.g. ~/)
+        // works correctly. We can infer this from the state directory.
+        // If state_root is C:\Users\Ghost\.irosh\server, then home is C:\Users\Ghost.
+        if let Some(parent) = state_root.parent() {
+            // C:\Users\Ghost\.irosh
+            if let Some(home) = parent.parent() {
+                // C:\Users\Ghost
+                let home_str = home.to_string_lossy();
+                info!("Mapping service home to: {}", home_str);
+                // SAFETY: We are in the single-threaded initialization phase of the service.
+                unsafe {
+                    std::env::set_var("HOME", &*home_str);
+                    std::env::set_var("USERPROFILE", &*home_str);
+                }
+            }
+        }
 
         let state = crate::config::StateConfig::new(state_root);
         let config = crate::storage::load_config(&state).unwrap_or_default();
@@ -367,8 +413,10 @@ fn irosh_service_run(arguments: Vec<OsString>) -> Result<()> {
 
         let shutdown = server.shutdown_handle();
 
+        // Use a blocking recv on the standard channel in a spawned blocking task
+        // to avoid blocking the main async loop.
         tokio::select! {
-            _ = rx.recv() => {
+            _ = tokio::task::spawn_blocking(move || rx.recv()) => {
                 info!("Service stop requested via SCM.");
                 shutdown.close().await;
             }

@@ -222,7 +222,7 @@ pub async fn execute_local_command(
             remote,
             recursive,
         } => {
-            let _ = handle_put_command(
+            handle_put_command(
                 session,
                 stdout,
                 stdin,
@@ -231,7 +231,7 @@ pub async fn execute_local_command(
                 remote.as_deref(),
                 recursive,
             )
-            .await;
+            .await?;
             print_prompt!();
         }
         LocalCommand::Get {
@@ -239,7 +239,7 @@ pub async fn execute_local_command(
             local,
             recursive,
         } => {
-            let _ = handle_get_command(
+            handle_get_command(
                 session,
                 stdout,
                 stdin,
@@ -248,7 +248,7 @@ pub async fn execute_local_command(
                 local.as_deref(),
                 recursive,
             )
-            .await;
+            .await?;
             print_prompt!();
         }
         LocalCommand::Unknown(cmd) => {

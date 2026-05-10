@@ -110,14 +110,7 @@ impl IpcServer {
         }
         #[cfg(windows)]
         {
-            // Windows named pipes follow a specific format.
-            // We use a name derived from the state directory to avoid collisions
-            // between multiple users or instances.
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            self.state_dir.hash(&mut hasher);
-            let hash = hasher.finish();
-            PathBuf::from(format!(r"\\.\pipe\irosh-service-{:x}", hash))
+            self.state_dir.join("ipc.port")
         }
     }
 
@@ -159,34 +152,32 @@ impl IpcServer {
 
         #[cfg(windows)]
         {
-            use tokio::net::windows::named_pipe::ServerOptions;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|e| IpcError::BindFailed {
+                    path: path.clone(),
+                    source: e,
+                })?;
 
-            info!("IPC listener active at {}", path.display());
+            let local_addr = listener.local_addr().unwrap();
+            let _ = std::fs::write(&path, local_addr.port().to_string());
 
-            let mut first = true;
+            info!("IPC listener active on {}", local_addr);
+
             loop {
-                let mut options = ServerOptions::new();
-                if first {
-                    options.first_pipe_instance(true);
-                    first = false;
-                }
-
-                let mut server =
-                    options
-                        .create(&*path.to_string_lossy())
-                        .map_err(|e| IpcError::BindFailed {
-                            path: path.clone(),
-                            source: e,
-                        })?;
-
-                server.connect().await?;
-
-                let tx = self.control_tx.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_ipc_connection(&mut server, tx).await {
-                        debug!("IPC connection error: {}", e);
+                match listener.accept().await {
+                    Ok((mut stream, _)) => {
+                        let tx = self.control_tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_ipc_connection(&mut stream, tx).await {
+                                debug!("IPC connection error: {}", e);
+                            }
+                        });
                     }
-                });
+                    Err(e) => {
+                        warn!("IPC accept error: {}", e);
+                    }
+                }
             }
         }
     }

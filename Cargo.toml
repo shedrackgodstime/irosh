@@ -87,6 +87,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Threading",
 ] }
 windows-service = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 # tokio with full features for async test harnesses.

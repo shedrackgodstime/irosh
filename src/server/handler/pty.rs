@@ -176,6 +176,23 @@ impl ServerHandler {
         };
 
         builder.env("TERM", &state_entry.pty.term);
+
+        // On Windows, ensure we have a decent PATH if running as a service
+        #[cfg(windows)]
+        {
+            if let Ok(path) = std::env::var("PATH") {
+                let mut new_path = path;
+                if let Some(home) = dirs::home_dir() {
+                    let cargo_bin = home.join(".cargo").join("bin");
+                    let cargo_bin_str = cargo_bin.to_string_lossy();
+                    if !new_path.contains(&*cargo_bin_str) {
+                        new_path = format!("{};{}", cargo_bin_str, new_path);
+                    }
+                }
+                builder.env("PATH", new_path);
+            }
+        }
+
         for (key, value) in &state_entry.env {
             builder.env(key, value);
         }

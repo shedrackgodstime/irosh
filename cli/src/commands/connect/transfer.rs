@@ -29,7 +29,8 @@ impl TransferContext {
             Some(raw) if raw == "." || raw == "./" => self.local_root.join(fallback_name),
             Some(raw) => {
                 let path = resolve_local_input_path(&self.local_root, raw);
-                if raw.ends_with('/') || path.is_dir() {
+                let is_explicit_dir = raw.ends_with('/') || raw.ends_with('\\');
+                if is_explicit_dir || path.is_dir() {
                     auto_rename_download_target(path.join(fallback_name))
                 } else {
                     path
@@ -135,7 +136,8 @@ async fn resolve_remote_path(
     }
 
     let cwd = session.remote_cwd().await?;
-    if raw.ends_with('/') {
+    let is_explicit_dir = raw.ends_with('/') || raw.ends_with('\\');
+    if is_explicit_dir {
         Ok(match fallback_name {
             Some(fallback) => cwd.join(raw).join(fallback),
             None => cwd.join(raw),

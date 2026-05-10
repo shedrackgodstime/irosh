@@ -92,6 +92,10 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
         use windows_sys::Win32::Security::*;
         use windows_sys::Win32::System::Threading::*;
 
+        const SECURITY_LOCAL_SYSTEM_RID: u32 = 0x00000012;
+        const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x00000020;
+        const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x00000220;
+
         unsafe {
             let mut process_token: HANDLE = std::ptr::null_mut();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut process_token) == 0 {
@@ -124,7 +128,44 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
             let _ = CloseHandle(process_token);
 
             let token_user = buf.as_ptr() as *const TOKEN_USER;
-            let sid = (*token_user).User.Sid;
+            let user_sid = (*token_user).User.Sid;
+
+            // Define SIDs for SYSTEM and Administrators
+            let mut system_sid: *mut std::ffi::c_void = std::ptr::null_mut();
+            let mut admin_sid: *mut std::ffi::c_void = std::ptr::null_mut();
+            let system_authority = SID_IDENTIFIER_AUTHORITY {
+                Value: [0, 0, 0, 0, 0, 5],
+            };
+            let nt_authority = SID_IDENTIFIER_AUTHORITY {
+                Value: [0, 0, 0, 0, 0, 5],
+            };
+
+            AllocateAndInitializeSid(
+                &system_authority,
+                1,
+                SECURITY_LOCAL_SYSTEM_RID,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                &mut system_sid,
+            );
+            AllocateAndInitializeSid(
+                &nt_authority,
+                2,
+                SECURITY_BUILTIN_DOMAIN_RID,
+                DOMAIN_ALIAS_RID_ADMINS,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                &mut admin_sid,
+            );
 
             // Initialize a security descriptor
             let mut sd: SECURITY_DESCRIPTOR = std::mem::zeroed();
@@ -136,10 +177,12 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
                 .into());
             }
 
-            // Create a DACL that allows only the current user.
+            // Create a DACL that allows the user, SYSTEM, and Administrators.
             let dacl_size = std::mem::size_of::<ACL>()
-                + std::mem::size_of::<ACCESS_ALLOWED_ACE>()
-                + GetLengthSid(sid) as usize;
+                + (std::mem::size_of::<ACCESS_ALLOWED_ACE>() * 3)
+                + GetLengthSid(user_sid) as usize
+                + GetLengthSid(system_sid) as usize
+                + GetLengthSid(admin_sid) as usize;
             let mut dacl_buf = vec![0u32; dacl_size.div_ceil(4)];
             let dacl = dacl_buf.as_mut_ptr() as *mut ACL;
 
@@ -151,12 +194,13 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
                 .into());
             }
 
-            if AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, sid) == 0 {
-                return Err(StorageError::FileWrite {
-                    path: path.to_path_buf(),
-                    source: io::Error::last_os_error(),
-                }
-                .into());
+            // Add ACEs for User, SYSTEM, and Administrators
+            AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, user_sid);
+            if !system_sid.is_null() {
+                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, system_sid);
+            }
+            if !admin_sid.is_null() {
+                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, admin_sid);
             }
 
             // Set the DACL to the security descriptor.
@@ -169,7 +213,6 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
             }
 
             // Protect the DACL from inheritance (break inheritance).
-            // SE_DACL_PROTECTED = 0x1000
             let _ = SetSecurityDescriptorControl(&mut sd as *mut _ as *mut _, 0x1000, 0x1000);
 
             // Apply the security descriptor to the path.
@@ -179,7 +222,6 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
                 .chain(std::iter::once(0))
                 .collect();
 
-            // SetFileSecurityW is widely available and stable.
             if SetFileSecurityW(
                 path_u16.as_ptr(),
                 DACL_SECURITY_INFORMATION,
@@ -191,6 +233,13 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
                     source: io::Error::last_os_error(),
                 }
                 .into());
+            }
+
+            if !system_sid.is_null() {
+                FreeSid(system_sid);
+            }
+            if !admin_sid.is_null() {
+                FreeSid(admin_sid);
             }
         }
     }

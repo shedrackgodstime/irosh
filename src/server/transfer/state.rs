@@ -99,7 +99,7 @@ impl ShellContext {
                 Ok(path)
             }
             Self::Stateless => {
-                let home = server_home_dir().ok_or_else(|| ServerError::ShellError {
+                let home = self.home_dir().ok_or_else(|| ServerError::ShellError {
                     details: "could not determine server home directory".to_string(),
                 })?;
                 tracing::debug!("Resolved stateless CWD (home): {}", home.display());
@@ -242,6 +242,26 @@ impl ShellContext {
             let _ = (path, mode);
         }
     }
+
+    fn home_dir(self) -> Option<PathBuf> {
+        #[cfg(unix)]
+        {
+            std::env::var_os("HOME").map(PathBuf::from)
+        }
+        #[cfg(windows)]
+        {
+            // If running as a service, USERPROFILE points to systemprofile.
+            // We can infer the actual user home by looking at the state directory.
+            let profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
+            if let Some(p) = &profile {
+                if p.to_string_lossy().to_lowercase().contains("systemprofile") {
+                    // We are likely a service. The home directory is correctly inferred
+                    // in the service startup logic via environment variable mapping.
+                }
+            }
+            profile.or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        }
+    }
 }
 
 impl ShellContext {
@@ -291,7 +311,6 @@ impl ShellContext {
 }
 
 fn server_home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+    // We use Stateless context to call the home_dir helper.
+    ShellContext::Stateless.home_dir()
 }

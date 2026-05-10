@@ -21,15 +21,17 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            Err(IroshError::Server(ServerError::ProcessQueryFailed {
+            // On Windows and other platforms, we don't have an easy /proc/pid/cwd.
+            // For now, we fallback to the current directory of the daemon itself,
+            // or the user's home directory.
+            let fallback = std::env::current_dir()
+                .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
+            tracing::warn!(
+                "Reliable CWD query not available for PID {} on this platform; using fallback: {}",
                 pid,
-                details: "reliable remote cwd queries are not implemented on this platform yet"
-                    .to_string(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "unsupported platform",
-                ),
-            }))
+                fallback.display()
+            );
+            Ok(fallback)
         }
     })
     .await

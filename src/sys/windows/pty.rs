@@ -168,10 +168,7 @@ impl AsyncStdin {
                                         0x2E => Some("\x1b[3~"), // Delete
                                         0x09 => {
                                             // Handle Shift+Tab (BackTab)
-                                            if key.dwControlKeyState
-                                                & (LEFT_SHIFT_PRESSED | RIGHT_SHIFT_PRESSED)
-                                                != 0
-                                            {
+                                            if key.dwControlKeyState & SHIFT_PRESSED != 0 {
                                                 Some("\x1b[Z")
                                             } else {
                                                 None // Tab is handled by UnicodeChar fallback

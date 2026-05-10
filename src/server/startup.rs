@@ -93,7 +93,7 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     // Transient direct addresses are omitted to ensure the ticket string
     // remains identical across server restarts and network changes.
     let mut stable_addr = iroh::EndpointAddr::new(transport.addr.id);
-    if let Some(relay_url) = transport.addr.relay_urls().next() {
+    for relay_url in transport.addr.relay_urls() {
         stable_addr = stable_addr.with_relay_url(relay_url.clone());
     }
 

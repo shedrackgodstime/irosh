@@ -19,13 +19,7 @@ impl IpcClient {
         #[cfg(unix)]
         let socket_path = _state_dir.join("irosh.sock");
         #[cfg(windows)]
-        let socket_path = {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            _state_dir.hash(&mut hasher);
-            let hash = hasher.finish();
-            PathBuf::from(format!(r"\\.\pipe\irosh-service-{:x}", hash))
-        };
+        let socket_path = _state_dir.join("ipc.port");
 
         Self { socket_path }
     }
@@ -60,13 +54,19 @@ impl IpcClient {
     }
 
     #[cfg(windows)]
-    async fn connect(&self) -> Result<tokio::net::windows::named_pipe::NamedPipeClient> {
-        use tokio::net::windows::named_pipe::ClientOptions;
+    async fn connect(&self) -> Result<tokio::net::TcpStream> {
+        let port_str =
+            std::fs::read_to_string(&self.socket_path).map_err(crate::error::IroshError::Io)?;
+        let port: u16 = port_str.trim().parse().map_err(|_| {
+            crate::error::IroshError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid port in ipc.port file",
+            ))
+        })?;
 
-        let client = ClientOptions::new()
-            .open(&*self.socket_path.to_string_lossy())
-            .map_err(crate::error::IroshError::Io)?;
-
-        Ok(client)
+        let addr = format!("127.0.0.1:{}", port);
+        tokio::net::TcpStream::connect(&addr)
+            .await
+            .map_err(crate::error::IroshError::Io)
     }
 }
