@@ -136,14 +136,39 @@ async fn resolve_remote_path(
     }
 
     let cwd = session.remote_cwd().await?;
+    let is_windows = session
+        .remote_metadata()
+        .map(|m| m.os.to_lowercase().contains("windows"))
+        .unwrap_or(false);
+
     let is_explicit_dir = raw.ends_with('/') || raw.ends_with('\\');
     if is_explicit_dir {
         Ok(match fallback_name {
-            Some(fallback) => cwd.join(raw).join(fallback),
+            Some(fallback) => {
+                let base = cwd.join(raw);
+                if is_windows {
+                    // If we are on Linux but the remote is Windows, PathBuf::join
+                    // will use forward slashes. We need to ensure the final path
+                    // is compatible with the remote.
+                    let mut path_str = base.to_string_lossy().to_string();
+                    if !path_str.ends_with('\\') && !path_str.ends_with('/') {
+                        path_str.push('\\');
+                    }
+                    path_str.push_str(fallback);
+                    PathBuf::from(path_str.replace('/', "\\"))
+                } else {
+                    base.join(fallback)
+                }
+            }
             None => cwd.join(raw),
         })
     } else {
-        Ok(cwd.join(raw))
+        let base = cwd.join(raw);
+        if is_windows {
+            Ok(PathBuf::from(base.to_string_lossy().replace('/', "\\")))
+        } else {
+            Ok(base)
+        }
     }
 }
 

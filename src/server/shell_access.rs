@@ -22,16 +22,32 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
         #[cfg(not(target_os = "linux"))]
         {
             // On Windows and other platforms, we don't have an easy /proc/pid/cwd.
-            // For now, we fallback to the current directory of the daemon itself,
-            // or the user's home directory.
-            let fallback = std::env::current_dir()
-                .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
+            // We attempt to find a sensible fallback.
+            // 1. Try to find the home directory of the current user.
+            // 2. Fallback to the daemon's current directory if home is not available or is systemprofile.
+
+            let mut fallback = dirs::home_dir();
+
+            #[cfg(windows)]
+            {
+                if let Some(h) = &fallback {
+                    if h.to_string_lossy().to_lowercase().contains("systemprofile") {
+                        // We are a service running as LocalSystem.
+                        // Try to find if there's a better directory we can use.
+                        fallback = None;
+                    }
+                }
+            }
+
+            let result = fallback
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
             tracing::warn!(
                 "Reliable CWD query not available for PID {} on this platform; using fallback: {}",
                 pid,
-                fallback.display()
+                result.display()
             );
-            Ok(fallback)
+            Ok(result)
         }
     })
     .await

@@ -48,6 +48,12 @@ The `src/sys/windows/pty.rs` includes a manual translation for arrow keys and sp
 ### 3. Permission Validation
 Ensure that after running a command that writes state (like `irosh passwd set`), the files in `~/.irosh/server` have restricted access. Check File Explorer -> Properties -> Security (it should only show your user account).
 
+### 4. Advanced: Process-Level CWD Tracking
+Currently, file transfers (`put`/`get`) on Windows fallback to the user's home directory if the reliable CWD of the remote shell cannot be determined. To achieve perfect parity with Linux (where we use `/proc/pid/cwd`), a developer should investigate using `NtQueryInformationProcess` to read the `PEB` (Process Environment Block) of the spawned shell and extract the `CurrentDirectory`. 
+
+### 5. Environment & PATH Propagation
+When running as a service, the `PATH` environment variable is often restricted to system defaults. We have a basic workaround in `src/server/handler/pty.rs` to add `.cargo/bin`, but this may not capture the user's full environment. A suggestion for improvement is to implement a mechanism that captures the `PATH` from the interactive user's registry key (`HKCU\Environment`) and merges it into the spawned shell's context.
+
 ## ⚠️ No-Regression Rule
 **Do not modify the generic logic in `irosh-cli/src/commands/` or `irosh/src/server/`.**
 All Windows-specific fixes must stay within `#[cfg(windows)]` blocks or inside the `src/sys/windows/` module to ensure we don't break the Linux/macOS builds.

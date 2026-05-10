@@ -182,6 +182,8 @@ impl ServerHandler {
         {
             if let Ok(path) = std::env::var("PATH") {
                 let mut new_path = path;
+
+                // Add .cargo/bin
                 if let Some(home) = dirs::home_dir() {
                     let cargo_bin = home.join(".cargo").join("bin");
                     let cargo_bin_str = cargo_bin.to_string_lossy();
@@ -189,6 +191,17 @@ impl ServerHandler {
                         new_path = format!("{};{}", cargo_bin_str, new_path);
                     }
                 }
+
+                // Add current executable's directory so 'irosh' itself is callable
+                if let Ok(current_exe) = std::env::current_exe() {
+                    if let Some(exe_dir) = current_exe.parent() {
+                        let exe_dir_str = exe_dir.to_string_lossy();
+                        if !new_path.contains(&*exe_dir_str) {
+                            new_path = format!("{};{}", exe_dir_str, new_path);
+                        }
+                    }
+                }
+
                 builder.env("PATH", new_path);
             }
         }
