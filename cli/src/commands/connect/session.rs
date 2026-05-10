@@ -14,6 +14,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
     let mut stderr = tokio::io::stderr();
     let mut transfer_context = TransferContext::new();
 
+    #[cfg(unix)]
     let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
 
     // On Unix, SIGWINCH tells us when the terminal is resized.
