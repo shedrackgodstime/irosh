@@ -1,6 +1,7 @@
 use anyhow::Result;
 use irosh::sys::{AsyncStdin, current_terminal_size};
 use irosh::{Session, SessionEvent};
+use std::io::IsTerminal;
 use tokio::io::AsyncWriteExt;
 
 use super::input::{EscapeAction, InputEngine};
