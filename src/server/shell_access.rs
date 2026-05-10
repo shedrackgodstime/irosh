@@ -19,35 +19,128 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
             })?;
             Ok(cwd)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
         {
-            // On Windows and other platforms, we don't have an easy /proc/pid/cwd.
-            // We attempt to find a sensible fallback.
-            // 1. Try to find the home directory of the current user.
-            // 2. Fallback to the daemon's current directory if home is not available or is systemprofile.
+            use windows_sys::Win32::Foundation::{
+                CloseHandle, FALSE, HANDLE, NTSTATUS, UNICODE_STRING,
+            };
+            use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+            use windows_sys::Win32::System::Threading::{
+                OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+            };
 
-            let mut fallback = dirs::home_dir();
-
-            #[cfg(windows)]
-            {
-                if let Some(h) = &fallback {
-                    if h.to_string_lossy().to_lowercase().contains("systemprofile") {
-                        // We are a service running as LocalSystem.
-                        // Try to find if there's a better directory we can use.
-                        fallback = None;
-                    }
-                }
+            #[repr(C)]
+            struct PROCESS_BASIC_INFORMATION {
+                ExitStatus: NTSTATUS,
+                PebBaseAddress: *mut std::ffi::c_void,
+                AffinityMask: usize,
+                BasePriority: i32,
+                UniqueProcessId: usize,
+                InheritedFromUniqueProcessId: usize,
             }
 
-            let result = fallback
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            extern "system" {
+                fn NtQueryInformationProcess(
+                    ProcessHandle: HANDLE,
+                    ProcessInformationClass: u32,
+                    ProcessInformation: *mut std::ffi::c_void,
+                    ProcessInformationLength: u32,
+                    ReturnLength: *mut u32,
+                ) -> NTSTATUS;
+            }
 
-            tracing::warn!(
-                "Reliable CWD query not available for PID {} on this platform; using fallback: {}",
-                pid,
-                result.display()
-            );
-            Ok(result)
+            let handle =
+                unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid) };
+            if handle == 0 {
+                return Ok(fallback_windows());
+            }
+
+            let mut pbi = std::mem::maybe_uninit::<PROCESS_BASIC_INFORMATION>::uninit();
+            let mut ret_len = 0;
+            let status = unsafe {
+                NtQueryInformationProcess(
+                    handle,
+                    0, // ProcessBasicInformation
+                    pbi.as_mut_ptr() as _,
+                    std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
+                    &mut ret_len,
+                )
+            };
+
+            if status != 0 {
+                unsafe { CloseHandle(handle) };
+                return Ok(fallback_windows());
+            }
+
+            let pbi = unsafe { pbi.assume_init() };
+            let peb_base = pbi.PebBaseAddress;
+
+            #[cfg(target_pointer_width = "64")]
+            let proc_params_offset = 0x20;
+            #[cfg(target_pointer_width = "32")]
+            let proc_params_offset = 0x10;
+
+            let mut proc_params_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+            let ok = unsafe {
+                ReadProcessMemory(
+                    handle,
+                    peb_base.add(proc_params_offset),
+                    &mut proc_params_ptr as *mut _ as _,
+                    std::mem::size_of::<*mut std::ffi::c_void>(),
+                    std::ptr::null_mut(),
+                )
+            };
+
+            if ok == FALSE {
+                unsafe { CloseHandle(handle) };
+                return Ok(fallback_windows());
+            }
+
+            #[cfg(target_pointer_width = "64")]
+            let cur_dir_offset = 0x38;
+            #[cfg(target_pointer_width = "32")]
+            let cur_dir_offset = 0x24;
+
+            let mut unicode_str = std::mem::maybe_uninit::<UNICODE_STRING>::uninit();
+            let ok = unsafe {
+                ReadProcessMemory(
+                    handle,
+                    proc_params_ptr.add(cur_dir_offset),
+                    unicode_str.as_mut_ptr() as _,
+                    std::mem::size_of::<UNICODE_STRING>(),
+                    std::ptr::null_mut(),
+                )
+            };
+
+            if ok == FALSE {
+                unsafe { CloseHandle(handle) };
+                return Ok(fallback_windows());
+            }
+
+            let unicode_str = unsafe { unicode_str.assume_init() };
+            let mut buffer = vec![0u16; (unicode_str.Length / 2) as usize];
+            let ok = unsafe {
+                ReadProcessMemory(
+                    handle,
+                    unicode_str.Buffer as _,
+                    buffer.as_mut_ptr() as _,
+                    unicode_str.Length as usize,
+                    std::ptr::null_mut(),
+                )
+            };
+
+            unsafe { CloseHandle(handle) };
+
+            if ok == FALSE {
+                Ok(fallback_windows())
+            } else {
+                let path_str = String::from_utf16_lossy(&buffer);
+                Ok(PathBuf::from(path_str))
+            }
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            Ok(fallback_windows())
         }
     })
     .await
@@ -57,6 +150,20 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
             source,
         })
     })?
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fallback_windows() -> PathBuf {
+    let mut fallback = dirs::home_dir();
+    #[cfg(windows)]
+    {
+        if let Some(h) = &fallback {
+            if h.to_string_lossy().to_lowercase().contains("systemprofile") {
+                fallback = None;
+            }
+        }
+    }
+    fallback.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
 pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {

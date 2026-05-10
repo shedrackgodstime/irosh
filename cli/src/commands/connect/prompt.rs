@@ -149,7 +149,8 @@ pub async fn execute_local_command(
                 transfer_context.local_root = new_path.clone();
                 stdout
                     .write_all(
-                        format!("Changed local directory to: {}\r\n", new_path.display()).as_bytes(),
+                        format!("Changed local directory to: {}\r\n", new_path.display())
+                            .as_bytes(),
                     )
                     .await?;
             } else {
