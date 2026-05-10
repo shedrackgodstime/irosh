@@ -412,13 +412,25 @@ impl ServerHandler {
 
             #[cfg(not(unix))]
             let reader_future = async move {
-                let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
+                // Grab the runtime handle before entering the blocking thread so
+                // we can drive async SSH sends from within it. This is explicitly
+                // supported inside spawn_blocking threads by Tokio.
+                let rt_handle = tokio::runtime::Handle::current();
                 let reader_done_task = reader_done_cloned;
 
                 info!(
                     "Spawning blocking PTY reader thread for channel {:?}",
                     channel
                 );
+
+                // Previously this used an intermediate mpsc channel:
+                //   blocking reader → channel → async forwarder → SSH
+                // Every 8 KiB chunk passed through two async hops. For large
+                // transfers (e.g. 200 MB) that added ~25 000 unnecessary
+                // round-trips through the channel.
+                //
+                // Now we read and send in the same blocking thread using
+                // Handle::block_on, eliminating the intermediate queue entirely.
                 tokio::task::spawn_blocking(move || {
                     let mut buf = [0u8; 8192];
                     loop {
@@ -431,7 +443,10 @@ impl ServerHandler {
                         }
                         match reader.read(&mut buf) {
                             Ok(0) => {
-                                info!("PTY reader thread received EOF for channel {:?}", channel);
+                                info!(
+                                    "PTY reader thread received EOF for channel {:?}",
+                                    channel
+                                );
                                 break;
                             }
                             Ok(n) => {
@@ -441,30 +456,31 @@ impl ServerHandler {
                                     channel,
                                     preview_bytes(&buf[..n])
                                 );
-                                if tx.blocking_send(buf[..n].to_vec()).is_err() {
+                                // Drive the SSH send directly from this thread.
+                                // block_on is safe here because spawn_blocking
+                                // threads are not Tokio worker threads.
+                                if rt_handle
+                                    .block_on(
+                                        handle_for_task
+                                            .data(channel, buf[..n].to_vec().into()),
+                                    )
+                                    .is_err()
+                                {
                                     break;
                                 }
                             }
                             Err(e) => {
-                                info!("PTY reader thread error on channel {:?}: {}", channel, e);
+                                info!(
+                                    "PTY reader thread error on channel {:?}: {}",
+                                    channel, e
+                                );
                                 break;
                             }
                         }
                     }
-                });
-
-                while let Some(data) = rx.recv().await {
-                    info!(
-                        "Forwarding {} PTY bytes to SSH channel {:?}: {}",
-                        data.len(),
-                        channel,
-                        preview_bytes(&data)
-                    );
-                    if let Err(e) = handle_for_task.data(channel, data.into()).await {
-                        warn!("Failed to send PTY data to channel {:?}: {:?}", channel, e);
-                        break;
-                    }
-                }
+                })
+                .await
+                .ok();
             };
 
             let mut child_waiter = tokio::task::spawn_blocking(move || {
@@ -652,6 +668,13 @@ impl ServerHandler {
 
 #[cfg(windows)]
 fn windows_command_processor() -> String {
+    use std::sync::OnceLock;
+    static SHELL: OnceLock<String> = OnceLock::new();
+    SHELL.get_or_init(detect_windows_shell).clone()
+}
+
+#[cfg(windows)]
+fn detect_windows_shell() -> String {
     use std::path::Path;
 
     // 1. Try to find PowerShell Core (pwsh.exe) in PATH
@@ -696,6 +719,7 @@ fn windows_command_processor() -> String {
     }
     "C:\\Windows\\System32\\cmd.exe".to_string()
 }
+
 
 fn preview_bytes(bytes: &[u8]) -> String {
     const MAX_PREVIEW: usize = 24;

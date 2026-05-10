@@ -109,10 +109,19 @@ pub async fn execute_local_command(
                 let _ = stdout.write_all(b"\r\n\r\nirosh> ").await;
                 let _ = stdout.flush().await;
             } else {
-                // Executed from an escape sequence (e.g. ~put)
-                // Send \r so the remote shell reprints its prompt.
-                // We assume the local command already printed its own \r\n.
-                let _ = session.send(b"\r").await;
+                // Executed from an escape sequence (e.g. ~put / ~get).
+                //
+                // Do NOT send \r to the remote here. On Windows, the remote
+                // ConPTY/PowerShell immediately echoes its prompt back to the
+                // local terminal, which corrupts the transfer output with a
+                // surprise prompt line appearing at the wrong time.
+                //
+                // Instead we just ensure the local terminal is on a clean new
+                // line. The user's next keypress will go to the remote shell
+                // normally, and the shell will reprint its prompt when it sees
+                // Enter — exactly as expected.
+                let _ = stdout.write_all(b"\r\n").await;
+                let _ = stdout.flush().await;
             }
         };
     }
@@ -123,6 +132,16 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Exit => {
+            // On Windows, PSReadLine tracks the cursor position from when it
+            // last drew its prompt. Our irosh> output has moved the cursor
+            // to positions PSReadLine does not know about. When it receives
+            // \r (Enter), PSReadLine redraws the prompt using absolute cursor
+            // positions based on its stale state — wiping everything visible.
+            //
+            // Clearing the local terminal first gives PSReadLine a clean
+            // slate to draw on, so the redraw is clean rather than corrupting.
+            let _ = stdout.write_all(b"\x1b[2J\x1b[H").await;
+            let _ = stdout.flush().await;
             // Send \r so the remote shell reprints its prompt.
             let _ = session.send(b"\r").await;
             return Ok(true);

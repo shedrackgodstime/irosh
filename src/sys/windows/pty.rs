@@ -148,6 +148,11 @@ impl AsyncStdin {
                         break;
                     }
 
+                    // Batch all key bytes from this read into one send where possible.
+                    // VT sequences (arrows etc.) flush the batch first, then send
+                    // themselves individually so they are never merged with plain chars.
+                    let mut key_batch: Vec<u8> = Vec::new();
+
                     for i in 0..read {
                         let record = buffer[i as usize];
                         match record.EventType as u32 {
@@ -178,6 +183,17 @@ impl AsyncStdin {
                                     };
 
                                     if let Some(seq) = vt_seq {
+                                        // Flush pending plain chars before a special sequence.
+                                        if !key_batch.is_empty() {
+                                            if tx
+                                                .send(TerminalEvent::Data(std::mem::take(
+                                                    &mut key_batch,
+                                                )))
+                                                .is_err()
+                                            {
+                                                return;
+                                            }
+                                        }
                                         if tx
                                             .send(TerminalEvent::Data(seq.as_bytes().to_vec()))
                                             .is_err()
@@ -185,29 +201,44 @@ impl AsyncStdin {
                                             return;
                                         }
                                     } else {
-                                        // 2. Fallback to Unicode char if available
+                                        // 2. Fallback to Unicode char — accumulate into batch.
                                         let c = unsafe { key.uChar.UnicodeChar };
                                         if c != 0 {
                                             let mut utf8 = [0u8; 4];
                                             let s = char::from_u32(c as u32)
                                                 .unwrap_or(' ')
                                                 .encode_utf8(&mut utf8);
-                                            if tx
-                                                .send(TerminalEvent::Data(s.as_bytes().to_vec()))
-                                                .is_err()
-                                            {
-                                                return;
-                                            }
+                                            key_batch.extend_from_slice(s.as_bytes());
                                         }
                                     }
                                 }
                             }
                             WINDOW_BUFFER_SIZE_EVENT => {
-                                let _ = tx.send(TerminalEvent::Resize(current_terminal_size()));
+                                // Flush pending key data before sending resize.
+                                if !key_batch.is_empty() {
+                                    if tx
+                                        .send(TerminalEvent::Data(std::mem::take(
+                                            &mut key_batch,
+                                        )))
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                let _ =
+                                    tx.send(TerminalEvent::Resize(current_terminal_size()));
                             }
                             _ => {}
                         }
                     }
+
+                    // Flush any remaining key data accumulated in this read call.
+                    if !key_batch.is_empty()
+                        && tx.send(TerminalEvent::Data(key_batch)).is_err()
+                    {
+                        return;
+                    }
+
                 }
             })
             .map_err(|e| IroshError::Client(ClientError::TerminalIo { source: e }))?;

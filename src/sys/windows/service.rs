@@ -354,7 +354,7 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
         }));
 
         // Initialize file logging for the service in the user root for better visibility
-        let log_path = PathBuf::from("C:\\Users\\Ghost\\irosh_daemon.log");
+        let log_path = state_root.join("daemon.log");
         if let Ok(file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
