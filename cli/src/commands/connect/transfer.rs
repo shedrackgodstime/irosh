@@ -156,7 +156,7 @@ async fn resolve_remote_path(
                     cwd.join(raw)
                 };
 
-                let joined = if is_windows {
+                if is_windows {
                     let mut s = base.to_string_lossy().to_string();
                     if !s.ends_with('\\') {
                         s.push('\\');
@@ -165,8 +165,7 @@ async fn resolve_remote_path(
                     PathBuf::from(s)
                 } else {
                     base.join(fallback)
-                };
-                joined
+                }
             }
             None => cwd.join(raw),
         })
@@ -309,7 +308,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory on remote (use -r for recursive)",
+                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory on remote (use -r for recursive)\r\n",
                                     remote_path.display()
                                 )
                                 .as_bytes(),
@@ -323,7 +322,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rUpload failed. Error: '{}' not found on local",
+                                    "\x1b[2K\rUpload failed. Error: '{}' not found on local\r\n",
                                     local_name
                                 )
                                 .as_bytes(),
@@ -338,7 +337,7 @@ pub async fn handle_put_command(
             if !handled {
                 let msg = format!("{:#}", err);
                 stdout
-                    .write_all(format!("\x1b[2K\rUpload failed. Error: {}", msg).as_bytes())
+                    .write_all(format!("\x1b[2K\rUpload failed. Error: {}\r\n", msg).as_bytes())
                     .await?;
             }
         }
@@ -450,7 +449,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory on remote (use -r for recursive)",
+                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory on remote (use -r for recursive)\r\n",
                                     remote_name
                                 )
                                 .as_bytes(),
@@ -465,7 +464,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rDownload failed. Error: '{}' not found on remote",
+                                    "\x1b[2K\rDownload failed. Error: '{}' not found on remote\r\n",
                                     remote_name
                                 )
                                 .as_bytes(),
@@ -480,7 +479,7 @@ pub async fn handle_get_command(
             if !handled {
                 let msg = format!("{:#}", err);
                 stdout
-                    .write_all(format!("\x1b[2K\rDownload failed. Error: {}", msg).as_bytes())
+                    .write_all(format!("\x1b[2K\rDownload failed. Error: {}\r\n", msg).as_bytes())
                     .await?;
             }
         }

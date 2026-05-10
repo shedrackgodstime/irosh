@@ -110,10 +110,8 @@ pub async fn execute_local_command(
                 let _ = stdout.flush().await;
             } else {
                 // Executed from an escape sequence (e.g. ~put)
-                // Ensure we are on a new line locally before sending \r to the remote shell.
-                let _ = stdout.write_all(b"\r\n").await;
-                let _ = stdout.flush().await;
                 // Send \r so the remote shell reprints its prompt.
+                // We assume the local command already printed its own \r\n.
                 let _ = session.send(b"\r").await;
             }
         };
