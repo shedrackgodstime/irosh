@@ -1,6 +1,7 @@
 use anyhow::Result;
 use irosh::sys::{AsyncStdin, current_terminal_size};
 use irosh::{Session, SessionEvent};
+#[cfg(unix)]
 use std::io::IsTerminal;
 use tokio::io::AsyncWriteExt;
 
