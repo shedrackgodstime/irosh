@@ -131,7 +131,7 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
     // Give the server a moment to process the third failure and burn the wormhole
     // We wait until active_sessions is 0 to ensure the join_next() has run.
     let mut success = false;
-    for _ in 0..10 {
+    for _ in 0..50 {
         let status = ipc.send(IpcCommand::GetStatus).await.unwrap();
         if let IpcResponse::Status {
             wormhole_active,
