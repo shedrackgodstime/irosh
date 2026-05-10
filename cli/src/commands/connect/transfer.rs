@@ -145,20 +145,28 @@ async fn resolve_remote_path(
     if is_explicit_dir {
         Ok(match fallback_name {
             Some(fallback) => {
-                let base = cwd.join(raw);
-                if is_windows {
-                    // If we are on Linux but the remote is Windows, PathBuf::join
-                    // will use forward slashes. We need to ensure the final path
-                    // is compatible with the remote.
-                    let mut path_str = base.to_string_lossy().to_string();
-                    if !path_str.ends_with('\\') && !path_str.ends_with('/') {
-                        path_str.push('\\');
+                let base = if is_windows {
+                    // Manual join to handle backslashes correctly on non-windows platforms
+                    let mut b = raw.to_string();
+                    if !b.ends_with('\\') && !b.ends_with('/') {
+                        b.push('\\');
                     }
-                    path_str.push_str(fallback);
-                    PathBuf::from(path_str.replace('/', "\\"))
+                    PathBuf::from(b.replace('/', "\\"))
+                } else {
+                    cwd.join(raw)
+                };
+
+                let joined = if is_windows {
+                    let mut s = base.to_string_lossy().to_string();
+                    if !s.ends_with('\\') {
+                        s.push('\\');
+                    }
+                    s.push_str(fallback);
+                    PathBuf::from(s)
                 } else {
                     base.join(fallback)
-                }
+                };
+                joined
             }
             None => cwd.join(raw),
         })
@@ -169,6 +177,24 @@ async fn resolve_remote_path(
         } else {
             Ok(base)
         }
+    }
+}
+
+pub fn portable_file_name(path: &Path) -> Option<&str> {
+    let s = path.to_str()?;
+    // Find the last slash or backslash
+    let last_slash = s.rfind('/').unwrap_or(0);
+    let last_backslash = s.rfind('\\').unwrap_or(0);
+    let last_sep = std::cmp::max(last_slash, last_backslash);
+
+    if last_sep == 0 {
+        if s.starts_with('/') || s.starts_with('\\') {
+            Some(&s[1..])
+        } else {
+            Some(s)
+        }
+    } else {
+        Some(&s[last_sep + 1..])
     }
 }
 
@@ -189,9 +215,7 @@ pub async fn handle_put_command(
         return Ok(());
     }
 
-    let local_name = local_path
-        .file_name()
-        .and_then(|name| name.to_str())
+    let local_name = portable_file_name(&local_path)
         .ok_or_else(|| anyhow::anyhow!("local path has no file name"))?;
     let remote_path = resolve_remote_target_path(session, remote, local_name).await?;
 
@@ -333,11 +357,7 @@ pub async fn handle_get_command(
     recursive: bool,
 ) -> Result<()> {
     let remote_path = resolve_remote_source_path(session, remote).await?;
-    let remote_name = remote_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("downloaded-file");
+    let remote_name = portable_file_name(&remote_path).unwrap_or("downloaded-file");
     let local_path = transfer_context.resolve_local_target(local, remote_name);
 
     stdout
