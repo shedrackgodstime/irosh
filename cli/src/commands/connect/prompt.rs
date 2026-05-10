@@ -118,7 +118,7 @@ pub async fn execute_local_command(
 
     match cmd {
         LocalCommand::Help => {
-            stdout.write_all(b"Local prompt commands:\r\n  put [-r] <local> [remote]   Upload a file or directory to the remote peer.\r\n  get [-r] <remote> [local]   Download a file or directory from the remote peer.\r\n  lpwd                        Print the current local transfer directory.\r\n  lls [path]                  List files in a local directory.\r\n  lcd <path>                  Change the local transfer directory.\r\n  paths                       Show both local and remote transfer roots.\r\n  clear                       Clear the local screen.\r\n  exit                        Leave the irosh> prompt.\r\n  disconnect                  Close the session entirely.").await?;
+            stdout.write_all(b"Local prompt commands:\r\n  put [-r] <local> [remote]   Upload a file or directory to the remote peer.\r\n  get [-r] <remote> [local]   Download a file or directory from the remote peer.\r\n  lpwd                        Print the current local transfer directory.\r\n  lls [path]                  List files in a local directory.\r\n  lcd <path>                  Change the local transfer directory.\r\n  paths                       Show both local and remote transfer roots.\r\n  clear                       Clear the local screen.\r\n  exit                        Leave the irosh> prompt.\r\n  disconnect                  Close the session entirely.\r\n").await?;
             print_prompt!();
         }
         LocalCommand::Exit => {
@@ -139,7 +139,7 @@ pub async fn execute_local_command(
         LocalCommand::Lpwd => {
             let path = transfer_context.local_root.display();
             stdout
-                .write_all(format!("Local working directory: {}", path).as_bytes())
+                .write_all(format!("Local working directory: {}\r\n", path).as_bytes())
                 .await?;
             print_prompt!();
         }
@@ -149,13 +149,13 @@ pub async fn execute_local_command(
                 transfer_context.local_root = new_path.clone();
                 stdout
                     .write_all(
-                        format!("Changed local directory to: {}", new_path.display()).as_bytes(),
+                        format!("Changed local directory to: {}\r\n", new_path.display()).as_bytes(),
                     )
                     .await?;
             } else {
                 stdout
                     .write_all(
-                        format!("Error: '{}' is not a valid local directory", path).as_bytes(),
+                        format!("Error: '{}' is not a valid local directory\r\n", path).as_bytes(),
                     )
                     .await?;
             }
@@ -255,7 +255,7 @@ pub async fn execute_local_command(
             stdout
                 .write_all(
                     format!(
-                        "Unknown command: '{}'. Type 'help' for available commands.",
+                        "Unknown command: '{}'. Type 'help' for available commands.\r\n",
                         cmd
                     )
                     .as_bytes(),

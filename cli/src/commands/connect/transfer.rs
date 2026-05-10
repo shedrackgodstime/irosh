@@ -251,7 +251,7 @@ pub async fn handle_put_command(
                 pb.finish_and_clear();
             }
             stdout
-                .write_all(format!("\x1b[2K\rUploaded {}", local_name).as_bytes())
+                .write_all(format!("\x1b[2K\rUploaded {}\r\n", local_name).as_bytes())
                 .await?;
         }
         Err(err) => {
@@ -270,7 +270,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory (use -r for recursive)",
+                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory (use -r for recursive)\r\n",
                                     local_name
                                 )
                                 .as_bytes(),
@@ -396,7 +396,7 @@ pub async fn handle_get_command(
                 pb.finish_and_clear();
             }
             stdout
-                .write_all(format!("\x1b[2K\rDownloaded {}", remote_name).as_bytes())
+                .write_all(format!("\x1b[2K\rDownloaded {}\r\n", remote_name).as_bytes())
                 .await?;
         }
         Err(err) => {
@@ -415,7 +415,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory (use -r for recursive)",
+                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory (use -r for recursive)\r\n",
                                     remote_name
                                 )
                                 .as_bytes(),

@@ -448,9 +448,9 @@ fn finalize_submitted_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
 
 fn finalize_exit_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
     move_to_end(to_local, line.display_cursor, line.visual_len);
-    // Don't add a newline here; the remote shell's prompt reprint will handle it.
-    // Just move to the start of the line so the next output is correctly positioned.
-    to_local.extend_from_slice(b"\r");
+    // Add a newline so the irosh> prompt history is preserved on screen,
+    // then move to the start of the line for the remote prompt.
+    to_local.extend_from_slice(b"\r\n\r");
     line.visual_len = 0;
     line.display_cursor = 0;
 }
