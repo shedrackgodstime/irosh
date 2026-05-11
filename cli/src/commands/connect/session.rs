@@ -63,6 +63,13 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                     show_help(&mut stdout).await?;
                                     // Send \r so the remote shell reprints its prompt.
                                     let _ = session.send(b"\r").await;
+
+                                    // Flush any buffered remote data that arrived during the help screen.
+                                    if !remote_buffer.is_empty() {
+                                        stdout.write_all(&remote_buffer).await?;
+                                        stdout.flush().await?;
+                                        remote_buffer.clear();
+                                    }
                                 }
                                 EscapeAction::CommandPrompt => {
                                     // Local prompt entered.

@@ -111,17 +111,13 @@ pub async fn execute_local_command(
             } else {
                 // Executed from an escape sequence (e.g. ~put / ~get).
                 //
-                // Do NOT send \r to the remote here. On Windows, the remote
-                // ConPTY/PowerShell immediately echoes its prompt back to the
-                // local terminal, which corrupts the transfer output with a
-                // surprise prompt line appearing at the wrong time.
-                //
-                // Instead we just ensure the local terminal is on a clean new
-                // line. The user's next keypress will go to the remote shell
-                // normally, and the shell will reprint its prompt when it sees
-                // Enter — exactly as expected.
-                let _ = stdout.write_all(b"\r\n").await;
-                let _ = stdout.flush().await;
+                // We send \r to the remote shell. This forces it to reprint
+                // its prompt at the *current* cursor position (which is now
+                // below our local transfer output). Without this, the remote
+                // shell (especially Windows/PSReadLine) thinks the cursor
+                // is still at the old position and will overwrite our local
+                // logs when it next redraws.
+                let _ = session.send(b"\r").await;
             }
         };
     }

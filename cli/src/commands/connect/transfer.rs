@@ -275,7 +275,7 @@ pub async fn handle_put_command(
                 pb.finish_and_clear();
             }
             stdout
-                .write_all(format!("\x1b[2K\rUploaded {}\r\n", local_name).as_bytes())
+                .write_all(format!("Uploaded {}\r\n", local_name).as_bytes())
                 .await?;
         }
         Err(err) => {
@@ -294,7 +294,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory (use -r for recursive)\r\n",
+                                    "Upload failed. Error: '{}' is a directory (use -r for recursive)\r\n",
                                     local_name
                                 )
                                 .as_bytes(),
@@ -309,7 +309,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rUpload failed. Error: '{}' is a directory on remote (use -r for recursive)\r\n",
+                                    "Upload failed. Error: '{}' is a directory on remote (use -r for recursive)\r\n",
                                     remote_path.display()
                                 )
                                 .as_bytes(),
@@ -323,7 +323,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rUpload failed. Error: '{}' not found on local\r\n",
+                                    "Upload failed. Error: '{}' not found on local\r\n",
                                     local_name
                                 )
                                 .as_bytes(),
@@ -338,7 +338,7 @@ pub async fn handle_put_command(
             if !handled {
                 let msg = format!("{:#}", err);
                 stdout
-                    .write_all(format!("\x1b[2K\rUpload failed. Error: {}\r\n", msg).as_bytes())
+                    .write_all(format!("Upload failed. Error: {}\r\n", msg).as_bytes())
                     .await?;
             }
         }
@@ -416,7 +416,7 @@ pub async fn handle_get_command(
                 pb.finish_and_clear();
             }
             stdout
-                .write_all(format!("\x1b[2K\rDownloaded {}\r\n", remote_name).as_bytes())
+                .write_all(format!("Downloaded {}\r\n", remote_name).as_bytes())
                 .await?;
         }
         Err(err) => {
@@ -435,7 +435,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory (use -r for recursive)\r\n",
+                                    "Download failed. Error: '{}' is a directory (use -r for recursive)\r\n",
                                     remote_name
                                 )
                                 .as_bytes(),
@@ -450,7 +450,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rDownload failed. Error: '{}' is a directory on remote (use -r for recursive)\r\n",
+                                    "Download failed. Error: '{}' is a directory on remote (use -r for recursive)\r\n",
                                     remote_name
                                 )
                                 .as_bytes(),
@@ -465,7 +465,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "\x1b[2K\rDownload failed. Error: '{}' not found on remote\r\n",
+                                    "Download failed. Error: '{}' not found on remote\r\n",
                                     remote_name
                                 )
                                 .as_bytes(),
@@ -480,7 +480,7 @@ pub async fn handle_get_command(
             if !handled {
                 let msg = format!("{:#}", err);
                 stdout
-                    .write_all(format!("\x1b[2K\rDownload failed. Error: {}\r\n", msg).as_bytes())
+                    .write_all(format!("Download failed. Error: {}\r\n", msg).as_bytes())
                     .await?;
             }
         }
