@@ -14,18 +14,9 @@ pub struct TransferContext {
 
 impl TransferContext {
     pub fn new() -> Self {
-        let mut local_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-
-        // If we are in C:\Windows\system32, we should probably default to the user's home instead.
-        // This often happens when opening an admin shell or when the service starts in a system context.
-        let root_s = local_root.to_string_lossy().to_lowercase();
-        if root_s.contains("system32") || root_s.contains("windows\\system") {
-            if let Some(home) = dirs::home_dir() {
-                local_root = home;
-            }
+        Self {
+            local_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
-
-        Self { local_root }
     }
 
     pub fn resolve_local_source(&self, raw: &str) -> PathBuf {
