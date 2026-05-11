@@ -111,13 +111,10 @@ pub async fn execute_local_command(
             } else {
                 // Executed from an escape sequence (e.g. ~put / ~get).
                 //
-                // We send \r to the remote shell. This forces it to reprint
-                // its prompt at the *current* cursor position (which is now
-                // below our local transfer output). Without this, the remote
-                // shell (especially Windows/PSReadLine) thinks the cursor
-                // is still at the old position and will overwrite our local
-                // logs when it next redraws.
-                let _ = session.send(b"\r").await;
+                // We send \r\n to the remote shell. This forces it to move
+                // to a fresh line and reprint its prompt at the *current* 
+                // cursor position (below our local output).
+                let _ = session.send(b"\r\n").await;
             }
         };
     }
@@ -128,7 +125,10 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Exit => {
-            // Reverted alternate screen exit.
+            // Exit alternate screen buffer.
+            let _ = stdout.write_all(b"\x1b[?1049l").await;
+            let _ = stdout.flush().await;
+
             // Send \r so the remote shell reprints its prompt.
             let _ = session.send(b"\r").await;
             return Ok(true);
@@ -209,16 +209,15 @@ pub async fn execute_local_command(
         }
         LocalCommand::Paths => {
             let local = transfer_context.local_root.display();
-            let remote_res = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
+            let remote = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
                 session.remote_cwd()
-            ).await;
-
-            let remote = match remote_res {
-                Ok(Ok(p)) => p.display().to_string(),
-                Ok(Err(_)) => "unknown (error)".to_string(),
-                Err(_) => "unknown (timeout)".to_string(),
-            };
+            ).await
+            .map(|res| match res {
+                Ok(p) => p.display().to_string(),
+                Err(_) => "unknown (error)".to_string(),
+            })
+            .unwrap_or_else(|_| "unknown (timeout)".to_string());
 
             stdout
                 .write_all(

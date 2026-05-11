@@ -72,7 +72,9 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                     }
                                 }
                                 EscapeAction::CommandPrompt => {
-                                    // Local prompt entered.
+                                    // Enter alternate screen buffer for a clean command environment.
+                                    let _ = stdout.write_all(b"\x1b[?1049h").await;
+                                    let _ = stdout.flush().await;
                                 }
                                 EscapeAction::RunLocal(cmd) => {
                                     if !execute_local_command(&mut session, &mut input_engine, &mut stdout, &mut stdin, &mut transfer_context, cmd).await? {

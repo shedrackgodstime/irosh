@@ -135,10 +135,10 @@ async fn resolve_remote_path(
         });
     }
 
-    let cwd = tokio::time::timeout(std::time::Duration::from_secs(10), session.remote_cwd())
+    let cwd = tokio::time::timeout(std::time::Duration::from_secs(30), session.remote_cwd())
         .await
         .map_err(|_| {
-            anyhow::anyhow!("Remote path resolution timed out after 10 seconds. The server might be unresponsive.")
+            anyhow::anyhow!("Remote path resolution timed out after 30 seconds. The server might be unresponsive.")
         })??;
 
     let is_windows = session
