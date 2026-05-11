@@ -15,12 +15,13 @@ pub(crate) async fn handle_get_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::GetRequest,
     context: ShellContext,
+    shell_state: &super::super::ConnectionShellState,
 ) -> Result<()> {
     if request.recursive {
-        return handle_recursive_get_request(stream, request, context).await;
+        return handle_recursive_get_request(stream, request, context, shell_state).await;
     }
 
-    let source_path = context.resolve_path(&request.path).await?;
+    let source_path = context.resolve_path(&request.path, shell_state).await?;
     let expected_size = match probe_download_size(context, &source_path).await? {
         Ok(size) => size,
         Err(failure) => {
@@ -116,8 +117,9 @@ async fn handle_recursive_get_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::GetRequest,
     context: ShellContext,
+    shell_state: &super::super::ConnectionShellState,
 ) -> Result<()> {
-    let source_root = context.resolve_path(&request.path).await?;
+    let source_root = context.resolve_path(&request.path, shell_state).await?;
 
     write_get_ready(
         stream,

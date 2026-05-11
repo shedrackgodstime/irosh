@@ -443,10 +443,7 @@ impl ServerHandler {
                         }
                         match reader.read(&mut buf) {
                             Ok(0) => {
-                                info!(
-                                    "PTY reader thread received EOF for channel {:?}",
-                                    channel
-                                );
+                                info!("PTY reader thread received EOF for channel {:?}", channel);
                                 break;
                             }
                             Ok(n) => {
@@ -461,8 +458,7 @@ impl ServerHandler {
                                 // threads are not Tokio worker threads.
                                 if rt_handle
                                     .block_on(
-                                        handle_for_task
-                                            .data(channel, buf[..n].to_vec().into()),
+                                        handle_for_task.data(channel, buf[..n].to_vec().into()),
                                     )
                                     .is_err()
                                 {
@@ -470,10 +466,7 @@ impl ServerHandler {
                                 }
                             }
                             Err(e) => {
-                                info!(
-                                    "PTY reader thread error on channel {:?}: {}",
-                                    channel, e
-                                );
+                                info!("PTY reader thread error on channel {:?}: {}", channel, e);
                                 break;
                             }
                         }
@@ -719,7 +712,6 @@ fn detect_windows_shell() -> String {
     }
     "C:\\Windows\\System32\\cmd.exe".to_string()
 }
-
 
 fn preview_bytes(bytes: &[u8]) -> String {
     const MAX_PREVIEW: usize = 24;

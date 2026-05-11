@@ -5,14 +5,16 @@ use crate::transport::transfer::{
     write_completion_response, write_cwd_response, write_exists_response,
 };
 
+use super::ConnectionShellState;
 use super::ShellContext;
 
 pub(super) async fn handle_exists_request(
     stream: &mut IrohDuplex,
     request: ExistsRequest,
     context: ShellContext,
+    shell_state: &ConnectionShellState,
 ) -> Result<()> {
-    let resolved = context.resolve_path(&request.path).await?;
+    let resolved = context.resolve_path(&request.path, shell_state).await?;
     let path_str = resolved.display().to_string();
 
     let exists = context.path_exists(&path_str).await?;
@@ -27,8 +29,9 @@ pub(super) async fn handle_exists_request(
 pub(super) async fn handle_cwd_request(
     stream: &mut IrohDuplex,
     context: ShellContext,
+    shell_state: &ConnectionShellState,
 ) -> Result<()> {
-    let cwd = context.cwd().await?;
+    let cwd = context.cwd(shell_state).await?;
     write_cwd_response(
         stream,
         &CwdResponse {
@@ -44,8 +47,9 @@ pub(super) async fn handle_completion_request(
     stream: &mut IrohDuplex,
     request: CompletionRequest,
     context: ShellContext,
+    shell_state: &ConnectionShellState,
 ) -> Result<()> {
-    let resolved = context.resolve_path(&request.path).await?;
+    let resolved = context.resolve_path(&request.path, shell_state).await?;
 
     // Determine the search directory and the prefix
     let (search_dir, prefix) = if request.path.ends_with('/') || (request.path.is_empty()) {

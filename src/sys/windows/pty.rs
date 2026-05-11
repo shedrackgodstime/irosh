@@ -217,28 +217,22 @@ impl AsyncStdin {
                                 // Flush pending key data before sending resize.
                                 if !key_batch.is_empty() {
                                     if tx
-                                        .send(TerminalEvent::Data(std::mem::take(
-                                            &mut key_batch,
-                                        )))
+                                        .send(TerminalEvent::Data(std::mem::take(&mut key_batch)))
                                         .is_err()
                                     {
                                         return;
                                     }
                                 }
-                                let _ =
-                                    tx.send(TerminalEvent::Resize(current_terminal_size()));
+                                let _ = tx.send(TerminalEvent::Resize(current_terminal_size()));
                             }
                             _ => {}
                         }
                     }
 
                     // Flush any remaining key data accumulated in this read call.
-                    if !key_batch.is_empty()
-                        && tx.send(TerminalEvent::Data(key_batch)).is_err()
-                    {
+                    if !key_batch.is_empty() && tx.send(TerminalEvent::Data(key_batch)).is_err() {
                         return;
                     }
-
                 }
             })
             .map_err(|e| IroshError::Client(ClientError::TerminalIo { source: e }))?;

@@ -17,8 +17,9 @@ pub(super) struct PreparedPutDestination {
 pub(super) async fn prepare_put_destination(
     context: ShellContext,
     raw_path: &str,
+    shell_state: &super::state::ConnectionShellState,
 ) -> Result<Option<PreparedPutDestination>> {
-    let dest_path = context.resolve_path(raw_path).await?;
+    let dest_path = context.resolve_path(raw_path, shell_state).await?;
     let final_arg = dest_path.display().to_string();
 
     if !context.path_missing(&final_arg).await? {

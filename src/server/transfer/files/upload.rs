@@ -16,15 +16,16 @@ pub(crate) async fn handle_put_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::PutRequest,
     context: ShellContext,
+    shell_state: &super::super::ConnectionShellState,
 ) -> Result<()> {
     if request.recursive {
-        return handle_recursive_put_request(stream, request, context).await;
+        return handle_recursive_put_request(stream, request, context, shell_state).await;
     }
 
-    let prepared = match prepare_put_destination(context, &request.path).await? {
+    let prepared = match prepare_put_destination(context, &request.path, shell_state).await? {
         Some(prepared) => prepared,
         None => {
-            let dest_path = context.resolve_path(&request.path).await?;
+            let dest_path = context.resolve_path(&request.path, shell_state).await?;
             write_transfer_error(stream, &target_exists_failure(&dest_path))
                 .await
                 .map_err(TransportError::from)?;
@@ -146,8 +147,9 @@ async fn handle_recursive_put_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::PutRequest,
     context: ShellContext,
+    shell_state: &super::super::ConnectionShellState,
 ) -> Result<()> {
-    let dest_root = context.resolve_path(&request.path).await?;
+    let dest_root = context.resolve_path(&request.path, shell_state).await?;
     context.create_dir_all(&dest_root).await?;
 
     write_put_ready(
@@ -177,7 +179,13 @@ async fn handle_recursive_put_request(
                     }
                 } else {
                     // Use atomic rename pattern for each file in the recursive stream
-                    let prepared = match prepare_put_destination(context, &full_path_str).await? {
+                    let prepared = match prepare_put_destination(
+                        context,
+                        &full_path_str,
+                        shell_state,
+                    )
+                    .await?
+                    {
                         Some(p) => p,
                         None => {
                             write_transfer_error(stream, &target_exists_failure(&full_path))

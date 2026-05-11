@@ -23,7 +23,9 @@ pub(crate) async fn handle_transfer_stream(
 
     match read_next_frame(&mut stream).await {
         Ok(TransferFrame::PutRequest(request)) => {
-            if let Err(err) = files::handle_put_request(&mut stream, request, context).await {
+            if let Err(err) =
+                files::handle_put_request(&mut stream, request, context, &shell_state).await
+            {
                 warn!("Put transfer handler failed: {}", err);
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
@@ -31,7 +33,9 @@ pub(crate) async fn handle_transfer_stream(
             Ok(())
         }
         Ok(TransferFrame::GetRequest(request)) => {
-            if let Err(err) = files::handle_get_request(&mut stream, request, context).await {
+            if let Err(err) =
+                files::handle_get_request(&mut stream, request, context, &shell_state).await
+            {
                 warn!("Get transfer handler failed: {}", err);
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
@@ -39,7 +43,8 @@ pub(crate) async fn handle_transfer_stream(
             Ok(())
         }
         Ok(TransferFrame::CwdRequest(_)) => {
-            if let Err(err) = control::handle_cwd_request(&mut stream, context).await {
+            if let Err(err) = control::handle_cwd_request(&mut stream, context, &shell_state).await
+            {
                 warn!("Cwd request handler failed: {}", err);
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
@@ -47,7 +52,9 @@ pub(crate) async fn handle_transfer_stream(
             Ok(())
         }
         Ok(TransferFrame::ExistsRequest(req)) => {
-            if let Err(err) = control::handle_exists_request(&mut stream, req, context).await {
+            if let Err(err) =
+                control::handle_exists_request(&mut stream, req, context, &shell_state).await
+            {
                 warn!("Exists request handler failed: {}", err);
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
@@ -55,7 +62,9 @@ pub(crate) async fn handle_transfer_stream(
             Ok(())
         }
         Ok(TransferFrame::CompletionRequest(req)) => {
-            if let Err(err) = control::handle_completion_request(&mut stream, req, context).await {
+            if let Err(err) =
+                control::handle_completion_request(&mut stream, req, context, &shell_state).await
+            {
                 warn!("Completion request handler failed: {}", err);
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;

@@ -112,7 +112,7 @@ pub async fn execute_local_command(
                 // Executed from an escape sequence (e.g. ~put / ~get).
                 //
                 // We send \r\n to the remote shell. This forces it to move
-                // to a fresh line and reprint its prompt at the *current* 
+                // to a fresh line and reprint its prompt at the *current*
                 // cursor position (below our local output).
                 let _ = session.send(b"\r\n").await;
             }
@@ -209,15 +209,14 @@ pub async fn execute_local_command(
         }
         LocalCommand::Paths => {
             let local = transfer_context.local_root.display();
-            let remote = tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                session.remote_cwd()
-            ).await
-            .map(|res| match res {
-                Ok(p) => p.display().to_string(),
-                Err(_) => "unknown (error)".to_string(),
-            })
-            .unwrap_or_else(|_| "unknown (timeout)".to_string());
+            let remote =
+                tokio::time::timeout(std::time::Duration::from_secs(30), session.remote_cwd())
+                    .await
+                    .map(|res| match res {
+                        Ok(p) => p.display().to_string(),
+                        Err(_) => "unknown (error)".to_string(),
+                    })
+                    .unwrap_or_else(|_| "unknown (timeout)".to_string());
 
             stdout
                 .write_all(

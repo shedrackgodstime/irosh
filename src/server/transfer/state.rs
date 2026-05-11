@@ -11,11 +11,15 @@ use crate::server::shell_access::{configure_live_shell_context, resolve_process_
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConnectionShellState {
     shell_pid: Arc<StdMutex<Option<u32>>>,
+    cached_cwd: Arc<StdMutex<Option<(std::path::PathBuf, std::time::Instant)>>>,
 }
 
 impl ConnectionShellState {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            shell_pid: Arc::new(StdMutex::new(None)),
+            cached_cwd: Arc::new(StdMutex::new(None)),
+        }
     }
 
     pub(crate) fn shell_pid(&self) -> Option<u32> {
@@ -87,10 +91,25 @@ impl ShellContext {
     }
 
     /// Resolves the current working directory for this context.
-    pub(super) async fn cwd(self) -> Result<PathBuf> {
+    pub(super) async fn cwd(self, shell_state: &ConnectionShellState) -> Result<PathBuf> {
         match self {
             Self::Live { pid } => {
+                // Check cache first
+                if let Ok(mut guard) = shell_state.cached_cwd.lock() {
+                    if let Some((path, instant)) = guard.as_ref() {
+                        if instant.elapsed() < std::time::Duration::from_secs(2) {
+                            return Ok(path.clone());
+                        }
+                    }
+                }
+
                 let path = resolve_process_cwd(pid).await?;
+
+                // Update cache
+                if let Ok(mut guard) = shell_state.cached_cwd.lock() {
+                    *guard = Some((path.clone(), std::time::Instant::now()));
+                }
+
                 tracing::debug!(
                     "Resolved live shell CWD for PID {}: {}",
                     pid,
@@ -269,7 +288,11 @@ impl ShellContext {
     ///
     /// If the path is relative, it is resolved against the current working
     /// directory of this context (either the live shell's CWD or the server home).
-    pub(crate) async fn resolve_path(self, raw: &str) -> Result<PathBuf> {
+    pub(crate) async fn resolve_path(
+        self,
+        raw: &str,
+        shell_state: &ConnectionShellState,
+    ) -> Result<PathBuf> {
         if raw.trim().is_empty() {
             return Err(ServerError::TransferFailed {
                 failure: crate::transport::transfer::TransferFailure::new(
@@ -303,7 +326,7 @@ impl ShellContext {
         }
 
         // Relative path: resolve against CWD.
-        let base = self.cwd().await?;
+        let base = self.cwd(shell_state).await?;
         let full = base.join(path);
         tracing::info!("Resolved remote path: '{}' -> '{}'", raw, full.display());
         Ok(full)
