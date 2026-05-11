@@ -14,6 +14,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
     let mut stdout = tokio::io::stdout();
     let mut stderr = tokio::io::stderr();
     let mut transfer_context = TransferContext::new();
+    let mut remote_buffer = Vec::new();
 
     #[cfg(unix)]
     let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
@@ -63,10 +64,19 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                     // Send \r so the remote shell reprints its prompt.
                                     let _ = session.send(b"\r").await;
                                 }
-                                EscapeAction::CommandPrompt => {}
+                                EscapeAction::CommandPrompt => {
+                                    // Local prompt entered.
+                                }
                                 EscapeAction::RunLocal(cmd) => {
                                     if !execute_local_command(&mut session, &mut input_engine, &mut stdout, &mut stdin, &mut transfer_context, cmd).await? {
                                         return Ok(());
+                                    }
+
+                                    // If we just returned to Remote mode, flush any buffered data.
+                                    if input_engine.mode == super::input::InputMode::Remote && !remote_buffer.is_empty() {
+                                        stdout.write_all(&remote_buffer).await?;
+                                        stdout.flush().await?;
+                                        remote_buffer.clear();
                                     }
                                 }
                                 EscapeAction::RequestCompletion => {
@@ -109,8 +119,13 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                 match event? {
                     Some(SessionEvent::Data(data)) => {
                         input_engine.observe_remote(&data);
-                        stdout.write_all(&data).await?;
-                        stdout.flush().await?;
+                        if input_engine.mode == super::input::InputMode::LocalEdit {
+                            // Buffer remote data while local prompt is active to prevent screen corruption.
+                            remote_buffer.extend_from_slice(&data);
+                        } else {
+                            stdout.write_all(&data).await?;
+                            stdout.flush().await?;
+                        }
                     }
                     Some(SessionEvent::ExtendedData(data, _)) => {
                         stderr.write_all(&data).await?;

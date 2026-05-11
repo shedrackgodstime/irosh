@@ -14,9 +14,18 @@ pub struct TransferContext {
 
 impl TransferContext {
     pub fn new() -> Self {
-        Self {
-            local_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        let mut local_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+        // If we are in C:\Windows\system32, we should probably default to the user's home instead.
+        // This often happens when opening an admin shell or when the service starts in a system context.
+        let root_s = local_root.to_string_lossy().to_lowercase();
+        if root_s.contains("system32") || root_s.contains("windows\\system") {
+            if let Some(home) = dirs::home_dir() {
+                local_root = home;
+            }
         }
+
+        Self { local_root }
     }
 
     pub fn resolve_local_source(&self, raw: &str) -> PathBuf {
@@ -135,47 +144,48 @@ async fn resolve_remote_path(
         });
     }
 
-    let cwd = session.remote_cwd().await?;
+    let cwd = tokio::time::timeout(std::time::Duration::from_secs(10), session.remote_cwd())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("Remote path resolution timed out after 10 seconds. The server might be unresponsive.")
+        })??;
+
     let is_windows = session
         .remote_metadata()
         .map(|m| m.os.to_lowercase().contains("windows"))
         .unwrap_or(false);
 
+    // OS-aware path joiner for remote paths
+    let remote_join = |base: &Path, parts: &str, is_win: bool| -> PathBuf {
+        let base_s = base.to_string_lossy().to_string();
+        let sep = if is_win { "\\" } else { "/" };
+        let other_sep = if is_win { "/" } else { "\\" };
+
+        let mut joined = base_s;
+        if !joined.ends_with(sep) && !joined.ends_with(other_sep) {
+            joined.push_str(sep);
+        }
+
+        // Replace any "wrong" separators in the input parts
+        let normalized_parts = parts.replace(other_sep, sep);
+        let trimmed_parts = normalized_parts.trim_start_matches(sep);
+
+        joined.push_str(trimmed_parts);
+        PathBuf::from(joined)
+    };
+
     let is_explicit_dir = raw.ends_with('/') || raw.ends_with('\\');
     if is_explicit_dir {
         Ok(match fallback_name {
             Some(fallback) => {
-                let base = if is_windows {
-                    // Manual join to handle backslashes correctly on non-windows platforms
-                    let mut b = raw.to_string();
-                    if !b.ends_with('\\') && !b.ends_with('/') {
-                        b.push('\\');
-                    }
-                    PathBuf::from(b.replace('/', "\\"))
-                } else {
-                    cwd.join(raw)
-                };
-
-                if is_windows {
-                    let mut s = base.to_string_lossy().to_string();
-                    if !s.ends_with('\\') {
-                        s.push('\\');
-                    }
-                    s.push_str(fallback);
-                    PathBuf::from(s)
-                } else {
-                    base.join(fallback)
-                }
+                let base = remote_join(&cwd, raw, is_windows);
+                remote_join(&base, fallback, is_windows)
             }
-            None => cwd.join(raw),
+            None => remote_join(&cwd, raw, is_windows),
         })
     } else {
-        let base = cwd.join(raw);
-        if is_windows {
-            Ok(PathBuf::from(base.to_string_lossy().replace('/', "\\")))
-        } else {
-            Ok(base)
-        }
+        let full = remote_join(&cwd, raw, is_windows);
+        Ok(full)
     }
 }
 

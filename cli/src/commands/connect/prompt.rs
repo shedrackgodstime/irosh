@@ -132,16 +132,7 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Exit => {
-            // On Windows, PSReadLine tracks the cursor position from when it
-            // last drew its prompt. Our irosh> output has moved the cursor
-            // to positions PSReadLine does not know about. When it receives
-            // \r (Enter), PSReadLine redraws the prompt using absolute cursor
-            // positions based on its stale state — wiping everything visible.
-            //
-            // Clearing the local terminal first gives PSReadLine a clean
-            // slate to draw on, so the redraw is clean rather than corrupting.
-            let _ = stdout.write_all(b"\x1b[2J\x1b[H").await;
-            let _ = stdout.flush().await;
+            // Reverted alternate screen exit.
             // Send \r so the remote shell reprints its prompt.
             let _ = session.send(b"\r").await;
             return Ok(true);
@@ -222,15 +213,21 @@ pub async fn execute_local_command(
         }
         LocalCommand::Paths => {
             let local = transfer_context.local_root.display();
-            let remote = session
-                .remote_cwd()
-                .await
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "unknown".to_string());
+            let remote_res = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                session.remote_cwd()
+            ).await;
+
+            let remote = match remote_res {
+                Ok(Ok(p)) => p.display().to_string(),
+                Ok(Err(_)) => "unknown (error)".to_string(),
+                Err(_) => "unknown (timeout)".to_string(),
+            };
+
             stdout
                 .write_all(
                     format!(
-                        "Local transfer root: {}\r\nRemote transfer root: {}",
+                        "Local transfer root: {}\r\nRemote transfer root: {}\r\n",
                         local, remote
                     )
                     .as_bytes(),
