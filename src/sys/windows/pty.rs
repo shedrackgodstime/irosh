@@ -215,13 +215,12 @@ impl AsyncStdin {
                             }
                             WINDOW_BUFFER_SIZE_EVENT => {
                                 // Flush pending key data before sending resize.
-                                if !key_batch.is_empty() {
-                                    if tx
+                                if !key_batch.is_empty()
+                                    && tx
                                         .send(TerminalEvent::Data(std::mem::take(&mut key_batch)))
                                         .is_err()
-                                    {
-                                        return;
-                                    }
+                                {
+                                    return;
                                 }
                                 let _ = tx.send(TerminalEvent::Resize(current_terminal_size()));
                             }

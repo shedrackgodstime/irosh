@@ -95,12 +95,11 @@ impl ShellContext {
         match self {
             Self::Live { pid } => {
                 // Check cache first
-                if let Ok(mut guard) = shell_state.cached_cwd.lock() {
-                    if let Some((path, instant)) = guard.as_ref() {
-                        if instant.elapsed() < std::time::Duration::from_secs(2) {
-                            return Ok(path.clone());
-                        }
-                    }
+                if let Ok(guard) = shell_state.cached_cwd.lock()
+                    && let Some((path, instant)) = guard.as_ref()
+                    && instant.elapsed() < std::time::Duration::from_secs(2)
+                {
+                    return Ok(path.clone());
                 }
 
                 let path = resolve_process_cwd(pid).await?;
