@@ -286,7 +286,7 @@ pub enum ClientError {
     },
 
     /// The SSH peer disconnected abruptly during the initial handshake.
-    #[error("SSH peer disconnected during handshake")]
+    #[error("ssh peer disconnected during handshake")]
     SshHandshakeDisconnected { detail: Option<String> },
 
     /// A file upload operation failed.
@@ -340,6 +340,10 @@ pub enum ServerError {
         #[source]
         source: iroh::endpoint::BindError,
     },
+
+    /// Invalid authentication configuration.
+    #[error("invalid auth configuration: {reason}")]
+    AuthConfiguration { reason: String },
 
     /// Identity loading or generation failed.
     #[error("failed to load server identity")]
@@ -398,7 +402,7 @@ pub enum ServerError {
     },
 
     /// Failure during OS service management (install/start/stop).
-    #[error("Service management failure: {details}")]
+    #[error("service management failure: {details}")]
     ServiceManagement { details: String },
 }
 
@@ -439,7 +443,7 @@ pub enum IroshError {
     Auth(#[from] AuthError),
 
     /// Generic I/O failures.
-    #[error("I/O error: {0}")]
+    #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
 
     /// Authentication with the remote peer failed.

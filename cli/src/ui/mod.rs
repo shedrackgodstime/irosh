@@ -60,4 +60,12 @@ impl Ui {
         eprintln!("  Ticket:      {}", style(ticket).cyan().bold());
         eprintln!("  ----------------------------------------------------\n");
     }
+
+    pub fn header(msg: &str) {
+        feedback::header(msg);
+    }
+
+    pub fn status(label: &str, value: &str, subtext: Option<&str>) {
+        feedback::status(label, value, subtext);
+    }
 }

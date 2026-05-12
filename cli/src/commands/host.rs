@@ -3,12 +3,31 @@ use crate::ui::Ui;
 use anyhow::Result;
 use irosh::{Server, ServerOptions};
 
-pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
+pub async fn exec(
+    secret: Option<String>,
+    auth_mode: Option<crate::commands::CliAuthMode>,
+    authorize: Option<std::path::PathBuf>,
+    simple: bool,
+    ctx: &CliContext,
+) -> Result<()> {
     let state = ctx.server_state()?;
+
+    if let Some(auth_path) = authorize {
+        let key = irosh::russh::keys::ssh_key::PublicKey::read_openssh_file(&auth_path)?;
+        let fingerprint = key
+            .fingerprint(irosh::russh::keys::ssh_key::HashAlg::Sha256)
+            .to_string();
+        irosh::storage::trust::write_authorized_client(&state, &fingerprint, &key)?;
+        Ui::success(&format!(
+            "Authorized new key from {}: {}",
+            auth_path.display(),
+            fingerprint
+        ));
+    }
 
     // Check if vault is empty to show security notice
     let vault = irosh::storage::load_all_authorized_clients(&state)?;
-    if vault.is_empty() {
+    if vault.is_empty() && !simple {
         Ui::warn(
             "Vault is empty",
             "The first device to connect will be permanently trusted.\nTip: Run 'irosh passwd set' now to require a password instead.",
@@ -17,6 +36,10 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
 
     let config = irosh::storage::load_config(&state)?;
     let mut options = ServerOptions::new(state.clone());
+
+    if let Some(mode) = auth_mode {
+        options = options.auth_mode(mode.into());
+    }
 
     // Apply global config overrides
     if let Some(secret) = secret.or(config.stealth_secret) {
@@ -60,21 +83,25 @@ pub async fn exec(secret: Option<String>, ctx: &CliContext) -> Result<()> {
         .public_key()
         .fingerprint(irosh::russh::keys::ssh_key::HashAlg::Sha256);
 
-    Ui::p2p("Server is starting...");
-    Ui::machine_identity(
-        ready.endpoint_id(),
-        &fingerprint.to_string(),
-        &ready.ticket.to_string(),
-        "Hosting",
-    );
-    Ui::info("Press Ctrl+C to stop the server.");
+    if !simple {
+        Ui::p2p("Server is starting...");
+        Ui::machine_identity(
+            ready.endpoint_id(),
+            &fingerprint.to_string(),
+            &ready.ticket.to_string(),
+            "Hosting",
+        );
+        Ui::info("Press Ctrl+C to stop the server.");
+    } else {
+        println!("ID: {}", ready.endpoint_id());
+        println!("TICKET: {}", ready.ticket);
+    }
 
     let shutdown = server.shutdown_handle();
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            Ui::info("Shutting down gracefully...");
-            shutdown.close().await;
-        }
+        irosh::sys::signals::wait_for_shutdown_signal().await;
+        Ui::info("Shutting down gracefully...");
+        shutdown.close().await;
     });
 
     server.run().await?;

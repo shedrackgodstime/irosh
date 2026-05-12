@@ -180,28 +180,69 @@ impl ServerHandler {
         // On Windows, ensure we have a decent PATH if running as a service
         #[cfg(windows)]
         {
-            if let Ok(path) = std::env::var("PATH") {
-                let mut new_path = path;
+            use std::collections::HashSet;
+            use std::path::PathBuf;
 
-                // Add .cargo/bin
-                if let Some(home) = dirs::home_dir() {
-                    let cargo_bin = home.join(".cargo").join("bin");
-                    let cargo_bin_str = cargo_bin.to_string_lossy();
-                    if !new_path.contains(&*cargo_bin_str) {
-                        new_path = format!("{};{}", cargo_bin_str, new_path);
-                    }
+            let mut paths = Vec::new();
+            let mut seen = HashSet::new();
+
+            // Helper to add paths without duplicates
+            let mut add_path = |p: PathBuf| {
+                if seen.insert(p.clone()) {
+                    paths.push(p);
                 }
+            };
 
-                // Add current executable's directory so 'irosh' itself is callable
-                if let Ok(current_exe) = std::env::current_exe() {
-                    if let Some(exe_dir) = current_exe.parent() {
-                        let exe_dir_str = exe_dir.to_string_lossy();
-                        if !new_path.contains(&*exe_dir_str) {
-                            new_path = format!("{};{}", exe_dir_str, new_path);
+            // 1. Current process PATH
+            if let Ok(current_path) = std::env::var("PATH") {
+                for p in std::env::split_paths(&current_path) {
+                    add_path(p);
+                }
+            }
+
+            // 2. Read from Registry (HKCU) to capture user environment
+            let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+            if let Ok(env) = hkcu.open_subkey("Environment") {
+                if let Ok(user_path) = env.get_value::<String, _>("Path") {
+                    for mut p in std::env::split_paths(&user_path) {
+                        // Very basic expansion of %USERPROFILE% if it exists, since
+                        // winreg returns REG_EXPAND_SZ unexpanded.
+                        let p_str = p.to_string_lossy().to_string();
+                        if p_str.contains("%USERPROFILE%") {
+                            if let Some(home) = dirs::home_dir() {
+                                let expanded =
+                                    p_str.replace("%USERPROFILE%", &home.to_string_lossy());
+                                p = PathBuf::from(expanded);
+                            }
                         }
+                        add_path(p);
                     }
                 }
+            }
 
+            let hklm = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE);
+            if let Ok(env) =
+                hklm.open_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")
+            {
+                if let Ok(sys_path) = env.get_value::<String, _>("Path") {
+                    for p in std::env::split_paths(&sys_path) {
+                        add_path(p);
+                    }
+                }
+            }
+
+            // 3. Fallbacks: .cargo/bin and current exe dir
+            if let Some(home) = dirs::home_dir() {
+                add_path(home.join(".cargo").join("bin"));
+            }
+
+            if let Ok(current_exe) = std::env::current_exe() {
+                if let Some(exe_dir) = current_exe.parent() {
+                    add_path(exe_dir.to_path_buf());
+                }
+            }
+
+            if let Ok(new_path) = std::env::join_paths(paths) {
                 builder.env("PATH", new_path);
             }
         }
@@ -650,6 +691,8 @@ impl ServerHandler {
                     _ => None,
                 };
                 if let Some(event) = event {
+                    // SAFETY: `pid` is a valid process ID for a console process created by this server.
+                    // This sends a control event to the attached console group.
                     unsafe {
                         GenerateConsoleCtrlEvent(event, pid);
                     }

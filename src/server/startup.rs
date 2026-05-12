@@ -59,22 +59,67 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     let server_key = identity.ssh_key;
     let server_pub = server_key.public_key().clone();
 
-    // Build the authenticator: custom if provided, else default UnifiedAuthenticator.
-    let authenticator: Arc<dyn crate::auth::Authenticator> =
-        if let Some(custom) = options.authenticator.clone() {
-            custom
-        } else {
-            // Build the default unified auth from existing config.
-            let vault = load_all_authorized_clients(options.state())?;
-            let keys = vault.into_iter().map(|(_, k)| k).collect();
+    // Build the authenticator: custom if provided, else respect auth_mode.
+    let authenticator: Arc<dyn crate::auth::Authenticator> = if let Some(custom) =
+        options.authenticator.clone()
+    {
+        custom
+    } else {
+        match options.auth_mode {
+            crate::auth::AuthMode::Key => {
+                let vault = load_all_authorized_clients(options.state())?;
+                let keys = vault.into_iter().map(|(_, k)| k).collect();
+                Arc::new(crate::auth::KeyOnlyAuth::new(
+                    options.security_config(),
+                    keys,
+                    options.state().clone(),
+                ))
+            }
+            crate::auth::AuthMode::Password => {
+                let hash = crate::storage::load_shadow_file(options.state())?;
+                if let Some(hash) = hash {
+                    Arc::new(crate::auth::PasswordAuth::new(hash))
+                } else {
+                    return Err(ServerError::AuthConfiguration {
+                            reason: "Password auth requested but no password set. Run 'irosh passwd set' first."
+                                .to_string(),
+                        }
+                        .into());
+                }
+            }
+            crate::auth::AuthMode::Combined => {
+                let vault = load_all_authorized_clients(options.state())?;
+                let keys = vault.into_iter().map(|(_, k)| k).collect();
+                let key_auth = crate::auth::KeyOnlyAuth::new(
+                    options.security_config(),
+                    keys,
+                    options.state().clone(),
+                );
+                let hash = crate::storage::load_shadow_file(options.state())?;
+                if let Some(hash) = hash {
+                    let pass_auth = crate::auth::PasswordAuth::new(hash);
+                    Arc::new(crate::auth::CombinedAuth::new(key_auth, pass_auth))
+                } else {
+                    return Err(ServerError::AuthConfiguration {
+                            reason: "Combined auth (key+password) requested but no password set. Run 'irosh passwd set' first."
+                                .to_string(),
+                        }
+                        .into());
+                }
+            }
+            crate::auth::AuthMode::Unified => {
+                let vault = load_all_authorized_clients(options.state())?;
+                let keys = vault.into_iter().map(|(_, k)| k).collect();
 
-            Arc::new(crate::auth::UnifiedAuthenticator::new(
-                options.state().clone(),
-                options.security_config().host_key_policy,
-                keys,
-                None, // No temp password for primary connections
-            ))
-        };
+                Arc::new(crate::auth::UnifiedAuthenticator::new(
+                    options.state().clone(),
+                    options.security_config().host_key_policy,
+                    keys,
+                    None, // No temp password for primary connections
+                ))
+            }
+        }
+    };
 
     // Configure russh to advertise only the methods our authenticator supports.
     let supported = authenticator.supported_methods();

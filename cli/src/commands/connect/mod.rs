@@ -152,6 +152,9 @@ async fn exec_internal(
         Ok(c) => c,
         Err(e) => {
             pb.finish_and_clear();
+            if is_pairing {
+                auto_save_temp_peer(&state, &ticket);
+            }
             return Err(e.into());
         }
     };
@@ -161,6 +164,9 @@ async fn exec_internal(
         Ok(s) => s,
         Err(e) => {
             pb.finish_and_clear();
+            if is_pairing {
+                auto_save_temp_peer(&state, &ticket);
+            }
             return Err(e.into());
         }
     };
@@ -226,4 +232,31 @@ async fn exec_internal(
     let input_engine = input::InputEngine::new(&state);
 
     session::drive_session(session, input_engine).await
+}
+
+fn auto_save_temp_peer(state: &irosh::StateConfig, ticket: &irosh::transport::ticket::Ticket) {
+    let name = format!("peer-{}", &ticket.to_addr().id.to_string()[..8]);
+    let peers = irosh::storage::list_peers(state).unwrap_or_default();
+
+    // Check if the exact peer node ID is already in the address book
+    if !peers
+        .iter()
+        .any(|p| p.ticket.to_addr().id == ticket.to_addr().id)
+    {
+        let profile = irosh::storage::PeerProfile {
+            name: name.clone(),
+            ticket: ticket.clone(),
+        };
+        if irosh::storage::save_peer(state, &profile).is_ok() {
+            Ui::info("");
+            Ui::warn(
+                "Connection failed, but peer ticket was recovered!",
+                &format!("Saved as '{}' for future retries.", name),
+            );
+            Ui::info(&format!(
+                "You can reconnect by running: irosh connect {}",
+                name
+            ));
+        }
+    }
 }

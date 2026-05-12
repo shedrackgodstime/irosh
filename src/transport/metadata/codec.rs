@@ -6,7 +6,7 @@ use super::types::{MetadataError, PeerMetadata};
 #[cfg(test)]
 pub(crate) const MAGIC: [u8; 4] = *b"IRMD";
 #[cfg(not(test))]
-const MAGIC: [u8; 4] = *b"IRMD";
+pub(crate) const MAGIC: [u8; 4] = *b"IRMD";
 /// Current metadata protocol version.
 #[cfg(test)]
 pub(crate) const VERSION: u8 = 1;

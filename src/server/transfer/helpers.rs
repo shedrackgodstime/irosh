@@ -225,30 +225,28 @@ pub(super) async fn probe_download_size(
         return Ok(Ok(expected_size));
     }
 
-    let metadata = tokio::fs::metadata(source_path).await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::NotFound,
-                    source_path.display().to_string(),
-                ),
-            }
-        } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-            ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::Rejected,
-                    format!("permission denied: {}", source_path.display()),
-                ),
-            }
-        } else {
-            ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::Internal,
-                    format!("failed to read download source metadata: {e}"),
-                ),
-            }
+    let metadata = match tokio::fs::metadata(source_path).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(
+                "Metadata failed for {}: {} (kind: {:?})",
+                source_path.display(),
+                e,
+                e.kind()
+            );
+            let code = if e.kind() == std::io::ErrorKind::NotFound {
+                TransferFailureCode::NotFound
+            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
+                TransferFailureCode::Rejected
+            } else {
+                TransferFailureCode::Internal
+            };
+            return Ok(Err(TransferFailure::new(
+                code,
+                format!("metadata failed: {e}"),
+            )));
         }
-    })?;
+    };
 
     if metadata.is_dir() {
         return Ok(Err(TransferFailure::new(

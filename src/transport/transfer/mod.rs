@@ -1,6 +1,6 @@
 //! Framed single-file transfer protocol exchanged on a separate Iroh stream.
 
-mod codec;
+pub(crate) mod codec;
 mod helpers;
 #[cfg(test)]
 mod tests;

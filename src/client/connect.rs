@@ -19,6 +19,7 @@ use tracing::info;
 
 /// Configuration options for the irosh client.
 #[derive(Clone, Debug)]
+#[must_use = "builders do nothing unless consumed"]
 pub struct ClientOptions {
     state: StateConfig,
     security: SecurityConfig,
@@ -224,7 +225,11 @@ impl Client {
         }
 
         endpoint.close().await;
-        Err(last_err.expect("Loop ran at least once").into())
+        Err(last_err
+            .unwrap_or(ClientError::ConnectFailed {
+                source: iroh::endpoint::ConnectError::from(iroh::endpoint::ConnectionError::Reset),
+            })
+            .into())
     }
 
     /// Performs the SSH handshake and metadata exchange over an existing P2P connection.

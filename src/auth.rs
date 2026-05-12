@@ -33,12 +33,25 @@ use crate::error::Result;
 use crate::storage::trust::write_authorized_client;
 
 /// Which authentication methods a backend supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AuthMethod {
     /// SSH public key authentication.
     PublicKey,
     /// Username + password authentication.
     Password,
+}
+
+/// The overall authentication policy mode for the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AuthMode {
+    /// Only SSH public keys are allowed (Strict/TOFU).
+    Key,
+    /// Only passwords are allowed.
+    Password,
+    /// Both keys and passwords are allowed.
+    Combined,
+    /// The intelligent, auto-detecting policy (default).
+    Unified,
 }
 
 /// Trait for pluggable authentication backends.

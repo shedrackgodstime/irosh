@@ -57,3 +57,19 @@ pub fn p2p(msg: &str) {
         eprintln!("{} {}", style(Emoji("📡", ">")).cyan().bold(), msg);
     }
 }
+
+pub fn header(msg: &str) {
+    if !JSON_MODE.load(Ordering::SeqCst) {
+        eprintln!("\n  {}", style(msg).bold().underlined());
+    }
+}
+
+pub fn status(label: &str, value: &str, subtext: Option<&str>) {
+    if !JSON_MODE.load(Ordering::SeqCst) {
+        let mut line = format!("  {:<16}: {}", style(label).dim(), style(value).bold());
+        if let Some(s) = subtext {
+            line.push_str(&format!(" ({})", style(s).dim()));
+        }
+        eprintln!("{}", line);
+    }
+}

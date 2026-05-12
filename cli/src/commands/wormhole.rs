@@ -18,7 +18,10 @@ pub async fn exec(
 
     // Check if daemon is running. On slow machines (like Windows services starting up),
     // we retry a few times if the service is known to be active but IPC fails.
-    let mut daemon_running = ipc_client.send(IpcCommand::GetStatus).await.is_ok();
+    let mut daemon_running = matches!(
+        ipc_client.send(IpcCommand::GetStatus).await,
+        Ok(IpcResponse::Status(_))
+    );
     if !daemon_running && ctx.args.state.is_none() {
         if let irosh::sys::service::ServiceStatus::Active(_) =
             irosh::sys::service::query_service_status(Some(state_root.clone())).await
@@ -26,7 +29,10 @@ pub async fn exec(
             let mut retries = 0;
             while retries < 6 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if ipc_client.send(IpcCommand::GetStatus).await.is_ok() {
+                if matches!(
+                    ipc_client.send(IpcCommand::GetStatus).await,
+                    Ok(IpcResponse::Status(_))
+                ) {
                     daemon_running = true;
                     break;
                 }
@@ -129,11 +135,7 @@ pub async fn exec(
 
 async fn handle_status(client: &IpcClient) -> Result<()> {
     match client.send(IpcCommand::GetStatus).await? {
-        IpcResponse::Status {
-            wormhole_active,
-            wormhole_code,
-            active_sessions,
-        } => {
+        IpcResponse::Status(info) => {
             if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
                 #[derive(serde::Serialize)]
                 struct WormholeStatusJson {
@@ -142,22 +144,22 @@ async fn handle_status(client: &IpcClient) -> Result<()> {
                     sessions: usize,
                 }
                 crate::output::print_success(WormholeStatusJson {
-                    active: wormhole_active,
-                    code: wormhole_code,
-                    sessions: active_sessions,
+                    active: info.wormhole_active,
+                    code: info.wormhole_code,
+                    sessions: info.active_sessions,
                 });
                 return Ok(());
             }
 
-            if wormhole_active {
+            if info.wormhole_active {
                 Ui::success(&format!(
-                    "Wormhole active! Code: {}",
-                    wormhole_code.unwrap_or_default()
+                    "Wormhole is ACTIVE: {}",
+                    info.wormhole_code.as_deref().unwrap_or("unknown")
                 ));
             } else {
-                Ui::info("No active wormhole.");
+                Ui::info("Wormhole is currently disabled.");
             }
-            Ui::info(&format!("Active sessions: {}", active_sessions));
+            Ui::info(&format!("Active sessions: {}", info.active_sessions));
         }
         _ => anyhow::bail!("Unexpected response from daemon"),
     }

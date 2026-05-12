@@ -24,7 +24,7 @@ async fn publickey_auth_round_trip_succeeds_over_duplex_stream() {
         ));
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(server_state.root().to_path_buf()),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
@@ -86,7 +86,7 @@ async fn publickey_auth_is_rejected_for_untrusted_client_key() {
         ));
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(server_state.root().to_path_buf()),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
@@ -157,7 +157,7 @@ async fn connect_stream_fails_on_server_key_mismatch() {
         ));
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(std::path::PathBuf::from(".")),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await

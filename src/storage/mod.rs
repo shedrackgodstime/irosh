@@ -19,7 +19,7 @@ pub use config::{load_config, save_config};
 pub use keys::{
     NodeIdentity, delete_secret_key, load_or_generate_identity, load_secret_key, save_secret_key,
 };
-pub use peers::{PeerProfile, delete_peer, get_peer, list_peers, save_peer};
+pub use peers::{PeerProfile, delete_peer, list_peers, load_peer, rename_peer, save_peer};
 pub use shadow::{delete_shadow_file, load_shadow_file, write_shadow_file};
 pub use trust::{
     load_all_authorized_clients, load_all_authorized_clients as list_authorized_keys,

@@ -10,13 +10,13 @@ impl Session {
     /// Downloads one remote file or directory to a local path.
     ///
     /// If `remote` is a directory, it will be downloaded recursively.
-    pub async fn get(
+    pub async fn download(
         &mut self,
         remote: impl AsRef<std::path::Path>,
         local: impl AsRef<std::path::Path>,
         recursive: bool,
     ) -> Result<()> {
-        self.get_with_progress(remote, local, recursive, |_| {})
+        self.download_with_progress(remote, local, recursive, |_| {})
             .await
     }
 
@@ -36,7 +36,7 @@ impl Session {
     ///
     /// Returns an error if the connection fails, the remote path is not found,
     /// or if the local filesystem prevents writing the data.
-    pub async fn get_with_progress<F>(
+    pub async fn download_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
         local: impl AsRef<std::path::Path>,
@@ -59,24 +59,26 @@ impl Session {
                 }
                 .into());
             }
-            self.get_dir_with_progress(remote, local, on_progress).await
+            self.download_dir_with_progress(remote, local, on_progress)
+                .await
         } else {
-            self.get_file_with_progress(remote, local, on_progress)
+            self.download_file_with_progress(remote, local, on_progress)
                 .await
         }
     }
 
     /// Downloads one remote file to a local path on a separate authenticated stream.
-    pub async fn get_file(
+    pub async fn download_file(
         &mut self,
         remote: impl AsRef<std::path::Path>,
         local: impl AsRef<std::path::Path>,
     ) -> Result<()> {
-        self.get_file_with_progress(remote, local, |_| {}).await
+        self.download_file_with_progress(remote, local, |_| {})
+            .await
     }
 
     /// Downloads one remote file and reports progress synchronously through the callback.
-    pub async fn get_file_with_progress<F>(
+    pub async fn download_file_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
         local: impl AsRef<std::path::Path>,
@@ -214,7 +216,7 @@ impl Session {
     }
 
     /// Downloads a remote directory recursively.
-    pub async fn get_dir_with_progress<F>(
+    pub async fn download_dir_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
         local: impl AsRef<std::path::Path>,

@@ -45,13 +45,13 @@ pub fn resolve_local_input_path(base: &Path, raw: &str) -> PathBuf {
     if path.is_absolute() {
         return path.to_path_buf();
     }
-    if raw == "~" || raw.starts_with("~/") {
+    if let Some(rest) = raw.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            if raw == "~" {
-                return home;
-            } else {
-                return home.join(raw.strip_prefix("~/").unwrap());
-            }
+            return home.join(rest);
+        }
+    } else if raw == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
         }
     }
     base.join(path)
@@ -251,7 +251,7 @@ pub async fn handle_put_command(
     let pb_clone = pb.clone();
 
     let transfer_res = tokio::select! {
-        res = session.put_with_progress(&local_path, &remote_path, recursive, move |progress| {
+        res = session.upload_with_progress(&local_path, &remote_path, recursive, move |progress| {
             if let Some(pb) = &pb_clone {
                 if progress.total > 0 {
                     pb.set_length(progress.total);
@@ -392,7 +392,7 @@ pub async fn handle_get_command(
     let pb_clone = pb.clone();
 
     let transfer_res = tokio::select! {
-        res = session.get_with_progress(&remote_path, &local_path, recursive, move |progress| {
+        res = session.download_with_progress(&remote_path, &local_path, recursive, move |progress| {
             if let Some(pb) = &pb_clone {
                 if progress.total > 0 {
                     pb.set_length(progress.total);

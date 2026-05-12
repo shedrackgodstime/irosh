@@ -1,6 +1,7 @@
 use crate::context::CliContext;
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 pub mod check;
 pub mod config;
@@ -48,8 +49,20 @@ pub enum Commands {
     )]
     Host {
         /// Secret for stealth mode
-        #[arg(long)]
+        #[arg(long, short = 's')]
         secret: Option<String>,
+
+        /// Force a specific authentication mode
+        #[arg(long, value_enum)]
+        auth_mode: Option<CliAuthMode>,
+
+        /// Pre-authorize an SSH public key file (headless/scriptable setup)
+        #[arg(long)]
+        authorize: Option<PathBuf>,
+
+        /// Use simplified output (machine-readable hints)
+        #[arg(long)]
+        simple: bool,
     },
 
     /// Start or manage discovery wormholes
@@ -107,6 +120,29 @@ pub enum Commands {
     Check,
 }
 
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliAuthMode {
+    /// Only SSH public keys are allowed (Strict/TOFU)
+    Key,
+    /// Only passwords are allowed
+    Password,
+    /// Both keys and passwords are allowed
+    Combined,
+    /// Intelligent auto-detection (default)
+    Unified,
+}
+
+impl From<CliAuthMode> for irosh::auth::AuthMode {
+    fn from(mode: CliAuthMode) -> Self {
+        match mode {
+            CliAuthMode::Key => irosh::auth::AuthMode::Key,
+            CliAuthMode::Password => irosh::auth::AuthMode::Password,
+            CliAuthMode::Combined => irosh::auth::AuthMode::Combined,
+            CliAuthMode::Unified => irosh::auth::AuthMode::Unified,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl CommandExec for Commands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -128,7 +164,12 @@ impl CommandExec for Commands {
                 )
                 .await
             }
-            Commands::Host { secret } => host::exec(secret.clone(), ctx).await,
+            Commands::Host {
+                secret,
+                auth_mode,
+                authorize,
+                simple,
+            } => host::exec(secret.clone(), *auth_mode, authorize.clone(), *simple, ctx).await,
             Commands::Wormhole {
                 code,
                 passwd,
@@ -162,10 +203,34 @@ pub enum SystemAction {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum PeerAction {
+    /// List all saved peers in the address book
     List,
-    Add { name: String, ticket: String },
-    Remove { name: Option<String> },
-    Info { name: String },
+    /// Add a new peer using a wormhole ticket
+    Add {
+        /// A friendly alias for this peer
+        name: String,
+        /// The wormhole connection ticket
+        ticket: String,
+    },
+    /// Remove a peer from the address book.
+    /// If name is omitted, an interactive selection prompt will be shown.
+    Remove {
+        /// The alias of the peer to remove
+        name: Option<String>,
+    },
+    /// View detailed information about a saved peer
+    Info {
+        /// The alias of the peer
+        name: String,
+    },
+    /// Rename (or re-alias) a saved peer.
+    /// If names are omitted, an interactive selection and input prompt will be shown.
+    Rename {
+        /// The current alias of the peer
+        old_name: Option<String>,
+        /// The new alias to assign
+        new_name: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

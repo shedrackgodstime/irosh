@@ -4,6 +4,7 @@ pub use portable_pty::PtySize;
 
 /// Declarative PTY request options for an SSH session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "builders do nothing unless consumed"]
 pub struct PtyOptions {
     term: String,
     size: PtySize,

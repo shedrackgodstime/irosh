@@ -14,11 +14,9 @@ pub(crate) use state::ConnectionShellState;
 pub(super) use state::ShellContext;
 
 pub(crate) async fn handle_transfer_stream(
-    send: iroh::endpoint::SendStream,
-    recv: iroh::endpoint::RecvStream,
+    mut stream: IrohDuplex,
     shell_state: ConnectionShellState,
 ) -> Result<()> {
-    let mut stream = IrohDuplex::new(send, recv);
     let context = ShellContext::from_state(&shell_state);
 
     match read_next_frame(&mut stream).await {

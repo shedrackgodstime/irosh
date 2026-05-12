@@ -49,6 +49,21 @@ pub enum InternalCommand {
     },
 }
 
+/// Detailed daemon status information.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DaemonStatus {
+    /// The server's unique P2P identifier.
+    pub endpoint_id: String,
+    /// The connection ticket for this node.
+    pub ticket: String,
+    /// Whether a wormhole is currently active.
+    pub wormhole_active: bool,
+    /// The active wormhole code (if any).
+    pub wormhole_code: Option<String>,
+    /// Number of active SSH sessions.
+    pub active_sessions: usize,
+}
+
 /// Responses sent by the irosh daemon back to the IPC client.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum IpcResponse {
@@ -57,21 +72,14 @@ pub enum IpcResponse {
     /// Command failed with a specific error message.
     Error(String),
     /// Current daemon status information.
-    Status {
-        /// Whether a wormhole is currently active.
-        wormhole_active: bool,
-        /// The active wormhole code (if any).
-        wormhole_code: Option<String>,
-        /// Number of active SSH sessions.
-        active_sessions: usize,
-    },
+    Status(DaemonStatus),
 }
 
 /// Errors specific to the IPC subsystem.
 #[derive(Debug, thiserror::Error)]
 pub enum IpcError {
     /// Failed to bind the IPC socket.
-    #[error("failed to bind IPC socket at {path}")]
+    #[error("failed to bind ipc socket at {path}")]
     BindFailed {
         path: PathBuf,
         #[source]
@@ -79,11 +87,11 @@ pub enum IpcError {
     },
 
     /// An I/O error occurred during IPC communication.
-    #[error("IPC I/O error")]
+    #[error("ipc i/o error")]
     Io(#[from] std::io::Error),
 
     /// Serialization or deserialization of IPC messages failed.
-    #[error("IPC message serialization failed")]
+    #[error("ipc message serialization failed")]
     Serialization(#[from] serde_json::Error),
 }
 
@@ -159,7 +167,10 @@ impl IpcServer {
                     source: e,
                 })?;
 
-            let local_addr = listener.local_addr().unwrap();
+            let local_addr = listener.local_addr().map_err(|e| IpcError::BindFailed {
+                path: path.clone(),
+                source: e,
+            })?;
             let _ = std::fs::write(&path, local_addr.port().to_string());
 
             info!("IPC listener active on {}", local_addr);

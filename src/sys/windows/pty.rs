@@ -30,6 +30,8 @@ impl RawTerminal {
     pub fn new(_fd: i32) -> Result<Self> {
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 
+        // SAFETY: Windows API calls for terminal mode manipulation.
+        // We check for invalid handles and store original modes for restoration.
         unsafe {
             let in_handle = GetStdHandle(STD_INPUT_HANDLE);
             let out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -86,6 +88,7 @@ impl RawTerminal {
 
 impl Drop for RawTerminal {
     fn drop(&mut self) {
+        // SAFETY: Restoring original console modes using stored handles.
         unsafe {
             let _ = SetConsoleMode(self.in_handle, self.in_original_mode);
             if self.out_original_mode != 0 {
@@ -97,6 +100,7 @@ impl Drop for RawTerminal {
 
 /// Probes the physical terminal size.
 pub fn current_terminal_size() -> PtySize {
+    // SAFETY: Querying standard output handle for console buffer information.
     unsafe {
         let handle = GetStdHandle(STD_OUTPUT_HANDLE);
         let mut info = std::mem::zeroed::<CONSOLE_SCREEN_BUFFER_INFO>();
@@ -137,6 +141,8 @@ impl AsyncStdin {
         std::thread::Builder::new()
             .name("irosh-win-input".to_string())
             .spawn(move || {
+                // SAFETY: Polling standard input for console events.
+                // We use a fixed-size buffer and check for successful read.
                 let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
                 let mut buffer = [unsafe { std::mem::zeroed::<INPUT_RECORD>() }; 128];
 
@@ -151,12 +157,13 @@ impl AsyncStdin {
                     // Batch all key bytes from this read into one send where possible.
                     // VT sequences (arrows etc.) flush the batch first, then send
                     // themselves individually so they are never merged with plain chars.
-                    let mut key_batch: Vec<u8> = Vec::new();
+                    let mut key_batch: Vec<u8> = Vec::with_capacity(read as usize);
 
                     for i in 0..read {
                         let record = buffer[i as usize];
                         match record.EventType as u32 {
                             KEY_EVENT => {
+                                // SAFETY: Accessing union field for KeyEvent is safe when EventType is KEY_EVENT.
                                 let key = unsafe { record.Event.KeyEvent };
                                 if key.bKeyDown != 0 {
                                     // 1. Handle Virtual Key translation for VT sequences
@@ -202,6 +209,7 @@ impl AsyncStdin {
                                         }
                                     } else {
                                         // 2. Fallback to Unicode char — accumulate into batch.
+                                        // SAFETY: Accessing union field for UnicodeChar.
                                         let c = unsafe { key.uChar.UnicodeChar };
                                         if c != 0 {
                                             let mut utf8 = [0u8; 4];

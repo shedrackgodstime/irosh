@@ -61,8 +61,10 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                 }
                                 EscapeAction::Help => {
                                     show_help(&mut stdout).await?;
-                                    // Send \r so the remote shell reprints its prompt.
-                                    let _ = session.send(b"\r").await;
+                                    // Do NOT send \r to the remote here, as it causes ConPTY cursor
+                                    // corruption on Windows. We just ensure a clean line locally.
+                                    let _ = stdout.write_all(b"\r\n").await;
+                                    let _ = stdout.flush().await;
 
                                     // Flush any buffered remote data that arrived during the help screen.
                                     if !remote_buffer.is_empty() {

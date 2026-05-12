@@ -12,13 +12,16 @@ use crate::server::shell_access::{configure_live_shell_context, resolve_process_
 pub(crate) struct ConnectionShellState {
     shell_pid: Arc<StdMutex<Option<u32>>>,
     cached_cwd: Arc<StdMutex<Option<(std::path::PathBuf, std::time::Instant)>>>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) state_root: PathBuf,
 }
 
 impl ConnectionShellState {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(state_root: PathBuf) -> Self {
         Self {
             shell_pid: Arc::new(StdMutex::new(None)),
             cached_cwd: Arc::new(StdMutex::new(None)),
+            state_root,
         }
     }
 
@@ -95,14 +98,18 @@ impl ShellContext {
         match self {
             Self::Live { pid } => {
                 // Check cache first
-                if let Ok(guard) = shell_state.cached_cwd.lock()
-                    && let Some((path, instant)) = guard.as_ref()
-                    && instant.elapsed() < std::time::Duration::from_secs(2)
-                {
-                    return Ok(path.clone());
+                if let Ok(guard) = shell_state.cached_cwd.lock() {
+                    if let Some((path, instant)) = guard.as_ref() {
+                        if instant.elapsed() < std::time::Duration::from_secs(2) {
+                            return Ok(path.clone());
+                        }
+                    }
                 }
 
-                let path = resolve_process_cwd(pid).await?;
+                let fallback_home = self
+                    .home_dir(shell_state)
+                    .unwrap_or_else(|| PathBuf::from("."));
+                let path = resolve_process_cwd(pid, fallback_home).await?;
 
                 // Update cache
                 if let Ok(mut guard) = shell_state.cached_cwd.lock() {
@@ -117,9 +124,11 @@ impl ShellContext {
                 Ok(path)
             }
             Self::Stateless => {
-                let home = self.home_dir().ok_or_else(|| ServerError::ShellError {
-                    details: "could not determine server home directory".to_string(),
-                })?;
+                let home = self
+                    .home_dir(shell_state)
+                    .ok_or_else(|| ServerError::ShellError {
+                        details: "could not determine server home directory".to_string(),
+                    })?;
                 tracing::debug!("Resolved stateless CWD (home): {}", home.display());
                 Ok(home)
             }
@@ -142,7 +151,11 @@ impl ShellContext {
             return Ok(status.success());
         }
 
-        Ok(tokio::fs::try_exists(path).await?)
+        Ok(tokio::fs::metadata(path).await.is_ok())
+    }
+
+    pub(super) async fn path_missing(self, path: &str) -> Result<bool> {
+        Ok(!self.path_exists(path).await?)
     }
 
     pub(super) async fn is_dir(self, path: &str) -> Result<bool> {
@@ -156,84 +169,55 @@ impl ShellContext {
                 .status()
                 .await
                 .map_err(|e| ServerError::ShellError {
-                    details: format!("failed to probe remote path directory: {e}"),
+                    details: format!("failed to probe remote path directory status: {e}"),
                 })?;
             return Ok(status.success());
         }
 
-        if let Ok(metadata) = tokio::fs::metadata(path).await {
-            Ok(metadata.is_dir())
-        } else {
-            Ok(false)
-        }
-    }
-
-    pub(super) async fn path_missing(self, path: &str) -> Result<bool> {
-        #[cfg(target_os = "linux")]
-        if let Self::Live { .. } = self {
-            let mut command = Command::new("test");
-            command.arg("!").arg("-e").arg(path);
-            self.configure(&mut command);
-
-            let status = command
-                .status()
-                .await
-                .map_err(|e| ServerError::ShellError {
-                    details: format!("failed to probe remote path absence: {e}"),
-                })?;
-            return Ok(status.success());
-        }
-
-        Ok(!tokio::fs::try_exists(path).await?)
+        let meta = match tokio::fs::metadata(path).await {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(meta.is_dir())
     }
 
     pub(super) async fn create_dir_all(self, path: &Path) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
             let mut command = Command::new("mkdir");
-            command.arg("-p").arg("--").arg(path);
+            command.arg("-p").arg(path);
             self.configure(&mut command);
-
-            let status = command
-                .status()
-                .await
-                .map_err(|e| ServerError::ShellError {
-                    details: format!("failed to spawn mkdir: {e}"),
-                })?;
-            return Ok(status.success());
+            let status = command.status().await;
+            return Ok(status.map(|s| s.success()).unwrap_or(false));
         }
 
         tokio::fs::create_dir_all(path).await?;
         Ok(true)
     }
 
-    pub(super) async fn remove_file_if_present(self, path: &str) {
+    pub(super) async fn remove_file_if_present(self, path: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
             let mut command = Command::new("rm");
-            command.arg("-f").arg("--").arg(path);
+            command.arg("-f").arg(path);
             self.configure(&mut command);
             let _ = command.status().await;
-            return;
+            return Ok(());
         }
 
         let _ = tokio::fs::remove_file(path).await;
+        Ok(())
     }
 
     pub(super) async fn rename(self, from: &str, to: &str) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
             let mut command = Command::new("mv");
-            command.arg("-f").arg("--").arg(from).arg(to);
+            command.arg(from).arg(to);
             self.configure(&mut command);
-
-            let status = command
-                .status()
-                .await
-                .map_err(|e| ServerError::ShellError {
-                    details: format!("failed to spawn mv for atomic rename: {e}"),
-                })?;
-            return Ok(status.success());
+            let status = command.status().await;
+            return Ok(status.map(|s| s.success()).unwrap_or(false));
         }
 
         tokio::fs::rename(from, to).await?;
@@ -244,7 +228,7 @@ impl ShellContext {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
             let mut command = Command::new("chmod");
-            command.arg(format!("{:o}", mode)).arg("--").arg(path);
+            command.arg(format!("{:o}", mode)).arg(path);
             self.configure(&mut command);
             let _ = command.status().await;
             return;
@@ -261,7 +245,7 @@ impl ShellContext {
         }
     }
 
-    fn home_dir(self) -> Option<PathBuf> {
+    fn home_dir(self, _shell_state: &ConnectionShellState) -> Option<PathBuf> {
         #[cfg(unix)]
         {
             std::env::var_os("HOME").map(PathBuf::from)
@@ -273,8 +257,16 @@ impl ShellContext {
             let profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
             if let Some(p) = &profile {
                 if p.to_string_lossy().to_lowercase().contains("systemprofile") {
-                    // We are likely a service. The home directory is correctly inferred
-                    // in the service startup logic via environment variable mapping.
+                    // We are likely a service. Deriving home from state_root.
+                    // State root is usually: C:\Users\Ghost\.irosh\server
+                    // We want: C:\Users\Ghost
+                    let mut current = _shell_state.state_root.as_path();
+                    while let Some(parent) = current.parent() {
+                        if current.file_name().and_then(|n| n.to_str()) == Some(".irosh") {
+                            return Some(parent.to_path_buf());
+                        }
+                        current = parent;
+                    }
                 }
             }
             profile.or_else(|| std::env::var_os("HOME").map(PathBuf::from))
@@ -308,7 +300,7 @@ impl ShellContext {
         }
 
         if raw == "~" {
-            return server_home_dir().ok_or_else(|| {
+            return self.home_dir(shell_state).ok_or_else(|| {
                 ServerError::ShellError {
                     details: "could not determine server home directory for ~ expansion"
                         .to_string(),
@@ -317,10 +309,13 @@ impl ShellContext {
             });
         }
 
-        if let Some(home_relative) = raw.strip_prefix("~/") {
-            let home = server_home_dir().ok_or_else(|| ServerError::ShellError {
-                details: "could not determine server home directory for ~/ expansion".to_string(),
-            })?;
+        if let Some(home_relative) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+            let home = self
+                .home_dir(shell_state)
+                .ok_or_else(|| ServerError::ShellError {
+                    details: "could not determine server home directory for ~/ expansion"
+                        .to_string(),
+                })?;
             return Ok(home.join(home_relative));
         }
 
@@ -330,9 +325,4 @@ impl ShellContext {
         tracing::info!("Resolved remote path: '{}' -> '{}'", raw, full.display());
         Ok(full)
     }
-}
-
-fn server_home_dir() -> Option<PathBuf> {
-    // We use Stateless context to call the home_dir helper.
-    ShellContext::Stateless.home_dir()
 }

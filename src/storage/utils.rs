@@ -96,6 +96,9 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
         const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x00000020;
         const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x00000220;
 
+        // SAFETY: Windows API calls for security descriptor manipulation.
+        // We ensure that buffers are correctly sized and pointers are valid
+        // by using established Win32 patterns (query size first, then allocate).
         unsafe {
             let mut process_token: HANDLE = std::ptr::null_mut();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut process_token) == 0 {

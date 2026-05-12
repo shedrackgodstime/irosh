@@ -39,11 +39,23 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
             SystemAction::Status => {
                 let status = service::query_service_status(Some(state_root.clone())).await;
 
+                // Try to get live info from the daemon via IPC if it might be running
+                let mut daemon_info = None;
+                if matches!(status, ServiceStatus::Active(_) | ServiceStatus::Unknown) {
+                    let client = irosh::client::ipc::IpcClient::new(state_root.clone());
+                    if let Ok(irosh::server::ipc::IpcResponse::Status(info)) =
+                        client.send(irosh::server::ipc::IpcCommand::GetStatus).await
+                    {
+                        daemon_info = Some(info);
+                    }
+                }
+
                 if ctx.args.json {
                     #[derive(serde::Serialize)]
                     struct SystemStatusResponse {
                         state: &'static str,
                         manager: Option<String>,
+                        daemon: Option<irosh::server::ipc::DaemonStatus>,
                         message: &'static str,
                     }
 
@@ -51,21 +63,25 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                         ServiceStatus::Active(ref manager) => SystemStatusResponse {
                             state: "active",
                             manager: Some(manager.clone()),
+                            daemon: daemon_info,
                             message: "Service is running.",
                         },
                         ServiceStatus::Inactive => SystemStatusResponse {
                             state: "inactive",
                             manager: None,
+                            daemon: None,
                             message: "Service is installed but not running.",
                         },
                         ServiceStatus::NotFound => SystemStatusResponse {
                             state: "not_installed",
                             manager: None,
+                            daemon: None,
                             message: "Service is not installed.",
                         },
                         ServiceStatus::Unknown => SystemStatusResponse {
                             state: "unknown",
                             manager: None,
+                            daemon: daemon_info,
                             message: "Service status is unknown.",
                         },
                     };
@@ -73,28 +89,43 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                     return Ok(());
                 }
 
-                eprintln!("\n  System Service Status");
-                eprintln!("  ----------------------------------------------------");
+                Ui::header("System Service Status");
                 match status {
                     ServiceStatus::Active(manager) => {
-                        eprintln!("  Status:    ACTIVE");
-                        eprintln!("  Manager:   {}", manager);
+                        Ui::status("Service", "ACTIVE", Some(&manager));
+                        if let Some(info) = daemon_info {
+                            Ui::machine_identity(
+                                &info.endpoint_id,
+                                "Daemon Live",
+                                &info.ticket,
+                                "Background Hosting",
+                            );
+                            Ui::status("Active Sessions", &info.active_sessions.to_string(), None);
+                            if info.wormhole_active {
+                                Ui::status("Wormhole", "ENABLED", info.wormhole_code.as_deref());
+                            } else {
+                                Ui::status("Wormhole", "DISABLED", None);
+                            }
+                        } else {
+                            Ui::warn(
+                                "IPC Connectivity",
+                                "Could not connect to daemon IPC. The service might be starting or restricted.",
+                            );
+                        }
                     }
                     ServiceStatus::Inactive => {
-                        eprintln!("  Status:    INACTIVE");
-                        eprintln!("  Notice:    Service is installed but not running.");
+                        Ui::status("Service", "INACTIVE", None);
+                        Ui::info("Notice: Service is installed but not running.");
                     }
                     ServiceStatus::NotFound => {
-                        eprintln!("  Status:    NOT INSTALLED");
-                        eprintln!(
-                            "  Action:    Run 'irosh system install' to enable background tasks."
-                        );
+                        Ui::status("Service", "NOT INSTALLED", None);
+                        Ui::info("Action: Run 'irosh system install' to enable background tasks.");
                     }
                     ServiceStatus::Unknown => {
-                        eprintln!("  Status:    UNKNOWN");
+                        Ui::status("Service", "UNKNOWN", None);
                     }
                 }
-                eprintln!("  ----------------------------------------------------\n");
+                println!();
             }
             SystemAction::Logs { follow } => {
                 irosh::sys::service::view_logs(*follow, Some(state_root.clone())).await?;

@@ -11,13 +11,13 @@ impl Session {
     /// Uploads one local file or directory to the remote peer.
     ///
     /// If `local` is a directory, it will be uploaded recursively.
-    pub async fn put(
+    pub async fn upload(
         &mut self,
         local: impl AsRef<std::path::Path>,
         remote: impl AsRef<std::path::Path>,
         recursive: bool,
     ) -> Result<()> {
-        self.put_with_progress(local, remote, recursive, |_| {})
+        self.upload_with_progress(local, remote, recursive, |_| {})
             .await
     }
 
@@ -36,7 +36,7 @@ impl Session {
     ///
     /// Returns an error if the connection fails, the remote target exists and
     /// cannot be overwritten, or if the transfer is interrupted.
-    pub async fn put_with_progress<F>(
+    pub async fn upload_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,
         remote: impl AsRef<std::path::Path>,
@@ -56,24 +56,25 @@ impl Session {
                 }
                 .into());
             }
-            self.put_dir_with_progress(local, remote, on_progress).await
+            self.upload_dir_with_progress(local, remote, on_progress)
+                .await
         } else {
-            self.put_file_with_progress(local, remote, on_progress)
+            self.upload_file_with_progress(local, remote, on_progress)
                 .await
         }
     }
 
     /// Uploads one local file to the remote peer on a separate authenticated stream.
-    pub async fn put_file(
+    pub async fn upload_file(
         &mut self,
         local: impl AsRef<std::path::Path>,
         remote: impl AsRef<std::path::Path>,
     ) -> Result<()> {
-        self.put_file_with_progress(local, remote, |_| {}).await
+        self.upload_file_with_progress(local, remote, |_| {}).await
     }
 
     /// Uploads one local file and reports progress synchronously through the callback.
-    pub async fn put_file_with_progress<F>(
+    pub async fn upload_file_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,
         remote: impl AsRef<std::path::Path>,
@@ -208,7 +209,7 @@ impl Session {
     }
 
     /// Uploads a directory recursively to the remote peer.
-    pub async fn put_dir_with_progress<F>(
+    pub async fn upload_dir_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,
         remote: impl AsRef<std::path::Path>,

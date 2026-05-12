@@ -43,6 +43,7 @@ impl RawTerminal {
 
 impl Drop for RawTerminal {
     fn drop(&mut self) {
+        // SAFETY: Restoring original termios settings for the terminal.
         unsafe {
             let _ = libc::tcsetattr(self.fd, libc::TCSANOW, &self.original);
         }
@@ -50,7 +51,9 @@ impl Drop for RawTerminal {
 }
 
 /// Probes the physical terminal size utilizing the `TIOCGWINSZ` syscall.
+/// Returns the current terminal size using standard OS queries.
 pub fn current_terminal_size() -> PtySize {
+    // SAFETY: Querying terminal size via `ioctl` (TIOCGWINSZ).
     unsafe {
         let mut winsize = std::mem::zeroed::<libc::winsize>();
         if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut winsize) == 0 {
@@ -170,6 +173,7 @@ impl Drop for AsyncStdin {
     fn drop(&mut self) {
         use std::os::unix::io::AsRawFd;
         let fd = std::io::stdin().as_raw_fd();
+        // SAFETY: Restoring original file flags for standard input.
         unsafe {
             let _ = libc::fcntl(fd, libc::F_SETFL, self.original_flags);
         }

@@ -54,7 +54,7 @@ async fn connect_test_session(
         ));
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(),
+        crate::server::transfer::ConnectionShellState::new(server_state.root().to_path_buf()),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await

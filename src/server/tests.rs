@@ -97,11 +97,8 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
 
     // Verify it's active
     let status = ipc.send(IpcCommand::GetStatus).await.unwrap();
-    if let IpcResponse::Status {
-        wormhole_active, ..
-    } = status
-    {
-        assert!(wormhole_active, "Wormhole should be active");
+    if let IpcResponse::Status(info) = status {
+        assert!(info.wormhole_active, "Wormhole should be active");
     } else {
         panic!("Expected Status response");
     }
@@ -133,13 +130,8 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
     let mut success = false;
     for _ in 0..50 {
         let status = ipc.send(IpcCommand::GetStatus).await.unwrap();
-        if let IpcResponse::Status {
-            wormhole_active,
-            active_sessions,
-            ..
-        } = status
-        {
-            if !wormhole_active && active_sessions == 0 {
+        if let IpcResponse::Status(info) = status {
+            if !info.wormhole_active && info.active_sessions == 0 {
                 success = true;
                 break;
             }

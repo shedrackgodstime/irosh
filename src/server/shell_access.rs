@@ -5,18 +5,12 @@ use tokio::task;
 
 use crate::error::{IroshError, Result, ServerError};
 
-pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
+pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Result<PathBuf> {
     task::spawn_blocking(move || {
         #[cfg(target_os = "linux")]
         {
             let link = format!("/proc/{pid}/cwd");
-            let cwd = std::fs::read_link(&link).map_err(|e| {
-                IroshError::Server(ServerError::ProcessQueryFailed {
-                    pid,
-                    details: format!("failed to read /proc/{pid}/cwd: {e}"),
-                    source: e,
-                })
-            })?;
+            let cwd = std::fs::read_link(&link).unwrap_or(fallback_dir);
             Ok(cwd)
         }
         #[cfg(windows)]
@@ -50,98 +44,94 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
                 ) -> NTSTATUS;
             }
 
-            let handle =
-                unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid) };
-            if handle == 0 as _ {
-                return Ok(fallback_windows());
-            }
+            // SAFETY: Windows API calls for process and PEB inspection.
+            // We ensure validity by checking handle creation, status codes,
+            // and using MaybeUninit for external data structures.
+            unsafe {
+                let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+                if handle == 0 as _ {
+                    return Ok(fallback_dir);
+                }
 
-            let mut pbi = std::mem::MaybeUninit::<PROCESS_BASIC_INFORMATION>::uninit();
-            let mut ret_len = 0;
-            let status = unsafe {
-                NtQueryInformationProcess(
+                let mut pbi = std::mem::MaybeUninit::<PROCESS_BASIC_INFORMATION>::uninit();
+                let mut ret_len = 0;
+                let status = NtQueryInformationProcess(
                     handle,
                     0, // ProcessBasicInformation
                     pbi.as_mut_ptr() as _,
                     std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
                     &mut ret_len,
-                )
-            };
+                );
 
-            if status != 0 {
-                unsafe { CloseHandle(handle) };
-                return Ok(fallback_windows());
-            }
+                if status != 0 {
+                    CloseHandle(handle);
+                    return Ok(fallback_dir);
+                }
 
-            let pbi = unsafe { pbi.assume_init() };
-            let peb_base = pbi.PebBaseAddress;
+                let pbi = pbi.assume_init();
+                let peb_base = pbi.PebBaseAddress;
 
-            #[cfg(target_pointer_width = "64")]
-            let proc_params_offset = 0x20;
-            #[cfg(target_pointer_width = "32")]
-            let proc_params_offset = 0x10;
+                #[cfg(target_pointer_width = "64")]
+                let proc_params_offset = 0x20;
+                #[cfg(target_pointer_width = "32")]
+                let proc_params_offset = 0x10;
 
-            let mut proc_params_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
-            let ok = unsafe {
-                ReadProcessMemory(
+                let mut proc_params_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+                let ok = ReadProcessMemory(
                     handle,
                     peb_base.add(proc_params_offset),
                     &mut proc_params_ptr as *mut _ as _,
                     std::mem::size_of::<*mut std::ffi::c_void>(),
                     std::ptr::null_mut(),
-                )
-            };
+                );
 
-            if ok == FALSE {
-                unsafe { CloseHandle(handle) };
-                return Ok(fallback_windows());
-            }
+                if ok == FALSE {
+                    CloseHandle(handle);
+                    return Ok(fallback_dir);
+                }
 
-            #[cfg(target_pointer_width = "64")]
-            let cur_dir_offset = 0x38;
-            #[cfg(target_pointer_width = "32")]
-            let cur_dir_offset = 0x24;
+                #[cfg(target_pointer_width = "64")]
+                let cur_dir_offset = 0x38;
+                #[cfg(target_pointer_width = "32")]
+                let cur_dir_offset = 0x24;
 
-            let mut unicode_str = std::mem::MaybeUninit::<UNICODE_STRING>::uninit();
-            let ok = unsafe {
-                ReadProcessMemory(
+                let mut unicode_str = std::mem::MaybeUninit::<UNICODE_STRING>::uninit();
+                let ok = ReadProcessMemory(
                     handle,
                     proc_params_ptr.add(cur_dir_offset),
                     unicode_str.as_mut_ptr() as _,
                     std::mem::size_of::<UNICODE_STRING>(),
                     std::ptr::null_mut(),
-                )
-            };
+                );
 
-            if ok == FALSE {
-                unsafe { CloseHandle(handle) };
-                return Ok(fallback_windows());
-            }
+                if ok == FALSE {
+                    CloseHandle(handle);
+                    return Ok(fallback_dir);
+                }
 
-            let unicode_str = unsafe { unicode_str.assume_init() };
-            let mut buffer = vec![0u16; (unicode_str.Length / 2) as usize];
-            let ok = unsafe {
-                ReadProcessMemory(
+                let unicode_str = unicode_str.assume_init();
+                let mut buffer = vec![0u16; (unicode_str.Length / 2) as usize];
+                let ok = ReadProcessMemory(
                     handle,
                     unicode_str.Buffer as _,
                     buffer.as_mut_ptr() as _,
                     unicode_str.Length as usize,
                     std::ptr::null_mut(),
-                )
-            };
+                );
 
-            unsafe { CloseHandle(handle) };
+                CloseHandle(handle);
 
-            if ok == FALSE {
-                Ok(fallback_windows())
-            } else {
-                let path_str = String::from_utf16_lossy(&buffer);
-                Ok(PathBuf::from(path_str))
+                if ok == FALSE {
+                    Ok(fallback_dir)
+                } else {
+                    let path_str = String::from_utf16_lossy(&buffer);
+                    Ok(PathBuf::from(path_str))
+                }
             }
         }
         #[cfg(not(any(target_os = "linux", windows)))]
         {
-            Ok(fallback_windows())
+            Ok(fallback_dir)
         }
     })
     .await
@@ -151,20 +141,6 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<PathBuf> {
             source,
         })
     })?
-}
-
-#[cfg(not(target_os = "linux"))]
-fn fallback_windows() -> PathBuf {
-    let mut fallback = dirs::home_dir();
-    #[cfg(windows)]
-    {
-        if let Some(h) = &fallback {
-            if h.to_string_lossy().to_lowercase().contains("systemprofile") {
-                fallback = None;
-            }
-        }
-    }
-    fallback.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
 pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {
@@ -178,6 +154,8 @@ pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {
         let mnt_ns = format!("/proc/{_pid}/ns/mnt");
         let user_ns = format!("/proc/{_pid}/ns/user");
 
+        // SAFETY: `pre_exec` is used to configure the child process before it starts.
+        // We only use async-signal-safe operations (joining namespaces) inside the closure.
         unsafe {
             _command.pre_exec(move || {
                 join_linux_namespace(&mnt_ns, "/proc/self/ns/mnt", libc::CLONE_NEWNS)?;

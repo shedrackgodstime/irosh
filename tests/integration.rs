@@ -120,14 +120,14 @@ async fn test_e2e_file_transfer() {
         println!("[DEBUG] Uploading file...");
         let remote_path = server_state.root().join("uploaded.txt");
         session
-            .put_file(&local_file, &remote_path)
+            .upload_file(&local_file, &remote_path)
             .await
             .expect("File upload failed");
 
         println!("[DEBUG] Downloading file...");
         let downloaded_file = local_dir.join("downloaded.txt");
         session
-            .get_file(&remote_path, &downloaded_file)
+            .download_file(&remote_path, &downloaded_file)
             .await
             .expect("File download failed");
 
@@ -196,14 +196,14 @@ async fn test_stateless_file_transfer() {
         println!("[DEBUG] Uploading file (stateless)...");
         let remote_path = server_state.root().join("uploaded_stateless.txt");
         session
-            .put_file(&local_file, &remote_path)
+            .upload_file(&local_file, &remote_path)
             .await
             .expect("Stateless file upload failed");
 
         println!("[DEBUG] Downloading file (stateless)...");
         let downloaded_file = local_dir.join("downloaded_stateless.txt");
         session
-            .get_file(&remote_path, &downloaded_file)
+            .download_file(&remote_path, &downloaded_file)
             .await
             .expect("Stateless file download failed");
 
@@ -284,14 +284,14 @@ async fn test_recursive_directory_transfer() {
         println!("[DEBUG] Uploading directory (recursive)...");
         let remote_path = server_state.root().join("remote_dir");
         session
-            .put(&local_root, &remote_path, true)
+            .upload(&local_root, &remote_path, true)
             .await
             .expect("Recursive upload failed");
 
         println!("[DEBUG] Downloading directory (recursive)...");
         let downloaded_root = client_state.root().join("recursive_download");
         session
-            .get(&remote_path, &downloaded_root, true)
+            .download(&remote_path, &downloaded_root, true)
             .await
             .expect("Recursive download failed");
 

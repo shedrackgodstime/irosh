@@ -8,19 +8,28 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 /// An adapter wrapping an Iroh send and receive stream pair into a single
 /// type implementing [`AsyncRead`] and [`AsyncWrite`].
-///
-/// This permits seamless integration between Iroh's native QUIC abstractions
-/// and higher-level network protocols expecting bidirectional duplex streams,
-/// such as `russh`.
 pub struct IrohDuplex {
     send: SendStream,
-    recv: RecvStream,
+    recv: Pin<Box<dyn AsyncRead + Send + Sync>>,
 }
 
 impl IrohDuplex {
     /// Creates a new `IrohDuplex` from an Iroh send/recv stream pair.
     pub fn new(send: SendStream, recv: RecvStream) -> Self {
-        Self { send, recv }
+        Self {
+            send,
+            recv: Box::pin(recv),
+        }
+    }
+
+    /// Creates a new `IrohDuplex` with a pre-read prefix buffer.
+    /// This is useful for stream dispatching based on magic headers.
+    pub fn with_prefix(send: SendStream, recv: RecvStream, prefix: Vec<u8>) -> Self {
+        let chained = tokio::io::AsyncReadExt::chain(std::io::Cursor::new(prefix), recv);
+        Self {
+            send,
+            recv: Box::pin(chained),
+        }
     }
 }
 

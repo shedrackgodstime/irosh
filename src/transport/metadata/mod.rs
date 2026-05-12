@@ -1,6 +1,6 @@
 //! Optional framed peer metadata exchanged on a separate Iroh stream.
 
-mod codec;
+pub(crate) mod codec;
 #[cfg(test)]
 mod tests;
 mod types;

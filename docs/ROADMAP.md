@@ -1,4 +1,3 @@
-imidiate... when connecting with wormhole, when the server ticket is found save it as temp peer just the connection didnt went through and the wormhole already died user can connect to it again with the saved ticket  instead of opening wormhole again... remember wormhole is just to easily get the ticket without manually copy pasting it......
 # Irosh Development Roadmap (v0.2.x -> v1.0)
 
 The primary goal of the v0.2.x series is to achieve **Production Stability** and **Feature Parity** with the legacy Irosh MVP while maintaining the new "Fat Library" architecture.

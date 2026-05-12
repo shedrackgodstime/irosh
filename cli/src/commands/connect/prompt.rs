@@ -111,10 +111,17 @@ pub async fn execute_local_command(
             } else {
                 // Executed from an escape sequence (e.g. ~put / ~get).
                 //
-                // We send \r\n to the remote shell. This forces it to move
-                // to a fresh line and reprint its prompt at the *current*
-                // cursor position (below our local output).
-                let _ = session.send(b"\r\n").await;
+                // Do NOT send \r\n to the remote here. Because local commands
+                // print directly to stdout (bypassing the remote PTY), ConPTY
+                // on Windows does not know the cursor has moved. If we send \r,
+                // ConPTY uses absolute cursor positioning based on its stale
+                // state, which overwrites and erases the local output.
+                //
+                // Instead, we just ensure the local terminal is on a clean new
+                // line. The user's next keypress will go to the remote shell
+                // normally, and the shell will reprint its prompt safely.
+                let _ = stdout.write_all(b"\r\n").await;
+                let _ = stdout.flush().await;
             }
         };
     }

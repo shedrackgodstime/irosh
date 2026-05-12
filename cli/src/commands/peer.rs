@@ -92,7 +92,7 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             }
         }
         PeerAction::Info { name } => {
-            if let Some(p) = storage::get_peer(state, &name)? {
+            if let Some(p) = storage::load_peer(state, &name)? {
                 let addr = p.ticket.to_addr();
                 let relay = addr.relay_urls().next().map(|r| r.to_string());
 
@@ -129,6 +129,61 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     return Ok(());
                 }
                 Ui::error(&format!("Peer '{}' not found in address book.", name));
+            }
+        }
+        PeerAction::Rename { old_name, new_name } => {
+            let target_old = match old_name {
+                Some(n) => n,
+                None => {
+                    let peers = storage::list_peers(state)?;
+                    if peers.is_empty() {
+                        Ui::info("No peers to rename.");
+                        return Ok(());
+                    }
+                    let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
+                    match Ui::select("Select a peer to rename", &items) {
+                        Some(idx) => peers[idx].name.clone(),
+                        None => {
+                            Ui::info("Cancelled.");
+                            return Ok(());
+                        }
+                    }
+                }
+            };
+
+            let target_new = match new_name {
+                Some(n) => n,
+                None => match Ui::input(&format!("Enter new name for '{}'", target_old), None) {
+                    Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+                    _ => {
+                        Ui::info("Cancelled.");
+                        return Ok(());
+                    }
+                },
+            };
+
+            // Validate target_new doesn't conflict with an existing peer (unless it's the same)
+            if target_old != target_new {
+                if let Some(_) = storage::load_peer(state, &target_new)? {
+                    Ui::error(&format!(
+                        "A peer named '{}' already exists. Remove it first.",
+                        target_new
+                    ));
+                    return Ok(());
+                }
+            }
+
+            match storage::rename_peer(state, &target_old, &target_new)? {
+                true => {
+                    Ui::success(&format!(
+                        "Peer renamed: '{}' → '{}'",
+                        target_old, target_new
+                    ));
+                    Ui::info(&format!("Connect with: irosh connect {}", target_new));
+                }
+                false => {
+                    Ui::error(&format!("Peer '{}' not found in address book.", target_old));
+                }
             }
         }
     }

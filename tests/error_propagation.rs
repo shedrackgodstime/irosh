@@ -16,8 +16,16 @@ fn temp_state(name: &str) -> StateConfig {
     StateConfig::new(path)
 }
 
+fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("irosh=debug,info")
+        .with_test_writer()
+        .try_init();
+}
+
 #[tokio::test]
 async fn test_transfer_not_found_error() {
+    init_tracing();
     tokio::time::timeout(Duration::from_secs(60), async {
         let server_state = temp_state("server");
         let client_state = temp_state("client");
@@ -45,7 +53,7 @@ async fn test_transfer_not_found_error() {
         // Try to download a non-existent file
         let remote_path = server_state.root().join("non-existent-file");
         let err = session
-            .get(remote_path.display().to_string(), "local-target", false)
+            .download(remote_path.display().to_string(), "local-target", false)
             .await
             .unwrap_err();
 
@@ -71,6 +79,7 @@ async fn test_transfer_not_found_error() {
 
 #[tokio::test]
 async fn test_transfer_is_directory_error() {
+    init_tracing();
     tokio::time::timeout(Duration::from_secs(60), async {
         let server_state = temp_state("server-dir");
         let client_state = temp_state("client-dir");
@@ -102,7 +111,7 @@ async fn test_transfer_is_directory_error() {
         // Try to download a directory without recursive flag
         let remote_path = server_dir.display().to_string();
         let err = session
-            .get(&remote_path, "local-target", false)
+            .download(&remote_path, "local-target", false)
             .await
             .unwrap_err();
 

@@ -14,14 +14,10 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
 
     // 1. Daemon & Connectivity
     match daemon_status {
-        Ok(IpcResponse::Status {
-            wormhole_active,
-            active_sessions,
-            ..
-        }) => {
+        Ok(IpcResponse::Status(info)) => {
             eprintln!("  Server Daemon:    RUNNING");
-            eprintln!("  Active Sessions:  {}", active_sessions);
-            let wormhole_status = if wormhole_active {
+            eprintln!("  Active Sessions:  {}", info.active_sessions);
+            let wormhole_status = if info.wormhole_active {
                 "ACTIVE"
             } else {
                 "INACTIVE"

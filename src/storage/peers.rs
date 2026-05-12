@@ -73,7 +73,7 @@ pub fn save_peer(state: &StateConfig, profile: &PeerProfile) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the saved profile exists but cannot be read or parsed.
-pub fn get_peer(state: &StateConfig, name: &str) -> Result<Option<PeerProfile>> {
+pub fn load_peer(state: &StateConfig, name: &str) -> Result<Option<PeerProfile>> {
     let path = peer_path(state, name);
     if !path.exists() {
         return Ok(None);
@@ -144,4 +144,31 @@ pub fn delete_peer(state: &StateConfig, name: &str) -> Result<bool> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(StorageError::FileDelete { path, source }.into()),
     }
+}
+
+/// Renames an existing peer profile.
+///
+/// Loads the profile under `old_name`, saves it under `new_name`, then
+/// removes the old file.  Returns `Ok(false)` if `old_name` does not exist.
+///
+/// # Errors
+///
+/// Returns an error if `new_name` is invalid, if the read/write fails, or if
+/// the old file cannot be deleted.
+pub fn rename_peer(state: &StateConfig, old_name: &str, new_name: &str) -> Result<bool> {
+    let profile = match load_peer(state, old_name)? {
+        Some(p) => p,
+        None => return Ok(false),
+    };
+
+    save_peer(
+        state,
+        &PeerProfile {
+            name: new_name.to_string(),
+            ticket: profile.ticket,
+        },
+    )?;
+
+    delete_peer(state, old_name)?;
+    Ok(true)
 }

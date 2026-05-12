@@ -111,7 +111,7 @@ pub(crate) async fn handle_put_request(
     let helper_res = sink.wait().await;
 
     if transfer_failed || helper_res.is_err() {
-        context.remove_file_if_present(&part_arg).await;
+        let _ = context.remove_file_if_present(&part_arg).await;
 
         if let Err(err) = helper_res {
             if !transfer_failed {
@@ -236,7 +236,7 @@ async fn handle_recursive_put_request(
                     let helper_res = sink.wait().await;
 
                     if entry_failed || helper_res.is_err() {
-                        context.remove_file_if_present(&prepared.part_arg).await;
+                        let _ = context.remove_file_if_present(&prepared.part_arg).await;
                         return Err(ServerError::TransferFailed {
                             failure: TransferFailure::new(
                                 TransferFailureCode::HelperFailed,

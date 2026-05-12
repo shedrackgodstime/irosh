@@ -5,6 +5,7 @@ pub mod unix;
 pub mod windows;
 
 pub mod service;
+pub mod signals;
 
 // Re-export the active platform's implementation
 #[cfg(unix)]

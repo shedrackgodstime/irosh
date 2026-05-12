@@ -1,4 +1,40 @@
 #![doc = include_str!("README.md")]
+//!
+//! # Examples
+//!
+//! ## Hosting a P2P Server
+//!
+//! ```no_run
+//! use irosh::{Server, ServerOptions, StateConfig};
+//!
+//! #[tokio::main]
+//! async fn main() -> irosh::Result<()> {
+//!     let options = ServerOptions::new(StateConfig::new("./state".into()));
+//!     let (ready, server) = Server::bind(options).await?;
+//!
+//!     println!("Server Ticket: {}", ready.ticket());
+//!     server.run().await
+//! }
+//! ```
+//!
+//! ## Connecting as a Client
+//!
+//! ```no_run
+//! use irosh::{Client, ClientOptions, StateConfig, Ticket};
+//! use std::str::FromStr;
+//!
+//! #[tokio::main]
+//! async fn main() -> irosh::Result<()> {
+//!     let state = StateConfig::new("./state".into());
+//!     let options = ClientOptions::new(state);
+//!
+//!     let ticket = Ticket::from_str("endpoint...")?;
+//!     let mut session = Client::connect(&options, ticket).await?;
+//!
+//!     session.start_shell().await?;
+//!     Ok(())
+//! }
+//! ```
 
 pub mod auth;
 pub mod client;
@@ -15,8 +51,8 @@ pub use config::{SecurityConfig, StateConfig};
 pub use error::{IroshError, Result};
 
 pub use auth::{
-    AuthMethod, Authenticator, CombinedAuth, ConfirmationCallback, Credentials, KeyOnlyAuth,
-    PasswordAuth, PasswordPrompter, UnifiedAuthenticator,
+    AuthMethod, AuthMode, Authenticator, CombinedAuth, ConfirmationCallback, Credentials,
+    KeyOnlyAuth, PasswordAuth, PasswordPrompter, UnifiedAuthenticator,
 };
 
 #[cfg(feature = "server")]

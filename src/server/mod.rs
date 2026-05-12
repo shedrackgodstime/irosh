@@ -16,7 +16,7 @@
 //! handles PTY allocation and command execution.
 
 pub mod handler;
-pub(crate) mod ipc;
+pub mod ipc;
 pub(crate) mod shell_access;
 pub(crate) mod side_streams;
 pub(crate) mod startup;
@@ -36,11 +36,12 @@ use crate::server::handler::ServerHandler;
 use crate::server::startup::bind_server;
 use crate::transport::stream::IrohDuplex;
 
-use self::side_streams::spawn_metadata_and_transfer_acceptor;
+use self::side_streams::spawn_side_stream_listener;
 use self::transfer::ConnectionShellState;
 
 /// Configuration options for the irosh server.
 #[derive(Debug)]
+#[must_use = "builders do nothing unless consumed"]
 pub struct ServerOptions {
     state: StateConfig,
     security: SecurityConfig,
@@ -51,6 +52,7 @@ pub struct ServerOptions {
     authorized_keys: Vec<russh::keys::ssh_key::PublicKey>,
     authenticator: Option<Arc<dyn Authenticator>>,
     pub(crate) shutdown_on_wormhole_success: bool,
+    pub(crate) auth_mode: crate::auth::AuthMode,
 }
 
 impl Clone for ServerOptions {
@@ -65,6 +67,7 @@ impl Clone for ServerOptions {
             authorized_keys: self.authorized_keys.clone(),
             authenticator: self.authenticator.clone(),
             shutdown_on_wormhole_success: self.shutdown_on_wormhole_success,
+            auth_mode: self.auth_mode,
         }
     }
 }
@@ -82,6 +85,7 @@ impl ServerOptions {
             authorized_keys: Vec::new(),
             authenticator: None,
             shutdown_on_wormhole_success: false,
+            auth_mode: crate::auth::AuthMode::Unified,
         }
     }
 
@@ -95,6 +99,12 @@ impl ServerOptions {
     /// Configures the security policy for host key trust.
     pub fn security(mut self, security: SecurityConfig) -> Self {
         self.security = security;
+        self
+    }
+
+    /// Configures the authentication mode for the server.
+    pub fn auth_mode(mut self, mode: crate::auth::AuthMode) -> Self {
+        self.auth_mode = mode;
         self
     }
 
@@ -414,8 +424,8 @@ impl Server {
 
                     info!("Established bi-directional SSH stream over Irosh");
 
-                    let shell_state = ConnectionShellState::new();
-                    spawn_metadata_and_transfer_acceptor(conn, shell_state.clone());
+                    let shell_state = ConnectionShellState::new(self.state.root().to_path_buf());
+                    spawn_side_stream_listener(conn, shell_state.clone());
 
                     let stream = IrohDuplex::new(send, recv);
                     let mut session_authenticator = self.authenticator.clone();
@@ -601,11 +611,13 @@ impl Server {
                                 let _ = tx.send(ipc::IpcResponse::Ok);
                             }
                             ipc::InternalCommand::GetStatus { tx } => {
-                                let _ = tx.send(ipc::IpcResponse::Status {
+                                let _ = tx.send(ipc::IpcResponse::Status(ipc::DaemonStatus {
+                                    endpoint_id: self.endpoint.id().to_string(),
+                                    ticket: self.ticket.to_string(),
                                     wormhole_active: wormhole.is_some(),
                                     wormhole_code: wormhole.as_ref().map(|w| w.code.clone()),
                                     active_sessions: sessions.len(),
-                                });
+                                }));
                             }
                             ipc::InternalCommand::Shutdown { tx } => {
                                 info!("Graceful shutdown requested via IPC");
