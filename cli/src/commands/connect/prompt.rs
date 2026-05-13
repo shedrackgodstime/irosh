@@ -106,15 +106,12 @@ pub async fn execute_local_command(
     macro_rules! print_prompt {
         () => {
             if input_engine.mode == InputMode::LocalEdit {
-                let _ = stdout.write_all(b"\r\n\r\nirosh> ").await;
+                // Ensure we start on a new line, but don't add an extra blank line.
+                let _ = stdout.write_all(b"\r\nirosh> ").await;
                 let _ = stdout.flush().await;
             } else {
-                // Executed from an escape sequence (e.g. ~put / ~get).
-                // We ensure the local terminal is on a clean new line, then
-                // we send a \r to the remote PTY. This forces the remote
-                // shell to reprint its prompt *below* our output, which
-                // keeps ConPTY's cursor state in sync and prevents overwriting.
-                let _ = stdout.write_all(b"\r\n").await;
+                // Return to remote shell: force remote reprint tightly.
+                // We rely on the command (e.g. transfer) to have provided its own final newline.
                 let _ = stdout.flush().await;
                 let _ = session.send(b"\r").await;
             }
@@ -127,11 +124,9 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Exit => {
-            // Exit alternate screen buffer.
-            let _ = stdout.write_all(b"\x1b[?1049l").await;
+            // Move to a fresh line locally before re-arming the remote shell.
+            let _ = stdout.write_all(b"\r\n").await;
             let _ = stdout.flush().await;
-
-            // Send \r so the remote shell reprints its prompt on the main buffer.
             let _ = session.send(b"\r").await;
             return Ok(true);
         }
@@ -141,11 +136,8 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Disconnect => {
-            // CRITICAL: Exit alternate screen buffer before disconnecting to prevent
-            // the terminal from being left in a corrupted state.
-            let _ = stdout.write_all(b"\x1b[?1049l").await;
-            let _ = stdout.write_all(b"[irosh] Disconnecting...\r\n").await?;
-            let _ = stdout.flush().await;
+            stdout.write_all(b"[irosh] Disconnecting...\r\n").await?;
+            stdout.flush().await?;
             return Ok(false);
         }
         LocalCommand::Lpwd => {

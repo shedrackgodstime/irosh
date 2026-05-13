@@ -163,14 +163,12 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             };
 
             // Validate target_new doesn't conflict with an existing peer (unless it's the same)
-            if target_old != target_new {
-                if let Some(_) = storage::load_peer(state, &target_new)? {
-                    Ui::error(&format!(
-                        "A peer named '{}' already exists. Remove it first.",
-                        target_new
-                    ));
-                    return Ok(());
-                }
+            if target_old != target_new && storage::load_peer(state, &target_new)?.is_some() {
+                Ui::error(&format!(
+                    "A peer named '{}' already exists. Remove it first.",
+                    target_new
+                ));
+                return Ok(());
             }
 
             match storage::rename_peer(state, &target_old, &target_new)? {

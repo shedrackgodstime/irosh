@@ -110,12 +110,15 @@ impl InputEngine {
         self.local_line_len = 0;
     }
 
-    /// A newline from the server arms the escape detector for the next keystroke.
+    /// Remote data arriving resets the 'start of line' state if it contains non-newline characters.
     pub fn observe_remote(&mut self, data: &[u8]) {
         for &byte in data {
             if byte == b'\r' || byte == b'\n' {
                 self.at_start_of_line = true;
                 self.local_line_len = 0;
+            } else if !byte.is_ascii_whitespace() || byte == b' ' {
+                // If the remote sends a prompt or other data, we are no longer at the start of a line.
+                self.at_start_of_line = false;
             }
         }
     }
@@ -146,8 +149,9 @@ impl InputEngine {
                             display_cursor: 0,
                             control_state: ControlSequenceState::None,
                         };
-                        // Redraw prompt line (which currently is just `~`)
-                        render_line(&mut to_local, &mut new_line);
+                        // Just echo the tilde directly instead of a full line clear/render.
+                        to_local.push(b'~');
+                        new_line.display_cursor = 1;
                         self.active_line = Some(new_line);
                     } else {
                         self.handle_remote_byte(byte, &mut to_remote);
@@ -204,7 +208,14 @@ impl InputEngine {
                         match line.editor.apply(ev, history) {
                             EditorEffect::NoOp => {}
                             EditorEffect::Render => {
-                                render_line(&mut to_local, &mut line);
+                                if is_escape {
+                                    // Non-destructive echo: just print the last character added.
+                                    // (Simplification: for now, we just reprint the whole escape line
+                                    // without the leading \r\x1b[K by using a custom render)
+                                    render_escape_line_nondestructively(&mut to_local, &mut line);
+                                } else {
+                                    render_line(&mut to_local, &mut line);
+                                }
                             }
                             EditorEffect::ClearAndExit => {
                                 clear_line_preview(&mut to_local, &mut line);
@@ -224,6 +235,7 @@ impl InputEngine {
                                 match parse_escape(&bytes) {
                                     Some(action) => {
                                         if action == EscapeAction::CommandPrompt {
+                                            // Ensure we are at the end of the line before starting the prompt on a new line
                                             finalize_submitted_line(&mut to_local, &mut line);
                                             // Sync mode internally so next bytes are handled as Prompt
                                             self.mode = InputMode::LocalEdit;
@@ -342,7 +354,11 @@ impl InputEngine {
         {
             Ok(CompletionResult::Applied(edit)) => {
                 line.editor.replace_line(edit.line, edit.cursor);
-                render_line(&mut to_local, &mut line);
+                if mode == CompletionMode::Escape {
+                    render_escape_line_nondestructively(&mut to_local, &mut line);
+                } else {
+                    render_line(&mut to_local, &mut line);
+                }
             }
             Ok(CompletionResult::Suggestions(matches)) => {
                 // Show matches on a new line and reprint prompt
@@ -356,10 +372,18 @@ impl InputEngine {
                 to_local.extend_from_slice(b"\r\n");
                 if mode == CompletionMode::Prompt {
                     to_local.extend_from_slice(b"irosh> ");
+                    render_line(&mut to_local, &mut line);
                 } else {
-                    // Tilde is already part of the editor buffer
+                    // Tilde is already part of the editor buffer.
+                    // For suggestions, we are on a new line now, so we actually
+                    // DO need to render from the start of this new line.
+                    // However, to keep it consistent, if we want to preserve
+                    // the remote prompt, maybe we shouldn't show suggestions
+                    // this way for escapes?
+                    // Actually, if we just printed \r\n, we are on a new blank line.
+                    // So render_escape_line_nondestructively will just print the escape line.
+                    render_escape_line_nondestructively(&mut to_local, &mut line);
                 }
-                render_line(&mut to_local, &mut line);
             }
             _ => {
                 // Do nothing or maybe a beep?
@@ -416,29 +440,63 @@ fn render_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
         None
     };
 
-    // 1. Move to absolute start of line and clear everything to the right.
-    to_local.extend_from_slice(b"\r\x1b[K");
-
-    // 2. Re-print prompt and current editor buffer.
+    // Surgical redraw: move to start of the edit area and clear to the right.
+    to_local.extend_from_slice(b"\r");
     if let Some(p) = prompt {
         to_local.extend_from_slice(p.as_bytes());
     }
+    to_local.extend_from_slice(b"\x1b[K"); // Clear only from here to the end of the line
+
+    // Re-print current editor buffer.
     to_local.extend_from_slice(line.editor.line());
 
-    // 3. Position the cursor correctly within the line.
+    // Position the cursor correctly within the line.
     let cursor = line.editor.cursor();
     let tail_len = line.editor.line().len().saturating_sub(cursor);
     if tail_len > 0 {
-        // Move cursor back D cells from the end of the printed line.
         to_local.extend_from_slice(format!("\x1b[{}D", tail_len).as_bytes());
     }
 
     line.display_cursor = cursor;
 }
 
-fn clear_line_preview(to_local: &mut Vec<u8>, _line: &mut LineSession) {
-    // Simply snap to start and clear the entire line.
-    to_local.extend_from_slice(b"\r\x1b[K");
+fn render_escape_line_nondestructively(to_local: &mut Vec<u8>, line: &mut LineSession) {
+    // For escape sequences, we never use \r. We just stay where we are
+    // and manage the characters.
+    // This is a "relative" render.
+
+    // 1. Move back to the start of our "edit" area (where the tilde started).
+    if line.display_cursor > 0 {
+        to_local.extend_from_slice(format!("\x1b[{}D", line.display_cursor).as_bytes());
+    }
+
+    // 2. Clear to the right.
+    to_local.extend_from_slice(b"\x1b[K");
+
+    // 3. Print the new content.
+    to_local.extend_from_slice(line.editor.line());
+
+    // 4. Position cursor correctly.
+    let cursor = line.editor.cursor();
+    let tail_len = line.editor.line().len().saturating_sub(cursor);
+    if tail_len > 0 {
+        to_local.extend_from_slice(format!("\x1b[{}D", tail_len).as_bytes());
+    }
+
+    line.display_cursor = cursor;
+}
+
+fn clear_line_preview(to_local: &mut Vec<u8>, line: &mut LineSession) {
+    if line.editor.mode() == EditorMode::Escape {
+        // Move back to where the escape started and clear only to the right
+        if line.display_cursor > 0 {
+            to_local.extend_from_slice(format!("\x1b[{}D", line.display_cursor).as_bytes());
+        }
+        to_local.extend_from_slice(b"\x1b[K");
+    } else {
+        // For the irosh> prompt, we can use a full line clear as we own that line.
+        to_local.extend_from_slice(b"\r\x1b[K");
+    }
 }
 
 fn finalize_submitted_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
@@ -478,8 +536,8 @@ mod tests {
         let (mut engine, _dir) = setup_engine();
         let (remote, local, actions) = engine.process_local(b"~");
         assert!(remote.is_empty());
-        // render_line echoes the line (which is "~") prepended with ANSI clear codes
-        assert!(local.ends_with(b"~"));
+        // We now just echo the tilde directly
+        assert_eq!(local, b"~");
         assert!(actions.is_empty());
         assert_eq!(engine.mode, InputMode::LocalEdit);
     }
@@ -516,9 +574,8 @@ mod tests {
         let (remote, local, _) = engine.process_local(&[127]);
         assert_eq!(engine.mode, InputMode::Remote, "escape cancelled");
         assert!(remote.is_empty());
-        // Should have clear_line_preview bytes (\r\x1b[K)
-        assert!(local.contains(&b'\r'));
-        assert!(local.contains(&b'[')) ;
+        // Should have non-destructive ANSI clear bytes (\x1b[1D\x1b[K)
+        assert!(local.contains(&b'D'));
         assert!(local.contains(&b'K'));
     }
 

@@ -545,20 +545,14 @@ impl ServerHandler {
                 res
             });
 
+            tokio::pin!(reader_future);
+
             let exit_status = tokio::select! {
                 status = &mut child_waiter => {
                     let status = status.unwrap_or(255);
-                    // Child exited first. Signal the reader loop to stop.
-                    reader_done.cancel();
-                    // On Windows (non-unix), the blocking reader thread is stuck on
-                    // `reader.read()` which never returns EOF until the ConPTY write
-                    // end is closed. Dropping the master PTY handle here closes the
-                    // ConPTY session, causing the reader's `read()` to return an
-                    // error/EOF and allowing the blocking thread to exit cleanly.
-                    //
-                    // On Unix the master fd is set to non-blocking and the async
-                    // `AsyncFd`-based reader already handles cancellation, so we
-                    // do not need to drop the master here.
+
+                    // Child exited. On Windows, we still need to force the blocking
+                    // reader to exit by dropping the master handle.
                     #[cfg(not(unix))]
                     {
                         if let Ok(mut guard) = task_master.lock() {
@@ -567,16 +561,23 @@ impl ServerHandler {
                     }
                     #[cfg(unix)]
                     {
-                        // Suppress unused-variable warning on Unix builds.
                         let _ = &task_master;
                     }
+
+                    // Now wait for the reader future to complete naturally (EOF)
+                    // with a small timeout to avoid hanging if the PTY stays open.
+                    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), &mut reader_future).await;
+
                     status
                 }
-                _ = reader_future => {
+                _ = &mut reader_future => {
                     // Reader finished (EOF). Wait for child to get exit status.
                     child_waiter.await.unwrap_or(255)
                 }
             };
+
+            // Ensure reader is cancelled if we are still hanging here
+            reader_done.cancel();
 
             debug!(
                 "PTY task finishing for channel {:?} with exit code {}",

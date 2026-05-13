@@ -27,18 +27,9 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                             session.send(&to_remote).await?;
                         }
 
-                        // IMPORTANT: Process actions BEFORE writing to_local.
-                        // This ensures that if we are switching to the Alternate Screen (~C),
-                        // the switch happens before the "irosh> " prompt in to_local is printed.
-                        for action in &actions {
-                            match action {
-                                EscapeAction::CommandPrompt => {
-                                    // Enter alternate screen buffer for a clean command environment.
-                                    let _ = stdout.write_all(b"\x1b[?1049h").await;
-                                    let _ = stdout.flush().await;
-                                }
-                                _ => {}
-                            }
+                        // Process actions.
+                        for _action in &actions {
+                            // Currently no actions require local terminal side-effects
                         }
 
                         // Local echo/erase feedback (now guaranteed to be on the correct buffer)
@@ -123,10 +114,6 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                         stderr.flush().await?;
                     }
                     Some(SessionEvent::Closed) => {
-                        if input_engine.mode == super::input::InputMode::LocalEdit {
-                            // Exit alternate screen buffer if we were in local prompt mode.
-                            let _ = stdout.write_all(b"\x1b[?1049l").await;
-                        }
                         stdout.write_all(b"\r\nSession closed.\r\n").await?;
                         stdout.flush().await?;
                         break;
