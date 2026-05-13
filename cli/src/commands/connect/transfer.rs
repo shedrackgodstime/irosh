@@ -2,6 +2,7 @@ use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use irosh::Session;
 use irosh::error::ClientError;
+use irosh::sys::TerminalEvent;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
@@ -260,17 +261,30 @@ pub async fn handle_put_command(
             }
         }) => res,
         _ = async {
-            // Poll stdin to watch for Ctrl+C cancellation; EOF also terminates.
-            while let Some(data) = stdin.read_data().await {
-                if data.contains(&0x03) { break; } // Ctrl+C
+            // Poll stdin to watch for Ctrl+C cancellation or Resizes
+            loop {
+                match stdin.next_event().await {
+                    Some(TerminalEvent::Data(data)) => {
+                        if data.contains(&0x03) {
+                            return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
+                        }
+                    }
+                    Some(TerminalEvent::Resize(_size)) => {
+                        // TODO: Handle concurrent resize via session handle
+                        if let Some(pb) = &pb {
+                            pb.tick();
+                        }
+                    }
+                    None => break Ok(()),
+                }
             }
         } => {
-            return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
+            return Err(anyhow::anyhow!("Transfer interrupted"));
         }
     };
 
     match transfer_res {
-        Ok(()) => {
+        Ok(_) => {
             if let Some(pb) = pb {
                 pb.finish_and_clear();
             }
@@ -401,17 +415,30 @@ pub async fn handle_get_command(
             }
         }) => res,
         _ = async {
-            // Poll stdin to watch for Ctrl+C cancellation; EOF also terminates.
-            while let Some(data) = stdin.read_data().await {
-                if data.contains(&0x03) { break; } // Ctrl+C
+            // Poll stdin to watch for Ctrl+C cancellation or Resizes
+            loop {
+                match stdin.next_event().await {
+                    Some(TerminalEvent::Data(data)) => {
+                        if data.contains(&0x03) {
+                            return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
+                        }
+                    }
+                    Some(TerminalEvent::Resize(_size)) => {
+                        // TODO: Handle concurrent resize via session handle
+                        if let Some(pb) = &pb {
+                            pb.tick();
+                        }
+                    }
+                    None => break Ok(()),
+                }
             }
         } => {
-            return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
+            return Err(anyhow::anyhow!("Transfer interrupted"));
         }
     };
 
     match transfer_res {
-        Ok(()) => {
+        Ok(_) => {
             if let Some(pb) = pb {
                 pb.finish_and_clear();
             }

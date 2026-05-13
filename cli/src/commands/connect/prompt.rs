@@ -110,18 +110,13 @@ pub async fn execute_local_command(
                 let _ = stdout.flush().await;
             } else {
                 // Executed from an escape sequence (e.g. ~put / ~get).
-                //
-                // Do NOT send \r\n to the remote here. Because local commands
-                // print directly to stdout (bypassing the remote PTY), ConPTY
-                // on Windows does not know the cursor has moved. If we send \r,
-                // ConPTY uses absolute cursor positioning based on its stale
-                // state, which overwrites and erases the local output.
-                //
-                // Instead, we just ensure the local terminal is on a clean new
-                // line. The user's next keypress will go to the remote shell
-                // normally, and the shell will reprint its prompt safely.
+                // We ensure the local terminal is on a clean new line, then
+                // we send a \r to the remote PTY. This forces the remote
+                // shell to reprint its prompt *below* our output, which
+                // keeps ConPTY's cursor state in sync and prevents overwriting.
                 let _ = stdout.write_all(b"\r\n").await;
                 let _ = stdout.flush().await;
+                let _ = session.send(b"\r").await;
             }
         };
     }
@@ -136,7 +131,7 @@ pub async fn execute_local_command(
             let _ = stdout.write_all(b"\x1b[?1049l").await;
             let _ = stdout.flush().await;
 
-            // Send \r so the remote shell reprints its prompt.
+            // Send \r so the remote shell reprints its prompt on the main buffer.
             let _ = session.send(b"\r").await;
             return Ok(true);
         }
@@ -146,8 +141,11 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Disconnect => {
-            stdout.write_all(b"[irosh] Disconnecting...\r\n").await?;
-            stdout.flush().await?;
+            // CRITICAL: Exit alternate screen buffer before disconnecting to prevent
+            // the terminal from being left in a corrupted state.
+            let _ = stdout.write_all(b"\x1b[?1049l").await;
+            let _ = stdout.write_all(b"[irosh] Disconnecting...\r\n").await?;
+            let _ = stdout.flush().await;
             return Ok(false);
         }
         LocalCommand::Lpwd => {

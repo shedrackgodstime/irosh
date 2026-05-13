@@ -41,6 +41,10 @@ impl RawTerminal {
                 }));
             }
 
+            // Enforce UTF-8 code page for the client terminal to match the server.
+            SetConsoleCP(65001);
+            SetConsoleOutputCP(65001);
+
             let mut in_mode = 0;
             if GetConsoleMode(in_handle, &mut in_mode) == 0 {
                 return Err(IroshError::Client(ClientError::TerminalIo {
@@ -61,7 +65,7 @@ impl RawTerminal {
             };
 
             // For raw mode, we want to disable line input, echo, and processed input.
-            // We also enable VT input to get sequences like arrows as VT codes.
+            // We also enable VT input to get sequences like arrows as VT codes natively from the driver.
             let raw_in_mode = (in_mode
                 & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
                 | ENABLE_VIRTUAL_TERMINAL_INPUT;
@@ -154,9 +158,6 @@ impl AsyncStdin {
                         break;
                     }
 
-                    // Batch all key bytes from this read into one send where possible.
-                    // VT sequences (arrows etc.) flush the batch first, then send
-                    // themselves individually so they are never merged with plain chars.
                     let mut key_batch: Vec<u8> = Vec::with_capacity(read as usize);
 
                     for i in 0..read {
@@ -166,69 +167,28 @@ impl AsyncStdin {
                                 // SAFETY: Accessing union field for KeyEvent is safe when EventType is KEY_EVENT.
                                 let key = unsafe { record.Event.KeyEvent };
                                 if key.bKeyDown != 0 {
-                                    // 1. Handle Virtual Key translation for VT sequences
-                                    let vt_seq = match key.wVirtualKeyCode as u32 {
-                                        0x26 => Some("\x1b[A"),  // Up
-                                        0x28 => Some("\x1b[B"),  // Down
-                                        0x27 => Some("\x1b[C"),  // Right
-                                        0x25 => Some("\x1b[D"),  // Left
-                                        0x24 => Some("\x1b[H"),  // Home
-                                        0x23 => Some("\x1b[F"),  // End
-                                        0x21 => Some("\x1b[5~"), // PageUp
-                                        0x22 => Some("\x1b[6~"), // PageDown
-                                        0x2D => Some("\x1b[2~"), // Insert
-                                        0x2E => Some("\x1b[3~"), // Delete
-                                        0x09 => {
-                                            // Handle Shift+Tab (BackTab)
-                                            if key.dwControlKeyState & SHIFT_PRESSED != 0 {
-                                                Some("\x1b[Z")
-                                            } else {
-                                                None // Tab is handled by UnicodeChar fallback
-                                            }
-                                        }
-                                        _ => None,
-                                    };
-
-                                    if let Some(seq) = vt_seq {
-                                        // Flush pending plain chars before a special sequence.
-                                        if !key_batch.is_empty() {
-                                            if tx
-                                                .send(TerminalEvent::Data(std::mem::take(
-                                                    &mut key_batch,
-                                                )))
-                                                .is_err()
-                                            {
-                                                return;
-                                            }
-                                        }
-                                        if tx
-                                            .send(TerminalEvent::Data(seq.as_bytes().to_vec()))
-                                            .is_err()
-                                        {
-                                            return;
-                                        }
-                                    } else {
-                                        // 2. Fallback to Unicode char — accumulate into batch.
-                                        // SAFETY: Accessing union field for UnicodeChar.
-                                        let c = unsafe { key.uChar.UnicodeChar };
-                                        if c != 0 {
-                                            let mut utf8 = [0u8; 4];
-                                            let s = char::from_u32(c as u32)
-                                                .unwrap_or(' ')
-                                                .encode_utf8(&mut utf8);
-                                            key_batch.extend_from_slice(s.as_bytes());
-                                        }
+                                    // When ENABLE_VIRTUAL_TERMINAL_INPUT is set, Windows provides the VT
+                                    // escape sequences (like \x1b[A) directly as a sequence of KEY_EVENTs
+                                    // containing the Unicode characters. We can simply collect them.
+                                    let c = unsafe { key.uChar.UnicodeChar };
+                                    if c != 0 {
+                                        let mut utf8 = [0u8; 4];
+                                        let s = char::from_u32(c as u32)
+                                            .unwrap_or(' ')
+                                            .encode_utf8(&mut utf8);
+                                        key_batch.extend_from_slice(s.as_bytes());
                                     }
                                 }
                             }
                             WINDOW_BUFFER_SIZE_EVENT => {
                                 // Flush pending key data before sending resize.
-                                if !key_batch.is_empty()
-                                    && tx
+                                if !key_batch.is_empty() {
+                                    if tx
                                         .send(TerminalEvent::Data(std::mem::take(&mut key_batch)))
                                         .is_err()
-                                {
-                                    return;
+                                    {
+                                        return;
+                                    }
                                 }
                                 let _ = tx.send(TerminalEvent::Resize(current_terminal_size()));
                             }

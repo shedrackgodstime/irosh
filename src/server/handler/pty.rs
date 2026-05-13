@@ -167,7 +167,22 @@ impl ServerHandler {
         } else {
             #[cfg(windows)]
             {
-                CommandBuilder::new(windows_command_processor())
+                let exe = windows_command_processor();
+                let is_powershell = exe.to_lowercase().contains("powershell")
+                    || exe.to_lowercase().contains("pwsh");
+
+                let mut builder = CommandBuilder::new(exe);
+                if is_powershell {
+                    // For PowerShell, we set the output encoding globally for the session.
+                    builder.arg("-NoExit");
+                    builder.arg("-Command");
+                    builder.arg("$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;");
+                } else {
+                    // For CMD, we use /K to run chcp and stay open.
+                    builder.arg("/K");
+                    builder.arg("chcp 65001 >nul");
+                }
+                builder
             }
             #[cfg(not(windows))]
             {
@@ -683,18 +698,38 @@ impl ServerHandler {
             let channels = self.lock_channels();
             if let Some(state_entry) = channels.get(&channel)
                 && let Some(process) = state_entry.process.as_ref()
-                && let Some(pid) = process.pid
             {
+                let pid = process.pid;
                 let event = match signal {
                     russh::Sig::INT => Some(CTRL_C_EVENT),
                     russh::Sig::QUIT | russh::Sig::ABRT => Some(CTRL_BREAK_EVENT),
                     _ => None,
                 };
+
                 if let Some(event) = event {
-                    // SAFETY: `pid` is a valid process ID for a console process created by this server.
-                    // This sends a control event to the attached console group.
-                    unsafe {
-                        GenerateConsoleCtrlEvent(event, pid);
+                    info!(
+                        "Forwarding signal {:?} to PTY process group (PID {:?})",
+                        signal, pid
+                    );
+
+                    // Path A: The "Legacy" way (fails in services, but works in interactive mode)
+                    if let Some(pid) = pid {
+                        unsafe {
+                            GenerateConsoleCtrlEvent(event, pid);
+                        }
+                    }
+
+                    // Path B: The "Service" way (Byte Injection)
+                    // For SIGINT (Ctrl+C), we inject \x03 into the PTY input stream.
+                    // This is handled by the shell/PTY line discipline even in headless modes.
+                    if signal == russh::Sig::INT {
+                        if let Some(pty_tx) = process.pty_tx.as_ref() {
+                            debug!(
+                                "Injecting CTRL+C byte (\\x03) into PTY input stream for channel {:?}",
+                                channel
+                            );
+                            let _ = pty_tx.send(vec![0x03]);
+                        }
                     }
                 }
             }

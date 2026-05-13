@@ -1,8 +1,6 @@
 use anyhow::Result;
-use irosh::sys::{AsyncStdin, current_terminal_size};
+use irosh::sys::AsyncStdin;
 use irosh::{Session, SessionEvent};
-#[cfg(unix)]
-use std::io::IsTerminal;
 use tokio::io::AsyncWriteExt;
 
 use super::input::{EscapeAction, InputEngine};
@@ -15,21 +13,6 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
     let mut stderr = tokio::io::stderr();
     let mut transfer_context = TransferContext::new();
     let mut remote_buffer = Vec::new();
-
-    #[cfg(unix)]
-    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-
-    // On Unix, SIGWINCH tells us when the terminal is resized.
-    // We use the same workaround as cli_old: wrap in Option and use
-    // pending() when None so the arm never fires on non-Unix.
-    #[cfg(unix)]
-    let mut sigwinch: Option<tokio::signal::unix::Signal> = if interactive {
-        Some(tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::window_change(),
-        )?)
-    } else {
-        None
-    };
 
     loop {
         tokio::select! {
@@ -44,7 +27,21 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                             session.send(&to_remote).await?;
                         }
 
-                        // Local echo/erase feedback
+                        // IMPORTANT: Process actions BEFORE writing to_local.
+                        // This ensures that if we are switching to the Alternate Screen (~C),
+                        // the switch happens before the "irosh> " prompt in to_local is printed.
+                        for action in &actions {
+                            match action {
+                                EscapeAction::CommandPrompt => {
+                                    // Enter alternate screen buffer for a clean command environment.
+                                    let _ = stdout.write_all(b"\x1b[?1049h").await;
+                                    let _ = stdout.flush().await;
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // Local echo/erase feedback (now guaranteed to be on the correct buffer)
                         if !to_local.is_empty() {
                             stdout.write_all(&to_local).await?;
                             stdout.flush().await?;
@@ -61,12 +58,9 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                 }
                                 EscapeAction::Help => {
                                     show_help(&mut stdout).await?;
-                                    // Do NOT send \r to the remote here, as it causes ConPTY cursor
-                                    // corruption on Windows. We just ensure a clean line locally.
                                     let _ = stdout.write_all(b"\r\n").await;
                                     let _ = stdout.flush().await;
 
-                                    // Flush any buffered remote data that arrived during the help screen.
                                     if !remote_buffer.is_empty() {
                                         stdout.write_all(&remote_buffer).await?;
                                         stdout.flush().await?;
@@ -74,16 +68,13 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                     }
                                 }
                                 EscapeAction::CommandPrompt => {
-                                    // Enter alternate screen buffer for a clean command environment.
-                                    let _ = stdout.write_all(b"\x1b[?1049h").await;
-                                    let _ = stdout.flush().await;
+                                    // Already handled above to avoid race condition.
                                 }
                                 EscapeAction::RunLocal(cmd) => {
                                     if !execute_local_command(&mut session, &mut input_engine, &mut stdout, &mut stdin, &mut transfer_context, cmd).await? {
                                         return Ok(());
                                     }
 
-                                    // If we just returned to Remote mode, flush any buffered data.
                                     if input_engine.mode == super::input::InputMode::Remote && !remote_buffer.is_empty() {
                                         stdout.write_all(&remote_buffer).await?;
                                         stdout.flush().await?;
@@ -91,9 +82,9 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                                     }
                                 }
                                 EscapeAction::RequestCompletion => {
-                                    let to_local = input_engine.complete_active_line(&mut session, &transfer_context).await;
-                                    if !to_local.is_empty() {
-                                        stdout.write_all(&to_local).await?;
+                                    let feedback = input_engine.complete_active_line(&mut session, &transfer_context).await;
+                                    if !feedback.is_empty() {
+                                        stdout.write_all(&feedback).await?;
                                         stdout.flush().await?;
                                     }
                                 }
@@ -102,27 +93,16 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                     }
                     Some(irosh::sys::TerminalEvent::Resize(size)) => {
                         let _ = session.resize(size).await;
+                        if let Some(feedback) = input_engine.handle_resize() {
+                            let _ = stdout.write_all(&feedback).await;
+                            let _ = stdout.flush().await;
+                        }
                     }
                     None => {
                         session.eof().await?;
                         break;
                     }
                 }
-            }
-
-            // RESIZE: on Unix via SIGWINCH (redundant if AsyncStdin handles it, but kept for legacy/safety)
-            _ = async {
-                #[cfg(unix)]
-                if let Some(s) = sigwinch.as_mut() {
-                    let _ = s.recv().await;
-                } else {
-                    std::future::pending::<()>().await;
-                }
-                #[cfg(not(unix))]
-                std::future::pending::<()>().await;
-            } => {
-                let size = current_terminal_size();
-                let _ = session.resize(size).await;
             }
 
             // DATA and RESIZE from the remote session.
@@ -143,6 +123,10 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                         stderr.flush().await?;
                     }
                     Some(SessionEvent::Closed) => {
+                        if input_engine.mode == super::input::InputMode::LocalEdit {
+                            // Exit alternate screen buffer if we were in local prompt mode.
+                            let _ = stdout.write_all(b"\x1b[?1049l").await;
+                        }
                         stdout.write_all(b"\r\nSession closed.\r\n").await?;
                         stdout.flush().await?;
                         break;

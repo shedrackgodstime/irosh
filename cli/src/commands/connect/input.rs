@@ -36,7 +36,6 @@ pub enum InputMode {
 #[derive(Debug)]
 pub struct LineSession {
     pub editor: LineEditor,
-    pub visual_len: usize,
     pub display_cursor: usize,
     pub control_state: ControlSequenceState,
 }
@@ -144,7 +143,6 @@ impl InputEngine {
                         self.mode = InputMode::LocalEdit;
                         let mut new_line = LineSession {
                             editor: LineEditor::new_escape(),
-                            visual_len: 0,
                             display_cursor: 0,
                             control_state: ControlSequenceState::None,
                         };
@@ -231,7 +229,6 @@ impl InputEngine {
                                             self.mode = InputMode::LocalEdit;
                                             line = LineSession {
                                                 editor: LineEditor::new_prompt(),
-                                                visual_len: 0,
                                                 display_cursor: 0,
                                                 control_state: ControlSequenceState::None,
                                             };
@@ -283,7 +280,6 @@ impl InputEngine {
                                     // Reset the prompt editor for the next command
                                     line = LineSession {
                                         editor: LineEditor::new_prompt(),
-                                        visual_len: 0,
                                         display_cursor: 0,
                                         control_state: ControlSequenceState::None,
                                     };
@@ -303,7 +299,6 @@ impl InputEngine {
                                     // Reset the prompt editor for the next command
                                     line = LineSession {
                                         editor: LineEditor::new_prompt(),
-                                        visual_len: 0,
                                         display_cursor: 0,
                                         control_state: ControlSequenceState::None,
                                     };
@@ -391,6 +386,19 @@ impl InputEngine {
             }
         }
     }
+
+    /// Handles a terminal resize event.
+    /// Returns any terminal output needed to re-render the local UI.
+    pub fn handle_resize(&mut self) -> Option<Vec<u8>> {
+        if let Some(mut line) = self.active_line.take() {
+            let mut to_local = Vec::new();
+            render_line(&mut to_local, &mut line);
+            self.active_line = Some(line);
+            Some(to_local)
+        } else {
+            None
+        }
+    }
 }
 
 fn paired_enter_byte(byte: u8) -> Option<u8> {
@@ -402,56 +410,54 @@ fn paired_enter_byte(byte: u8) -> Option<u8> {
 }
 
 fn render_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
-    // 1. Move to end of current display
-    move_to_end(to_local, line.display_cursor, line.visual_len);
-    // 2. Erase visual line
-    for _ in 0..line.visual_len {
-        to_local.extend_from_slice(b"\x08");
-    }
-    to_local.extend_from_slice(b"\x1b[K");
+    let prompt = if matches!(line.editor.mode(), EditorMode::Prompt) {
+        Some("irosh> ")
+    } else {
+        None
+    };
 
-    // 3. Write new line
+    // 1. Move to absolute start of line and clear everything to the right.
+    to_local.extend_from_slice(b"\r\x1b[K");
+
+    // 2. Re-print prompt and current editor buffer.
+    if let Some(p) = prompt {
+        to_local.extend_from_slice(p.as_bytes());
+    }
     to_local.extend_from_slice(line.editor.line());
 
-    // 4. Position cursor
+    // 3. Position the cursor correctly within the line.
     let cursor = line.editor.cursor();
     let tail_len = line.editor.line().len().saturating_sub(cursor);
     if tail_len > 0 {
+        // Move cursor back D cells from the end of the printed line.
         to_local.extend_from_slice(format!("\x1b[{}D", tail_len).as_bytes());
     }
 
-    line.visual_len = line.editor.line().len();
     line.display_cursor = cursor;
 }
 
-fn move_to_end(to_local: &mut Vec<u8>, cursor: usize, len: usize) {
-    let diff = len.saturating_sub(cursor);
-    if diff > 0 {
-        to_local.extend_from_slice(format!("\x1b[{}C", diff).as_bytes());
-    }
-}
-
-fn clear_line_preview(to_local: &mut Vec<u8>, line: &mut LineSession) {
-    move_to_end(to_local, line.display_cursor, line.visual_len);
-    for _ in 0..line.visual_len {
-        to_local.extend_from_slice(b"\x08");
-    }
-    to_local.extend_from_slice(b"\x1b[K");
+fn clear_line_preview(to_local: &mut Vec<u8>, _line: &mut LineSession) {
+    // Simply snap to start and clear the entire line.
+    to_local.extend_from_slice(b"\r\x1b[K");
 }
 
 fn finalize_submitted_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
-    move_to_end(to_local, line.display_cursor, line.visual_len);
+    // Move cursor to the end of the line before adding newline.
+    let tail_len = line.editor.line().len().saturating_sub(line.display_cursor);
+    if tail_len > 0 {
+        to_local.extend_from_slice(format!("\x1b[{}C", tail_len).as_bytes());
+    }
     to_local.extend_from_slice(b"\r\n");
-    line.visual_len = 0;
     line.display_cursor = 0;
 }
 
 fn finalize_exit_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
-    move_to_end(to_local, line.display_cursor, line.visual_len);
-    // Add a newline so the irosh> prompt history is preserved on screen,
-    // then move to the start of the line for the remote prompt.
+    // Move to end and add a clean newline.
+    let tail_len = line.editor.line().len().saturating_sub(line.display_cursor);
+    if tail_len > 0 {
+        to_local.extend_from_slice(format!("\x1b[{}C", tail_len).as_bytes());
+    }
     to_local.extend_from_slice(b"\r\n\r");
-    line.visual_len = 0;
     line.display_cursor = 0;
 }
 
@@ -510,9 +516,10 @@ mod tests {
         let (remote, local, _) = engine.process_local(&[127]);
         assert_eq!(engine.mode, InputMode::Remote, "escape cancelled");
         assert!(remote.is_empty());
-        // Should have clear_line_preview bytes
-        assert!(local.contains(&b'\x08'));
-        assert!(local.contains(&b'\x1b'));
+        // Should have clear_line_preview bytes (\r\x1b[K)
+        assert!(local.contains(&b'\r'));
+        assert!(local.contains(&b'[')) ;
+        assert!(local.contains(&b'K'));
     }
 
     #[test]
@@ -698,10 +705,10 @@ mod fuzz {
                 );
                 // Visual tracking must also be consistent.
                 assert!(
-                    line.display_cursor <= line.visual_len,
-                    "display_cursor ({}) must be <= visual_len ({})",
+                    line.display_cursor <= editor_line_len,
+                    "display_cursor ({}) must be <= editor_line_len ({})",
                     line.display_cursor,
-                    line.visual_len,
+                    editor_line_len,
                 );
             }
         }
