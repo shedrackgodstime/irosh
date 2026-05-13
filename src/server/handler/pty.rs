@@ -722,7 +722,7 @@ impl ServerHandler {
                     // Path B: The "Service" way (Byte Injection)
                     // For SIGINT (Ctrl+C), we inject \x03 into the PTY input stream.
                     // This is handled by the shell/PTY line discipline even in headless modes.
-                    if signal == russh::Sig::INT {
+                    if matches!(signal, russh::Sig::INT) {
                         if let Some(pty_tx) = process.pty_tx.as_ref() {
                             debug!(
                                 "Injecting CTRL+C byte (\\x03) into PTY input stream for channel {:?}",
