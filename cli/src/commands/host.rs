@@ -51,29 +51,33 @@ pub async fn exec(
         options = options.relay_mode(mode, Some(relay_url.clone()));
     }
 
-    let (ready, server) = match Server::bind(options).await {
-        Ok(res) => res,
-        Err(e) => {
-            // Check for Identity Conflict (Double Instance)
-            // If the background service is running, the secret key will be locked.
-            // We can also check if the IPC socket exists as a hint.
-            let daemon_running = irosh::IpcClient::new(ctx.server_state_root()?)
-                .send(irosh::IpcCommand::GetStatus)
-                .await
-                .is_ok();
+    let (ready, server) = tokio::select! {
+        res = Server::bind(options) => match res {
+            Ok(res) => res,
+            Err(e) => {
+                // Check for Identity Conflict (Double Instance)
+                let daemon_running = irosh::IpcClient::new(ctx.server_state_root()?)
+                    .send(irosh::IpcCommand::GetStatus)
+                    .await
+                    .is_ok();
 
-            if daemon_running {
-                Ui::error(
-                    "Failed to start: The Irosh daemon is already running in the background.",
-                );
-                Ui::info("Use 'irosh system status' or 'irosh system logs' to view activity.");
-                Ui::info(
-                    "Tip: You can use 'irosh wormhole' to pair new devices without stopping the daemon.",
-                );
-                anyhow::bail!("Identity conflict.");
-            } else {
-                return Err(e.into());
+                if daemon_running {
+                    Ui::error(
+                        "Failed to start: The Irosh daemon is already running in the background.",
+                    );
+                    Ui::info("Use 'irosh system status' or 'irosh system logs' to view activity.");
+                    Ui::info(
+                        "Tip: You can use 'irosh wormhole' to pair new devices without stopping the daemon.",
+                    );
+                    anyhow::bail!("Identity conflict.");
+                } else {
+                    return Err(e.into());
+                }
             }
+        },
+        _ = tokio::signal::ctrl_c() => {
+            Ui::info("Host startup cancelled by user.");
+            anyhow::bail!("Cancelled");
         }
     };
 

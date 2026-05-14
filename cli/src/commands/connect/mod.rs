@@ -1,11 +1,11 @@
 use crate::display;
+use crate::terminal::TerminalGuard;
 use crate::ui::Ui;
 use anyhow::Result;
-use irosh::sys::{RawTerminal, current_terminal_size};
+use irosh::sys::current_terminal_size;
 use irosh::{Client, ClientOptions, PtyOptions};
 use std::io::IsTerminal;
 
-mod ansi;
 mod completion;
 mod editor;
 mod history;
@@ -133,41 +133,67 @@ async fn exec_internal(
         pb: Some(pb.clone()),
     });
 
-    let (ticket, is_pairing) = match target {
-        irosh::ResolvedTarget::Ticket(t) => (t, false),
-        irosh::ResolvedTarget::WormholeCode(code) => {
-            pb.set_message(format!("Searching for wormhole: {}...", code));
-            match Client::connect_wormhole(&options, &code).await {
-                Ok(t) => (t, true),
-                Err(e) => {
-                    pb.finish_with_message("Done");
-                    return Err(e.into());
+    let (ticket, is_pairing) = tokio::select! {
+        res = async {
+            match target {
+                irosh::ResolvedTarget::Ticket(t) => Ok((t, false)),
+                irosh::ResolvedTarget::WormholeCode(code) => {
+                    pb.set_message(format!("Searching for wormhole: {}...", code));
+                    match Client::connect_wormhole(&options, &code).await {
+                        Ok(t) => Ok((t, true)),
+                        Err(e) => Err(e),
+                    }
                 }
             }
+        } => res?,
+        _ = tokio::signal::ctrl_c() => {
+            pb.finish_with_message("Cancelled");
+            anyhow::bail!("Connection cancelled by user.");
         }
     };
 
-    pb.set_message("Dialing P2P node...");
-    let connection = match Client::dial_p2p(&options, ticket.clone(), is_pairing).await {
-        Ok(c) => c,
-        Err(e) => {
-            pb.finish_with_message("Done");
+    let connection = tokio::select! {
+        res = Client::dial_p2p(&options, ticket.clone(), is_pairing) => {
+            match res {
+                Ok(c) => c,
+                Err(e) => {
+                    pb.finish_with_message("Failed");
+                    if is_pairing {
+                        auto_save_temp_peer(&state, &ticket);
+                    }
+                    return Err(e.into());
+                }
+            }
+        },
+        _ = tokio::signal::ctrl_c() => {
+            pb.finish_with_message("Cancelled");
             if is_pairing {
                 auto_save_temp_peer(&state, &ticket);
             }
-            return Err(e.into());
+            anyhow::bail!("Connection cancelled by user.");
         }
     };
 
     pb.set_message("Performing SSH handshake...");
-    let mut session = match Client::establish_session(&options, connection).await {
-        Ok(s) => s,
-        Err(e) => {
-            pb.finish_with_message("Done");
+    let mut session = tokio::select! {
+        res = Client::establish_session(&options, connection) => {
+            match res {
+                Ok(s) => s,
+                Err(e) => {
+                    pb.finish_with_message("Failed");
+                    if is_pairing {
+                        auto_save_temp_peer(&state, &ticket);
+                    }
+                    return Err(e.into());
+                }
+            }
+        },
+        _ = tokio::signal::ctrl_c() => {
+            pb.finish_with_message("Cancelled");
             if is_pairing {
                 auto_save_temp_peer(&state, &ticket);
             }
-            return Err(e.into());
+            anyhow::bail!("Connection cancelled by user.");
         }
     };
 
@@ -211,14 +237,10 @@ async fn exec_internal(
     // Setup terminal
     let stdin_is_tty = std::io::stdin().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
-
-    let _raw_terminal = if stdin_is_tty && stdout_is_tty {
-        Some(RawTerminal::new(0)?)
-    } else {
-        None
-    };
+    let mut _guard = None;
 
     if stdin_is_tty && stdout_is_tty {
+        _guard = Some(TerminalGuard::new()?);
         let size = current_terminal_size();
         let term = std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string());
         session.request_pty(PtyOptions::new(term, size)).await?;

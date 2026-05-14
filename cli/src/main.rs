@@ -4,6 +4,7 @@ mod commands;
 mod context;
 mod display;
 pub mod output;
+mod terminal;
 mod ui;
 
 use clap::Parser;
@@ -51,23 +52,6 @@ pub struct Args {
 async fn main() {
     #[cfg(windows)]
     {
-        use windows_sys::Win32::System::Console::*;
-        unsafe {
-            let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
-            let mut mode = 0;
-            if GetConsoleMode(stdout, &mut mode) != 0 {
-                SetConsoleMode(stdout, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-            }
-            let stderr = GetStdHandle(STD_ERROR_HANDLE);
-            if GetConsoleMode(stderr, &mut mode) != 0 {
-                SetConsoleMode(stderr, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-            }
-            let stdin = GetStdHandle(STD_INPUT_HANDLE);
-            if GetConsoleMode(stdin, &mut mode) != 0 {
-                SetConsoleMode(stdin, mode | ENABLE_PROCESSED_INPUT);
-            }
-        }
-
         // Attempt to run as a service. This will succeed if started by the SCM,
         // and fail immediately if started from a console.
         if irosh::sys::windows::service::run_service().is_ok() {

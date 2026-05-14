@@ -1,9 +1,10 @@
 use anyhow::Result;
+use futures_util::FutureExt;
 use irosh::sys::AsyncStdin;
 use irosh::{Session, SessionEvent};
 use tokio::io::AsyncWriteExt;
 
-use super::input::{EscapeAction, InputEngine};
+use super::input::{EscapeAction, InputEngine, InputMode};
 use super::prompt::execute_local_command;
 use super::transfer::TransferContext;
 
@@ -16,8 +17,8 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
 
     loop {
         tokio::select! {
-            // EVENTS from stdin: keystrokes OR resizes
-            event = stdin.next_event() => {
+            // SINGLE SOURCE OF TRUTH: All local input (Raw or Prompt) comes through here.
+            event = stdin.next_event().fuse() => {
                 match event {
                     Some(irosh::sys::TerminalEvent::Data(data)) => {
                         let (to_remote, to_local, actions) =
@@ -27,58 +28,14 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                             session.send(&to_remote).await?;
                         }
 
-                        // Process actions.
-                        for _action in &actions {
-                            // Currently no actions require local terminal side-effects
-                        }
-
-                        // Local echo/erase feedback (now guaranteed to be on the correct buffer)
                         if !to_local.is_empty() {
                             stdout.write_all(&to_local).await?;
                             stdout.flush().await?;
                         }
 
                         for action in actions {
-                            match action {
-                                EscapeAction::Disconnect => {
-                                    stdout
-                                        .write_all(b"[irosh] Disconnecting...\r\n")
-                                        .await?;
-                                    stdout.flush().await?;
-                                    return Ok(());
-                                }
-                                EscapeAction::Help => {
-                                    show_help(&mut stdout).await?;
-                                    let _ = stdout.write_all(b"\r\n").await;
-                                    let _ = stdout.flush().await;
-
-                                    if !remote_buffer.is_empty() {
-                                        stdout.write_all(&remote_buffer).await?;
-                                        stdout.flush().await?;
-                                        remote_buffer.clear();
-                                    }
-                                }
-                                EscapeAction::CommandPrompt => {
-                                    // Already handled above to avoid race condition.
-                                }
-                                EscapeAction::RunLocal(cmd) => {
-                                    if !execute_local_command(&mut session, &mut input_engine, &mut stdout, &mut stdin, &mut transfer_context, cmd).await? {
-                                        return Ok(());
-                                    }
-
-                                    if input_engine.mode == super::input::InputMode::Remote && !remote_buffer.is_empty() {
-                                        stdout.write_all(&remote_buffer).await?;
-                                        stdout.flush().await?;
-                                        remote_buffer.clear();
-                                    }
-                                }
-                                EscapeAction::RequestCompletion => {
-                                    let feedback = input_engine.complete_active_line(&mut session, &transfer_context).await;
-                                    if !feedback.is_empty() {
-                                        stdout.write_all(&feedback).await?;
-                                        stdout.flush().await?;
-                                    }
-                                }
+                            if !handle_action(action, &mut session, &mut input_engine, &mut stdout, &mut stdin, &mut transfer_context, &mut remote_buffer).await? {
+                                return Ok(());
                             }
                         }
                     }
@@ -127,6 +84,61 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
 
     let _ = session.disconnect().await;
     Ok(())
+}
+
+async fn handle_action(
+    action: EscapeAction,
+    session: &mut Session,
+    input_engine: &mut InputEngine,
+    stdout: &mut tokio::io::Stdout,
+    stdin: &mut AsyncStdin,
+    transfer_context: &mut TransferContext,
+    remote_buffer: &mut Vec<u8>,
+) -> Result<bool> {
+    match action {
+        EscapeAction::Disconnect => {
+            stdout.write_all(b"[irosh] Disconnecting...\r\n").await?;
+            stdout.flush().await?;
+            return Ok(false);
+        }
+        EscapeAction::Help => {
+            show_help(stdout).await?;
+            let _ = stdout.write_all(b"\r\n").await;
+            let _ = stdout.flush().await;
+
+            if input_engine.mode == InputMode::Remote && !remote_buffer.is_empty() {
+                stdout.write_all(remote_buffer).await?;
+                stdout.flush().await?;
+                remote_buffer.clear();
+            }
+        }
+        EscapeAction::CommandPrompt => {
+            // Prompt initialization is handled inside InputEngine
+        }
+        EscapeAction::RunLocal(cmd) => {
+            if !execute_local_command(session, input_engine, stdout, stdin, transfer_context, cmd)
+                .await?
+            {
+                return Ok(false);
+            }
+
+            if input_engine.mode == InputMode::Remote && !remote_buffer.is_empty() {
+                stdout.write_all(remote_buffer).await?;
+                stdout.flush().await?;
+                remote_buffer.clear();
+            }
+        }
+        EscapeAction::RequestCompletion => {
+            let feedback = input_engine
+                .complete_active_line(session, transfer_context)
+                .await;
+            if !feedback.is_empty() {
+                stdout.write_all(&feedback).await?;
+                stdout.flush().await?;
+            }
+        }
+    }
+    Ok(true)
 }
 
 async fn show_help(stdout: &mut tokio::io::Stdout) -> Result<()> {

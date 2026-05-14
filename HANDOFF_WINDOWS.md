@@ -1,26 +1,24 @@
 # 🚀 Windows Terminal Stabilization Handoff
 
 ## 🎯 Context for Windows Agent
-We have just completed a major architectural hardening of the Irosh terminal and PTY subsystem. We completely **abandoned the Alternate Screen Buffer** approach in favor of a **"True Transparency" / Non-Destructive UI** architecture.
+We have just completed a major architectural hardening of the Irosh terminal and PTY subsystem. The focus was on eliminating UI race conditions, input hangs, and making Ctrl+C highly responsive on Windows during network wait states.
 
-Previously, running local commands (`~c`, `~get`) would hijack the screen or overwrite the remote shell's prompt (like `└─$`). We fixed this by respecting the main scrollback buffer and surgically rendering local UI elements.
-
-## 🛠️ Key Architectural Changes Implemented
-1. **NO Alternate Screen Buffers**: We stripped out all `\x1b[?1049h/l` usage. All local commands and prompts (`irosh>`) now operate directly on the user's main terminal buffer, ensuring full scrollback history retention.
-2. **Non-Destructive Local Rendering**: When the user enters escape mode (`~`), the CLI no longer issues line-clearing commands (`\r\x1b[K`). It echoes characters exactly where the cursor is, preserving multi-line prompts (like Kali Linux's `└─$`).
-3. **Surgical Backspace & Tab Completion**: If the user backspaces or tabs in escape mode, we use relative ANSI movements (`\x1b[1D\x1b[K`) to clear only the typed characters, leaving the remote prompt untouched.
-4. **Vertical Hygiene**: Purged redundant newlines (`\r\n`) in the `print_prompt!` and file transfer logic to prevent "double spacing" between the remote shell and local commands.
-5. **Start-of-Line Sync**: The `observe_remote` logic now correctly invalidates the "start of line" state if the remote shell sends data (e.g., a prompt) after a newline, preventing the `~` command from clobbering the shell.
+## 🛠️ Key Changes Implemented
+1.  **Unified Input Reader**: Removed the `crossterm::event::EventStream` dependency. We now strictly read raw bytes from `AsyncStdin` in a single event loop. This solves the "Input Hang" bug where a background thread was stealing keystrokes on Windows.
+2.  **Ctrl+C Signal Traps**: The `tokio::signal::ctrl_c()` listener is now embedded in `tokio::select!` blocks around all long-running network tasks (`connect_wormhole`, `dial_p2p`, `establish_session`, and `Server::bind`). This guarantees Ctrl+C will kill the process on Windows even when VT Input mode normally swallows the signal.
+3.  **Prompt Wake-Up Sequence**: The input engine now sends a `\r` (Carriage Return) when returning to the remote session. This forces the remote shell to reprint its prompt immediately, solving the "blank screen / must press Enter manually" issue.
+4.  **UX Spacing**: Local commands (e.g., `ls`, `lpwd`) now automatically insert a clean blank line (`\r\n`) before re-printing the `irosh>` prompt, matching standard professional CLI behavior.
+5.  **Strict VT Enforcement**: `TerminalGuard` explicitly sets `ENABLE_VIRTUAL_TERMINAL_PROCESSING` and `DISABLE_NEWLINE_AUTO_RETURN` on Windows, with a robust `nuclear_cleanup` on drop.
 
 ## 🧪 Critical Windows Verification Tasks
-The following items MUST be verified on the Windows machine by the AI:
-- [ ] **Prompt Preservation**: Run `~put` or `~get`. Ensure the `~` command appears *after* the Windows remote prompt without deleting or overwriting it.
-- [ ] **Scrollback History**: Run `~c`, run a command like `ls`, and then type `exit`. Confirm that the `irosh>` prompt and its output *remain visible* in the history when you return to the remote shell.
-- [ ] **Vertical Spacing**: Ensure there are no massive gaps or double-newlines between the remote shell and the `irosh>` prompt.
-- [ ] **Ctrl+C / Resize Resilience**: Verify resizing the window during a transfer or pressing Ctrl+C inside `~c` behaves cleanly.
+The following items MUST be verified on the Windows machine:
+- [ ] **Connection Cancel**: Run `irosh connect` to a peer that is offline (or taking a long time), and press Ctrl+C. It should instantly cancel and exit without hanging.
+- [ ] **Prompt Refresh**: Enter `~c` to get the `irosh>` prompt, then type `exit`. The remote shell prompt should instantly reappear without needing to press Enter.
+- [ ] **Visual Spacing**: Type `~ls` and ensure there is a single blank line between the directory output and the next `irosh>` prompt.
+- [ ] **Flicker-Free Input**: Type characters in the `irosh>` prompt. They should not flicker or ghost (they use `\r\x1b[K` for absolute clearing).
+- [ ] **Clean Exit**: When disconnecting, the terminal should be fully restored (colors reset, cursor visible, raw mode disabled).
 
-## 📑 Strategic Documents
-- `docs/TERMINAL_STABILIZATION_PLAN.md`: The blueprint for this stabilization.
-- `docs/STABILIZATION_AND_POLISH_PLAN.md`: The roadmap for the next phase (Intelligence & UI Polish).
-
-**Current Status**: All tests pass on Linux. The workspace is Clippy-clean and formatted. The terminal logic is 100% transparent and non-destructive. Ready for Windows verification.
+## 📑 Current Status
+- All tests pass on Linux (`cargo test`).
+- The workspace is formatted (`cargo fmt`) and clippy-clean with zero warnings (`cargo clippy`).
+- We are ready for Windows verification.

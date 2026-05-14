@@ -107,7 +107,7 @@ pub async fn execute_local_command(
         () => {
             if input_engine.mode == InputMode::LocalEdit {
                 // We assume the previous command (or the shell) left us at the start of a line.
-                let _ = stdout.write_all(b"irosh> ").await;
+                let _ = stdout.write_all(b"\r\nirosh> ").await;
                 let _ = stdout.flush().await;
             } else {
                 // Return to remote shell: do NOT force remote reprint tightly.

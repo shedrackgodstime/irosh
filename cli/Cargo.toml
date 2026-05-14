@@ -20,6 +20,7 @@ irosh = { version = "0.3.0", path = "..", features = ["server", "client", "stora
 anyhow = "1.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -34,6 +35,7 @@ shell-words = "1.1.1"
 unicode-width = "0.1"
 console = "0.16.3"
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

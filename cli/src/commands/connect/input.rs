@@ -1,6 +1,5 @@
 //! Input engine for handling local keystrokes, remote sync, and escape sequences.
 
-use super::ansi::{ControlSequenceState, consume_control_sequence};
 use super::completion::{self, CompletionMode, CompletionResult};
 use super::editor::{EditorEffect, EditorEvent, EditorMode, LineEditor};
 use super::history::CommandHistory;
@@ -33,6 +32,14 @@ pub enum InputMode {
     LocalEdit,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ControlSequenceState {
+    #[default]
+    None,
+    Escape,
+    Csi,
+}
+
 #[derive(Debug)]
 pub struct LineSession {
     pub editor: LineEditor,
@@ -56,10 +63,6 @@ pub struct InputEngine {
     pub prompt_history: CommandHistory,
     /// Previous byte typed (to swallow \r\n pairs).
     swallow_next_enter_pair: Option<u8>,
-    /// State machine for parsing ANSI sequences in Remote mode.
-    remote_control_state: ControlSequenceState,
-    /// Buffer for accumulating ANSI sequences in Remote mode before forwarding them.
-    remote_control_buffer: Vec<u8>,
 }
 
 /// Parses an escape buffer (e.g. `b"~."` or `b"~help"`) into an action.
@@ -103,17 +106,7 @@ impl InputEngine {
             escape_history: CommandHistory::new(Some(history_dir.join("escape.history"))),
             prompt_history: CommandHistory::new(Some(history_dir.join("prompt.history"))),
             swallow_next_enter_pair: None,
-            remote_control_state: ControlSequenceState::None,
-            remote_control_buffer: Vec::new(),
         }
-    }
-
-    /// Exit local prompt mode, returning to remote interaction.
-    pub fn exit_local_prompt(&mut self) {
-        self.mode = InputMode::Remote;
-        self.active_line = None;
-        self.at_start_of_line = true;
-        self.local_line_len = 0;
     }
 
     /// Remote data arriving resets the 'start of line' state on newlines.
@@ -126,232 +119,228 @@ impl InputEngine {
         }
     }
 
-    /// Process local keystrokes.
+    /// Process local input.
     pub fn process_local(&mut self, data: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<EscapeAction>) {
         let mut to_remote = Vec::with_capacity(data.len());
         let mut to_local = Vec::new();
         let mut actions = Vec::new();
 
-        for &byte in data {
-            // Swallow \r\n or \n\r pairs from local terminal.
-            if let Some(pair) = self.swallow_next_enter_pair {
-                if byte == pair {
+        if self.mode == InputMode::Remote {
+            for &byte in data {
+                // Swallow \r\n or \n\r pairs from local terminal.
+                if let Some(pair) = self.swallow_next_enter_pair {
+                    if byte == pair {
+                        self.swallow_next_enter_pair = None;
+                        continue;
+                    }
                     self.swallow_next_enter_pair = None;
-                    continue;
                 }
-                self.swallow_next_enter_pair = None;
+
+                if self.local_line_len == 0 && byte == b'~' {
+                    self.mode = InputMode::LocalEdit;
+                    let new_line = LineSession {
+                        editor: LineEditor::new_escape(),
+                        display_cursor: 0,
+                        control_state: ControlSequenceState::None,
+                    };
+                    to_local.push(b'~');
+                    self.active_line = Some(new_line);
+                } else {
+                    self.handle_remote_byte(byte, &mut to_remote);
+                }
             }
+        } else {
+            // In LocalEdit mode, we parse bytes into EditorEvents using a stateless ANSI machine.
+            for &byte in data {
+                let mut line = if let Some(l) = self.active_line.take() {
+                    l
+                } else {
+                    self.mode = InputMode::Remote;
+                    break;
+                };
 
-            match self.mode {
-                InputMode::Remote => {
-                    if self.remote_control_state != ControlSequenceState::None {
-                        self.remote_control_buffer.push(byte);
-                        consume_control_sequence(&mut self.remote_control_state, byte);
-                        if self.remote_control_state == ControlSequenceState::None {
-                            // The sequence just finished. Check if it's a focus event.
-                            let is_focus_event = self.remote_control_buffer == b"\x1b[I"
-                                || self.remote_control_buffer == b"\x1b[O";
-                            if !is_focus_event {
-                                // Not a focus event, forward the entire sequence to the remote.
-                                to_remote.extend_from_slice(&self.remote_control_buffer);
-                            }
-                            self.remote_control_buffer.clear();
-                        }
-                        continue;
-                    }
+                let event = if line.control_state != ControlSequenceState::None {
+                    self.consume_local_ansi(&mut line.control_state, byte)
+                } else if byte == 27 {
+                    line.control_state = ControlSequenceState::Escape;
+                    None
+                } else if byte == 8 || byte == 127 {
+                    Some(EditorEvent::Backspace)
+                } else if byte == b'\r' || byte == b'\n' {
+                    self.swallow_next_enter_pair = paired_enter_byte(byte);
+                    self.at_start_of_line = true;
+                    self.local_line_len = 0;
+                    Some(EditorEvent::Submit)
+                } else if byte == b'\t' {
+                    Some(EditorEvent::Tab)
+                } else if byte == 0x03 {
+                    to_local.extend_from_slice(b"^C\r\n");
+                    self.exit_local_prompt(&mut to_remote);
+                    break;
+                } else if byte.is_ascii_graphic() || byte == b' ' {
+                    Some(EditorEvent::InsertByte(byte))
+                } else {
+                    None
+                };
 
-                    if byte == 27 {
-                        self.remote_control_state = ControlSequenceState::Escape;
-                        self.remote_control_buffer.clear();
-                        self.remote_control_buffer.push(byte);
-                        continue;
-                    }
-
-                    if self.local_line_len == 0 && byte == b'~' {
-                        // Enter escape line mode: just echo '~' and start editing.
-                        // We do NOT track display_cursor for escape mode; we use
-                        // forward-only echo (OpenSSH style) which is portable across
-                        // all terminal emulators including Windows ConPTY.
-                        self.mode = InputMode::LocalEdit;
-                        let new_line = LineSession {
-                            editor: LineEditor::new_escape(),
-                            display_cursor: 0,
-                            control_state: ControlSequenceState::None,
-                        };
-                        to_local.push(b'~');
-                        self.active_line = Some(new_line);
-                    } else {
-                        self.handle_remote_byte(byte, &mut to_remote);
-                    }
+                if let Some(ev) = event {
+                    self.apply_editor_event(
+                        ev,
+                        &mut line,
+                        &mut to_local,
+                        &mut to_remote,
+                        &mut actions,
+                    );
                 }
 
-                InputMode::LocalEdit => {
-                    let Some(mut line) = self.active_line.take() else {
-                        // This should be logically impossible given the mode, but we handle it gracefully
-                        self.mode = InputMode::Remote;
-                        continue;
-                    };
-
-                    // 1. Process byte via ANSI state machine or direct insert
-                    let event = if line.control_state != ControlSequenceState::None {
-                        consume_control_sequence(&mut line.control_state, byte)
-                    } else if byte == 27 {
-                        // Escape
-                        line.control_state = ControlSequenceState::Escape;
-                        None
-                    } else if byte == 8 || byte == 127 {
-                        Some(EditorEvent::Backspace)
-                    } else if byte == b'\r' || byte == b'\n' {
-                        self.swallow_next_enter_pair = paired_enter_byte(byte);
-                        self.at_start_of_line = true;
-                        self.local_line_len = 0;
-                        Some(EditorEvent::Submit)
-                    } else if byte == b'\t' {
-                        Some(EditorEvent::Tab)
-                    } else if byte == 0x03 {
-                        // Ctrl+C
-                        // Cancel current line
-                        to_local.extend_from_slice(b"^C\r\n");
-                        self.mode = InputMode::Remote;
-                        self.at_start_of_line = true;
-                        self.local_line_len = 0;
-                        self.active_line = None;
-                        continue;
-                    } else if byte.is_ascii_graphic() || byte == b' ' {
-                        Some(EditorEvent::InsertByte(byte))
-                    } else {
-                        None
-                    };
-
-                    // 2. Apply event to editor
-                    if let Some(ev) = event {
-                        let is_escape = matches!(line.editor.line().first(), Some(b'~'));
-                        let history = if is_escape {
-                            &mut self.escape_history
-                        } else {
-                            &mut self.prompt_history
-                        };
-                        match line.editor.apply(ev, history) {
-                            EditorEffect::NoOp => {}
-                            EditorEffect::Render => {
-                                if is_escape {
-                                    // Forward-only echo for escape mode: we never move the cursor
-                                    // backwards for escape sequences. This is the OpenSSH pattern
-                                    // and works identically on Linux and Windows ConPTY.
-                                    echo_escape_line(&mut to_local, &line);
-                                } else {
-                                    render_line(&mut to_local, &mut line);
-                                }
-                            }
-                            EditorEffect::ClearAndExit => {
-                                // Capture how many chars are on-screen BEFORE the editor wipes its buffer.
-                                let chars_on_screen = line.editor.line().len();
-                                clear_line_preview(&mut to_local, &mut line, chars_on_screen);
-                                self.mode = InputMode::Remote;
-                                self.at_start_of_line = true;
-                                self.local_line_len = 0;
-                                self.active_line = None;
-                                continue;
-                            }
-                            EditorEffect::RequestCompletion => {
-                                actions.push(EscapeAction::RequestCompletion);
-                            }
-                            EditorEffect::SubmitEscape(bytes) => {
-                                let line_str = String::from_utf8_lossy(&bytes);
-                                self.escape_history.add(&line_str);
-
-                                match parse_escape(&bytes) {
-                                    Some(action) => {
-                                        if action == EscapeAction::CommandPrompt {
-                                            // Ensure we are at the end of the line before starting the prompt on a new line
-                                            finalize_submitted_line(&mut to_local, &mut line);
-                                            // Sync mode internally so next bytes are handled as Prompt
-                                            self.mode = InputMode::LocalEdit;
-                                            line = LineSession {
-                                                editor: LineEditor::new_prompt(),
-                                                display_cursor: 0,
-                                                control_state: ControlSequenceState::None,
-                                            };
-                                            to_local.extend_from_slice(b"irosh> ");
-                                        } else {
-                                            finalize_submitted_line(&mut to_local, &mut line);
-                                            self.mode = InputMode::Remote;
-                                        }
-                                        actions.push(action);
-                                    }
-                                    None => {
-                                        finalize_submitted_line(&mut to_local, &mut line);
-                                        // If it starts with a known local keyword but missing args, show help
-                                        let cmd_str = String::from_utf8_lossy(trim_bytes(
-                                            bytes.strip_prefix(b"~").unwrap_or(&bytes),
-                                        ));
-                                        let keyword =
-                                            cmd_str.split_whitespace().next().unwrap_or("");
-                                        if ["put", "get", "lls", "ls", "lcd", "cd"]
-                                            .contains(&keyword)
-                                        {
-                                            to_local.extend_from_slice(
-                                                b"Usage error. Type ~? for help.\r\n",
-                                            );
-                                            self.mode = InputMode::Remote;
-                                            // Trigger prompt reprint on remote
-                                            to_remote.push(b'\r');
-                                        } else {
-                                            self.mode = InputMode::Remote;
-                                            let mut r_bytes = bytes;
-                                            r_bytes.push(b'\r');
-                                            to_remote.extend_from_slice(&r_bytes);
-                                        }
-                                    }
-                                }
-                                self.at_start_of_line = true;
-                                self.local_line_len = 0;
-                                if self.mode == InputMode::Remote {
-                                    self.active_line = None;
-                                    continue;
-                                }
-                            }
-                            EditorEffect::SubmitPrompt(bytes) => {
-                                let line_str = String::from_utf8_lossy(&bytes);
-                                self.prompt_history.add(&line_str);
-
-                                let Some(action) = parse_local_command(&bytes) else {
-                                    finalize_submitted_line(&mut to_local, &mut line);
-                                    // Reset the prompt editor for the next command
-                                    line = LineSession {
-                                        editor: LineEditor::new_prompt(),
-                                        display_cursor: 0,
-                                        control_state: ControlSequenceState::None,
-                                    };
-                                    to_local.extend_from_slice(b"irosh> ");
-                                    self.active_line = Some(line);
-                                    continue;
-                                };
-
-                                if matches!(action, LocalCommand::Exit | LocalCommand::Disconnect) {
-                                    finalize_exit_line(&mut to_local, &mut line);
-                                    self.exit_local_prompt();
-                                    actions.push(EscapeAction::RunLocal(action));
-                                    continue;
-                                } else {
-                                    finalize_submitted_line(&mut to_local, &mut line);
-                                    actions.push(EscapeAction::RunLocal(action));
-                                    // Reset the prompt editor for the next command
-                                    line = LineSession {
-                                        editor: LineEditor::new_prompt(),
-                                        display_cursor: 0,
-                                        control_state: ControlSequenceState::None,
-                                    };
-                                }
-                            }
-                        }
-                    }
+                if self.mode == InputMode::LocalEdit {
                     self.active_line = Some(line);
                 }
             }
         }
 
         (to_remote, to_local, actions)
+    }
+
+    fn apply_editor_event(
+        &mut self,
+        event: EditorEvent,
+        line: &mut LineSession,
+        to_local: &mut Vec<u8>,
+        to_remote: &mut Vec<u8>,
+        actions: &mut Vec<EscapeAction>,
+    ) {
+        let is_escape = matches!(line.editor.mode(), EditorMode::Escape);
+        let history = if is_escape {
+            &mut self.escape_history
+        } else {
+            &mut self.prompt_history
+        };
+
+        match line.editor.apply(event, history) {
+            EditorEffect::NoOp => {}
+            EditorEffect::Render => {
+                if is_escape {
+                    echo_escape_line(to_local, line);
+                } else {
+                    render_line(to_local, line);
+                }
+            }
+            EditorEffect::ClearAndExit => {
+                let chars_on_screen = line.editor.line().len();
+                clear_line_preview(to_local, line, chars_on_screen);
+                self.exit_local_prompt(to_remote);
+            }
+            EditorEffect::RequestCompletion => {
+                actions.push(EscapeAction::RequestCompletion);
+            }
+            EditorEffect::SubmitEscape(bytes) => {
+                let line_str = String::from_utf8_lossy(&bytes);
+                self.escape_history.add(&line_str);
+
+                match parse_escape(&bytes) {
+                    Some(action) => {
+                        if action == EscapeAction::CommandPrompt {
+                            finalize_submitted_line(to_local, line);
+                            self.mode = InputMode::LocalEdit;
+                            line.editor = LineEditor::new_prompt();
+                            line.display_cursor = 0;
+                            line.control_state = ControlSequenceState::None;
+                            to_local.extend_from_slice(b"\r\nirosh> ");
+                        } else {
+                            finalize_submitted_line(to_local, line);
+                            self.exit_local_prompt(to_remote);
+                        }
+                        actions.push(action);
+                    }
+                    None => {
+                        finalize_submitted_line(to_local, line);
+                        let cmd_str = String::from_utf8_lossy(trim_bytes(
+                            bytes.strip_prefix(b"~").unwrap_or(&bytes),
+                        ));
+                        let keyword = cmd_str.split_whitespace().next().unwrap_or("");
+                        if ["put", "get", "lls", "ls", "lcd", "cd"].contains(&keyword) {
+                            to_local.extend_from_slice(b"Usage error. Type ~? for help.\r\n");
+                            self.exit_local_prompt(to_remote);
+                        } else {
+                            self.exit_local_prompt(to_remote);
+                            let mut r_bytes = bytes;
+                            r_bytes.push(b'\r');
+                            to_remote.extend_from_slice(&r_bytes);
+                        }
+                    }
+                }
+                self.at_start_of_line = true;
+                self.local_line_len = 0;
+            }
+            EditorEffect::SubmitPrompt(bytes) => {
+                let line_str = String::from_utf8_lossy(&bytes);
+                self.prompt_history.add(&line_str);
+
+                let Some(action) = parse_local_command(&bytes) else {
+                    finalize_submitted_line(to_local, line);
+                    line.editor = LineEditor::new_prompt();
+                    line.display_cursor = 0;
+                    line.control_state = ControlSequenceState::None;
+                    to_local.extend_from_slice(b"\r\nirosh> ");
+                    return;
+                };
+
+                if matches!(action, LocalCommand::Exit | LocalCommand::Disconnect) {
+                    finalize_exit_line(to_local, line);
+                    self.exit_local_prompt(to_remote);
+                    actions.push(EscapeAction::RunLocal(action));
+                } else {
+                    finalize_submitted_line(to_local, line);
+                    actions.push(EscapeAction::RunLocal(action));
+                    line.editor = LineEditor::new_prompt();
+                    line.display_cursor = 0;
+                    line.control_state = ControlSequenceState::None;
+                }
+            }
+        }
+    }
+
+    fn consume_local_ansi(
+        &self,
+        state: &mut ControlSequenceState,
+        byte: u8,
+    ) -> Option<EditorEvent> {
+        match state {
+            ControlSequenceState::Escape => {
+                if byte == b'[' {
+                    *state = ControlSequenceState::Csi;
+                    None
+                } else {
+                    *state = ControlSequenceState::None;
+                    None
+                }
+            }
+            ControlSequenceState::Csi => {
+                *state = ControlSequenceState::None;
+                match byte {
+                    b'A' => Some(EditorEvent::HistoryUp),
+                    b'B' => Some(EditorEvent::HistoryDown),
+                    b'C' => Some(EditorEvent::MoveRight),
+                    b'D' => Some(EditorEvent::MoveLeft),
+                    b'H' => Some(EditorEvent::MoveHome),
+                    b'F' => Some(EditorEvent::MoveEnd),
+                    b'3' => None, // Part of Delete sequence, usually \x1b[3~
+                    b'~' => Some(EditorEvent::Delete), // Assuming \x1b[3~
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn exit_local_prompt(&mut self, to_remote: &mut Vec<u8>) {
+        self.mode = InputMode::Remote;
+        self.at_start_of_line = true;
+        self.local_line_len = 0;
+        self.active_line = None;
+        // The "Wake Up" sequence: Force the remote shell to redraw its prompt.
+        to_remote.push(b'\r');
     }
 
     /// Attempts to complete the current active line.
@@ -574,7 +563,7 @@ mod tests {
         assert!(actions.is_empty(), "no action until Enter");
 
         let (remote, local, actions) = engine.process_local(b"\r");
-        assert!(remote.is_empty());
+        assert_eq!(remote, b"\r", "Must send refresh CR to remote");
         assert!(local.contains(&b'\r'));
         assert!(local.contains(&b'\n'));
         assert_eq!(actions, vec![EscapeAction::Help]);
@@ -597,7 +586,7 @@ mod tests {
 
         let (remote, local, _) = engine.process_local(&[127]);
         assert_eq!(engine.mode, InputMode::Remote, "escape cancelled");
-        assert!(remote.is_empty());
+        assert_eq!(remote, b"\r", "Must send refresh CR even on cancel");
         // Should erase with backspace-space-backspace sequence (portable, works on ConPTY)
         assert!(local.contains(&b'\x08'));
         assert!(local.contains(&b' '));
@@ -614,9 +603,9 @@ mod tests {
             actions[0],
             EscapeAction::RunLocal(LocalCommand::Unknown(ref cmd)) if cmd == "x"
         ));
-        assert!(
-            remote.is_empty(),
-            "unknown command not sent to remote anymore"
+        assert_eq!(
+            remote, b"\r",
+            "Unknown command should still trigger refresh"
         );
     }
 
