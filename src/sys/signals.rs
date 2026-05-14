@@ -18,10 +18,24 @@ pub async fn wait_for_shutdown_signal() {
                 _ = sigterm.recv() => tracing::info!("Received SIGTERM (Termination), shutting down..."),
                 _ = sigquit.recv() => tracing::info!("Received SIGQUIT (Quit), shutting down..."),
             }
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = sigint.recv() => {},
+                    _ = sigterm.recv() => {},
+                    _ = sigquit.recv() => {},
+                }
+                tracing::warn!("Received second termination signal, forcing exit...");
+                std::process::exit(1);
+            });
         } else {
             // Fallback to basic ctrl_c if Unix-specific signals fail to install
             let _ = tokio::signal::ctrl_c().await;
             tracing::info!("Received Ctrl+C, shutting down...");
+            tokio::spawn(async move {
+                let _ = tokio::signal::ctrl_c().await;
+                tracing::warn!("Received second Ctrl+C, forcing exit...");
+                std::process::exit(1);
+            });
         }
     }
 
@@ -39,10 +53,23 @@ pub async fn wait_for_shutdown_signal() {
                 _ = sigint.recv() => tracing::info!("Received Ctrl+C, shutting down..."),
                 _ = sigbreak.recv() => tracing::info!("Received Ctrl+Break, shutting down..."),
             }
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = sigint.recv() => {},
+                    _ = sigbreak.recv() => {},
+                }
+                tracing::warn!("Received second termination signal, forcing exit...");
+                std::process::exit(1);
+            });
         } else {
             // Fallback to basic ctrl_c
             let _ = tokio::signal::ctrl_c().await;
             tracing::info!("Received Ctrl+C, shutting down...");
+            tokio::spawn(async move {
+                let _ = tokio::signal::ctrl_c().await;
+                tracing::warn!("Received second Ctrl+C, forcing exit...");
+                std::process::exit(1);
+            });
         }
     }
 }

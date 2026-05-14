@@ -62,6 +62,10 @@ async fn main() {
             if GetConsoleMode(stderr, &mut mode) != 0 {
                 SetConsoleMode(stderr, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
             }
+            let stdin = GetStdHandle(STD_INPUT_HANDLE);
+            if GetConsoleMode(stdin, &mut mode) != 0 {
+                SetConsoleMode(stdin, mode | ENABLE_PROCESSED_INPUT);
+            }
         }
 
         // Attempt to run as a service. This will succeed if started by the SCM,
