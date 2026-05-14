@@ -110,15 +110,12 @@ impl InputEngine {
         self.local_line_len = 0;
     }
 
-    /// Remote data arriving resets the 'start of line' state if it contains non-newline characters.
+    /// Remote data arriving resets the 'start of line' state on newlines.
     pub fn observe_remote(&mut self, data: &[u8]) {
         for &byte in data {
             if byte == b'\r' || byte == b'\n' {
                 self.at_start_of_line = true;
                 self.local_line_len = 0;
-            } else if !byte.is_ascii_whitespace() || byte == b' ' {
-                // If the remote sends a prompt or other data, we are no longer at the start of a line.
-                self.at_start_of_line = false;
             }
         }
     }
@@ -141,7 +138,7 @@ impl InputEngine {
 
             match self.mode {
                 InputMode::Remote => {
-                    if (self.at_start_of_line || self.local_line_len == 0) && byte == b'~' {
+                    if self.local_line_len == 0 && byte == b'~' {
                         // Enter escape line mode.
                         self.mode = InputMode::LocalEdit;
                         let mut new_line = LineSession {
