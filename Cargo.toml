@@ -52,7 +52,7 @@ thiserror = "2"
 tracing = "0.1"
 
 # tokio: async runtime and traits. 
-tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "net", "fs"] }
+tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "net", "fs", "signal"] }
 tokio-util = { version = "0.7" }
 dirs = "6"
 
