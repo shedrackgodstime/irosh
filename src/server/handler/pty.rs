@@ -713,16 +713,20 @@ impl ServerHandler {
                         signal, pid
                     );
 
-                    // Path A: The "Legacy" way (fails in services, but works in interactive mode)
+                    // Path A: The "Legacy" API.
+                    // This explicitly fails when Irosh is running as a Windows Service (Session 0)
+                    // because there is no attached console window. We still attempt it as a
+                    // best-effort fallback for interactive testing runs.
                     if let Some(pid) = pid {
                         unsafe {
                             GenerateConsoleCtrlEvent(event, pid);
                         }
                     }
 
-                    // Path B: The "Service" way (Byte Injection)
-                    // For SIGINT (Ctrl+C), we inject \x03 into the PTY input stream.
-                    // This is handled by the shell/PTY line discipline even in headless modes.
+                    // Path B: The "Service" Way (Byte Injection).
+                    // This is the actual effective mechanism. By injecting `\x03` into the PTY input stream,
+                    // ConPTY translates it into a Ctrl+C event for the child process even in headless
+                    // service environments.
                     if matches!(signal, russh::Sig::INT) {
                         if let Some(pty_tx) = process.pty_tx.as_ref() {
                             debug!(

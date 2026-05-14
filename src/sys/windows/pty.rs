@@ -143,7 +143,7 @@ impl AsyncStdin {
         let (tx, rx) = mpsc::unbounded_channel();
         let tx_resize = tx.clone();
 
-        // We use ReadFile instead of ReadConsoleInputW because ReadFile 
+        // We use ReadFile instead of ReadConsoleInputW because ReadFile
         // respects ENABLE_VIRTUAL_TERMINAL_INPUT and automatically translates
         // keys (like arrows, backspace) into standard VT sequences, providing
         // 100% parity with Linux terminals.
@@ -172,7 +172,10 @@ impl AsyncStdin {
                         break;
                     }
 
-                    if tx.send(TerminalEvent::Data(buf[..read as usize].to_vec())).is_err() {
+                    if tx
+                        .send(TerminalEvent::Data(buf[..read as usize].to_vec()))
+                        .is_err()
+                    {
                         break;
                     }
                 }

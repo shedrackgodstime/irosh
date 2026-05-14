@@ -35,11 +35,18 @@ This requires wrapping all local commands in the **Alternate Screen Buffer** (th
 
 While this completely prevents ConPTY corruption, it was strictly rejected by the project architect. Using the Alternate Screen Buffer violates the `UX_GUIDELINES.md` directive of **Scrollback Integrity**. When the Alternate Screen Buffer closes, the output vanishes, destroying the permanent record of the local command.
 
-## The Final Verdict
+## The Mitigation: Surgical CPR Tracking
 
-We have chosen to prioritize **Scrollback Integrity** over Windows ConPTY visual perfection. 
+We have chosen to prioritize **Scrollback Integrity** over Windows ConPTY visual perfection, but we have implemented the most advanced mitigation possible without kernel-level changes.
 
-**This is an accepted limitation of the software:**
-If a user connects to a Windows server and runs a local command that causes the screen to scroll, the subsequent remote prompt will suffer from absolute coordinate corruption. The user must manually execute `cls` or `Clear-Host` to resynchronize the ConPTY grid.
+Irosh now utilizes **Cursor Position Reports (CPR)** combined with line-counting algorithms to surgically track physical terminal scrolling. 
 
-*(Note: The official Microsoft OpenSSH client suffers from this exact same architectural limitation when using the `~C` escape sequence against a Windows OpenSSH server).*
+When a user connects to a Windows server and runs a local command:
+1. Irosh calculates exactly how many lines the terminal scrolled.
+2. If the scroll amount `S == 0` (e.g., for commands like `exit` or `lpwd`), Irosh does nothing. ConPTY remains perfectly in sync, and no output is destroyed.
+3. If the scroll amount `S > 0` (e.g., for large `lls` outputs or file transfers), ConPTY has permanently lost coordinate synchronization. In this specific case, Irosh automatically injects `\x0C\r` (Ctrl+L + CR) into the remote shell upon exiting local mode.
+
+**This is an accepted, mitigated limitation of the software:**
+The `\x0C` injection forces the remote Windows shell (PowerShell or CMD) to clear its internal screen and redraw the prompt from scratch, instantly fixing the ConPTY grid. While this does wipe the remote screen's history (pushing previous output into the scrollback buffer), it guarantees the prompt will never float and prevents all visual corruption. 
+
+*(Note: When connecting to Linux servers, Irosh is platform-aware and skips this mitigation entirely, as stream-based Linux PTYs do not suffer from absolute coordinate drift).*

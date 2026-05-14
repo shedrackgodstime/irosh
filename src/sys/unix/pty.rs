@@ -78,9 +78,15 @@ pub enum TerminalEvent {
 }
 
 /// A truly non-blocking asynchronous terminal reader for Unix terminals.
+///
+/// Races between raw stdin bytes and `SIGWINCH` (terminal resize) so that
+/// both `TerminalEvent::Data` and `TerminalEvent::Resize` are delivered to
+/// the session loop. Previously only Data was ever emitted, making the
+/// resize handler in `drive_session` dead code on Linux.
 pub struct AsyncStdin {
     inner: tokio::io::unix::AsyncFd<std::io::Stdin>,
     original_flags: libc::c_int,
+    sigwinch: tokio::signal::unix::Signal,
 }
 
 impl AsyncStdin {
@@ -90,44 +96,55 @@ impl AsyncStdin {
 
         // SAFETY: Standard fcntl to enable non-blocking I/O on stdin.
         // Original flags are saved so Drop can restore them.
-        unsafe {
-            let original_flags = libc::fcntl(fd, libc::F_GETFL);
-            if original_flags == -1 {
+        let original_flags = unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags == -1 {
                 return Err(IroshError::Client(ClientError::TerminalIo {
                     source: std::io::Error::last_os_error(),
                 }));
             }
-            if libc::fcntl(fd, libc::F_SETFL, original_flags | libc::O_NONBLOCK) == -1 {
+            if libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) == -1 {
                 return Err(IroshError::Client(ClientError::TerminalIo {
                     source: std::io::Error::last_os_error(),
                 }));
             }
-            Ok(Self {
-                inner: tokio::io::unix::AsyncFd::new(std::io::stdin())?,
-                original_flags,
-            })
-        }
+            flags
+        };
+
+        let sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+                .map_err(|source| IroshError::Client(ClientError::TerminalIo { source }))?;
+
+        Ok(Self {
+            inner: tokio::io::unix::AsyncFd::new(std::io::stdin())
+                .map_err(|source| IroshError::Client(ClientError::TerminalIo { source }))?,
+            original_flags,
+            sigwinch,
+        })
     }
 
-    /// Reads the next chunk of raw stdin bytes.
-    ///
-    /// This uses `readable_mut().await` which is the correct high-level Tokio API.
-    /// Unlike the low-level `poll_read_ready`, this properly re-registers the waker
-    /// when used inside `tokio::select!` across loop iterations, preventing the
-    /// "terminal freeze" caused by dropped wakers on edge-triggered epoll.
-    ///
-    /// Returns `None` on EOF.
     /// Reads the next terminal event (Data or Resize).
+    ///
+    /// Races between raw stdin bytes and `SIGWINCH`. Returns `None` on EOF.
     pub async fn next_event(&mut self) -> Option<TerminalEvent> {
         use std::io::Read;
         loop {
-            let mut guard = self.inner.readable_mut().await.ok()?;
             let mut buf = [0u8; 4096];
-            match guard.try_io(|inner| inner.get_ref().read(&mut buf)) {
-                Ok(Ok(0)) => return None,
-                Ok(Ok(n)) => return Some(TerminalEvent::Data(buf[..n].to_vec())),
-                Ok(Err(_)) => return None,
-                Err(_would_block) => continue,
+            tokio::select! {
+                // Data path: bytes arrive on stdin.
+                guard_result = self.inner.readable_mut() => {
+                    let mut guard = guard_result.ok()?;
+                    match guard.try_io(|inner| inner.get_ref().read(&mut buf)) {
+                        Ok(Ok(0)) => return None,
+                        Ok(Ok(n)) => return Some(TerminalEvent::Data(buf[..n].to_vec())),
+                        Ok(Err(_)) => return None,
+                        Err(_would_block) => continue,
+                    }
+                }
+                // Resize path: SIGWINCH fires when the terminal window is resized.
+                _ = self.sigwinch.recv() => {
+                    return Some(TerminalEvent::Resize(current_terminal_size()));
+                }
             }
         }
     }

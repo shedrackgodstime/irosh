@@ -251,7 +251,12 @@ async fn exec_internal(
     // Handle port forwarding
     tunnels::setup_forwarding(&mut session, forward_str).await?;
 
-    let input_engine = input::InputEngine::new(&state);
+    let remote_is_windows = session
+        .remote_metadata()
+        .map(|meta| meta.os.eq_ignore_ascii_case("windows"))
+        .unwrap_or(false);
+
+    let input_engine = input::InputEngine::new(&state, remote_is_windows);
 
     session::drive_session(session, input_engine).await
 }

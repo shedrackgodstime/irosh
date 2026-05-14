@@ -32,10 +32,11 @@ The Irosh interface must be "tight" and professional.
 - **Efficient Spacing:** No wasted vertical space. Avoid redundant blank lines that push useful information off the screen.
 - **Visual Discipline:** Every line printed should be meaningful. Progress bars and prompts should be surgical and minimalist.
 
-## 6. Cross-Platform Parity
-A user should have the exact same experience whether they are on Linux, Windows (ConPTY), or macOS.
-- **Universal Logic:** If a rendering behavior works on one platform but fails on another, the solution must be a cross-platform improvement, not a platform-specific hack.
-- **Native Stability:** We lean on the modern terminal capabilities of each OS to ensure the highest possible reliability.
+## 6. The Platform Matrix
+While cross-platform compatibility is essential, inherent OS limitations dictate the following target states:
+- **Linux (Server/Client):** Full feature parity. Seamless stream-based PTYs with zero screen clearing or corruption.
+- **Windows (Server):** Best-effort. Due to ConPTY's absolute 2D coordinate grid, out-of-band scrolling will cause desynchronization. Irosh uses surgical mitigations (like CPR-based `\x0C` tracking) to resolve this, but users may observe forced remote screen clears when scrolling occurs. This is an accepted OS limitation.
+- **Windows (Client):** High stability. Follows the same stream-based principles as the Linux client when connecting to Linux servers.
 
 ---
 
