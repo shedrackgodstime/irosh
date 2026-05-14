@@ -110,10 +110,12 @@ pub async fn execute_local_command(
                 let _ = stdout.write_all(b"\r\nirosh> ").await;
                 let _ = stdout.flush().await;
             } else {
-                // Return to remote shell: force remote reprint tightly.
                 // We rely on the command (e.g. transfer) to have provided its own final newline.
+                // We no longer send a hidden \r to force the remote shell to reprint its prompt.
+                // Doing so causes stateful PTYs (like ConPTY or complex zsh prompts) to redraw
+                // using absolute coordinates, overwriting our local output.
+                // The user will simply press Enter to get a new prompt, identical to OpenSSH ~C behavior.
                 let _ = stdout.flush().await;
-                let _ = session.send(b"\r").await;
             }
         };
     }
@@ -127,7 +129,6 @@ pub async fn execute_local_command(
             // Move to a fresh line locally before re-arming the remote shell.
             let _ = stdout.write_all(b"\r\n").await;
             let _ = stdout.flush().await;
-            let _ = session.send(b"\r").await;
             return Ok(true);
         }
         LocalCommand::Clear => {
