@@ -56,6 +56,10 @@ pub struct InputEngine {
     pub prompt_history: CommandHistory,
     /// Previous byte typed (to swallow \r\n pairs).
     swallow_next_enter_pair: Option<u8>,
+    /// State machine for parsing ANSI sequences in Remote mode.
+    remote_control_state: ControlSequenceState,
+    /// Buffer for accumulating ANSI sequences in Remote mode before forwarding them.
+    remote_control_buffer: Vec<u8>,
 }
 
 /// Parses an escape buffer (e.g. `b"~."` or `b"~help"`) into an action.
@@ -99,6 +103,8 @@ impl InputEngine {
             escape_history: CommandHistory::new(Some(history_dir.join("escape.history"))),
             prompt_history: CommandHistory::new(Some(history_dir.join("prompt.history"))),
             swallow_next_enter_pair: None,
+            remote_control_state: ControlSequenceState::None,
+            remote_control_buffer: Vec::new(),
         }
     }
 
@@ -138,6 +144,28 @@ impl InputEngine {
 
             match self.mode {
                 InputMode::Remote => {
+                    if self.remote_control_state != ControlSequenceState::None {
+                        self.remote_control_buffer.push(byte);
+                        consume_control_sequence(&mut self.remote_control_state, byte);
+                        if self.remote_control_state == ControlSequenceState::None {
+                            // The sequence just finished. Check if it's a focus event.
+                            let is_focus_event = self.remote_control_buffer == b"\x1b[I" || self.remote_control_buffer == b"\x1b[O";
+                            if !is_focus_event {
+                                // Not a focus event, forward the entire sequence to the remote.
+                                to_remote.extend_from_slice(&self.remote_control_buffer);
+                            }
+                            self.remote_control_buffer.clear();
+                        }
+                        continue;
+                    }
+
+                    if byte == 27 {
+                        self.remote_control_state = ControlSequenceState::Escape;
+                        self.remote_control_buffer.clear();
+                        self.remote_control_buffer.push(byte);
+                        continue;
+                    }
+
                     if self.local_line_len == 0 && byte == b'~' {
                         // Enter escape line mode.
                         self.mode = InputMode::LocalEdit;
