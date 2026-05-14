@@ -286,20 +286,16 @@ pub async fn handle_put_command(
     match transfer_res {
         Ok(_) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Done");
             }
-            // Explicitly clear the line to column 1 to avoid artifacts on Windows
-            stdout.write_all(b"\x1b[G\x1b[K").await?;
             stdout
                 .write_all(format!("Uploaded {}\r\n", local_name).as_bytes())
                 .await?;
         }
         Err(err) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Failed");
             }
-            // Explicitly clear the line to column 1 to avoid artifacts on Windows
-            stdout.write_all(b"\x1b[G\x1b[K").await?;
 
             use irosh::error::{ClientError, IroshError};
             let mut handled = false;
@@ -444,20 +440,16 @@ pub async fn handle_get_command(
     match transfer_res {
         Ok(_) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Done");
             }
-            // Explicitly clear the line to column 1 to avoid artifacts on Windows
-            stdout.write_all(b"\x1b[G\x1b[K").await?;
             stdout
                 .write_all(format!("Downloaded {}\r\n", remote_name).as_bytes())
                 .await?;
         }
         Err(err) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Failed");
             }
-            // Explicitly clear the line to column 1 to avoid artifacts on Windows
-            stdout.write_all(b"\x1b[G\x1b[K").await?;
 
             use irosh::error::{ClientError, IroshError};
             let mut handled = false;
