@@ -344,8 +344,13 @@ impl InputEngine {
         self.at_start_of_line = true;
         self.local_line_len = 0;
         self.active_line = None;
-        // The "Wake Up" sequence: Force the remote shell to redraw its prompt.
-        to_remote.push(b'\r');
+        // Ctrl+L (\x0C) asks the remote shell (bash / zsh / PowerShell+PSReadLine)
+        // to clear its screen and redraw the prompt from scratch.
+        // This resyncs ConPTY's internal absolute-coordinate grid after the local
+        // terminal scrolled due to a local command, preventing the "floating prompt"
+        // corruption on Windows servers.  The \r that follows ensures the shell
+        // processes the Ctrl+L immediately even in non-interactive edge cases.
+        to_remote.extend_from_slice(b"\x0C\r");
     }
 
     /// Attempts to complete the current active line.
@@ -590,7 +595,7 @@ mod tests {
         assert!(actions.is_empty(), "no action until Enter");
 
         let (remote, local, actions) = engine.process_local(b"\r");
-        assert_eq!(remote, b"\r", "Must send refresh CR to remote");
+        assert_eq!(remote, b"\x0C\r", "Must send Ctrl+L + CR to remote to resync ConPTY");
         assert!(local.contains(&b'\r'));
         assert!(local.contains(&b'\n'));
         assert_eq!(actions, vec![EscapeAction::Help]);
@@ -613,7 +618,7 @@ mod tests {
 
         let (remote, local, _) = engine.process_local(&[127]);
         assert_eq!(engine.mode, InputMode::Remote, "escape cancelled");
-        assert_eq!(remote, b"\r", "Must send refresh CR even on cancel");
+        assert_eq!(remote, b"\x0C\r", "Must send Ctrl+L + CR even on cancel");
         // Should erase with backspace-space-backspace sequence (portable, works on ConPTY)
         assert!(local.contains(&b'\x08'));
         assert!(local.contains(&b' '));
@@ -631,8 +636,8 @@ mod tests {
             EscapeAction::RunLocal(LocalCommand::Unknown(ref cmd)) if cmd == "x"
         ));
         assert_eq!(
-            remote, b"\r",
-            "Unknown command should still trigger refresh"
+            remote, b"\x0C\r",
+            "Unknown command should trigger Ctrl+L + CR refresh"
         );
     }
 
