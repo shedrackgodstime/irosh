@@ -463,12 +463,16 @@ fn render_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
         None
     };
 
-    // Surgical redraw: move to column 1 and clear to the right.
-    to_local.extend_from_slice(b"\x1b[G");
+    // Surgical redraw: use \r (carriage return) to move to column 0.
+    // We deliberately use \r instead of \x1b[G (CHA) here because Windows
+    // ConPTY can misinterpret CHA when the viewport has scrolled, causing the
+    // cursor to land on the wrong row in the scrollback buffer. \r is a raw
+    // terminal primitive that is always handled correctly.
+    to_local.push(b'\r');
     if let Some(p) = prompt {
         to_local.extend_from_slice(p.as_bytes());
     }
-    to_local.extend_from_slice(b"\x1b[K"); // Clear only from here to the end of the line
+    to_local.extend_from_slice(b"\x1b[K"); // Clear from cursor to end of line
 
     // Re-print current editor buffer.
     to_local.extend_from_slice(line.editor.line());
@@ -528,12 +532,14 @@ fn finalize_submitted_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
 }
 
 fn finalize_exit_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
-    // Move to end and add a clean newline.
+    // Move to end and add a clean newline. Do NOT send a bare \r after \r\n
+    // because on Windows ConPTY that extra \r can be interpreted as an Enter
+    // keypress being forwarded to the remote shell, causing spurious output.
     let tail_len = line.editor.line().len().saturating_sub(line.display_cursor);
     if tail_len > 0 {
         to_local.extend_from_slice(format!("\x1b[{}C", tail_len).as_bytes());
     }
-    to_local.extend_from_slice(b"\r\n\r");
+    to_local.extend_from_slice(b"\r\n");
     line.display_cursor = 0;
 }
 
