@@ -291,8 +291,8 @@ impl InputEngine {
                                                 b"Usage error. Type ~? for help.\r\n",
                                             );
                                             self.mode = InputMode::Remote;
-                                            // DO NOT trigger prompt reprint on remote!
-                                            // See UX_GUIDELINES.md: Never send a hidden Enter (\r).
+                                            // Trigger prompt reprint on remote
+                                            to_remote.push(b'\r');
                                         } else {
                                             self.mode = InputMode::Remote;
                                             let mut r_bytes = bytes;
