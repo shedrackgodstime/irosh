@@ -286,7 +286,7 @@ pub async fn handle_put_command(
     match transfer_res {
         Ok(_) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Done");
             }
             stdout
                 .write_all(format!("Uploaded {}\r\n", local_name).as_bytes())
@@ -294,7 +294,7 @@ pub async fn handle_put_command(
         }
         Err(err) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Done");
             }
 
             use irosh::error::{ClientError, IroshError};
@@ -440,7 +440,7 @@ pub async fn handle_get_command(
     match transfer_res {
         Ok(_) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Done");
             }
             stdout
                 .write_all(format!("Downloaded {}\r\n", remote_name).as_bytes())
@@ -448,7 +448,7 @@ pub async fn handle_get_command(
         }
         Err(err) => {
             if let Some(pb) = pb {
-                pb.finish_and_clear();
+                pb.finish_with_message("Done");
             }
 
             use irosh::error::{ClientError, IroshError};

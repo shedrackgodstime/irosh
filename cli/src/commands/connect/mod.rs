@@ -140,7 +140,7 @@ async fn exec_internal(
             match Client::connect_wormhole(&options, &code).await {
                 Ok(t) => (t, true),
                 Err(e) => {
-                    pb.finish_and_clear();
+                    pb.finish_with_message("Done");
                     return Err(e.into());
                 }
             }
@@ -151,7 +151,7 @@ async fn exec_internal(
     let connection = match Client::dial_p2p(&options, ticket.clone(), is_pairing).await {
         Ok(c) => c,
         Err(e) => {
-            pb.finish_and_clear();
+            pb.finish_with_message("Done");
             if is_pairing {
                 auto_save_temp_peer(&state, &ticket);
             }
@@ -163,7 +163,7 @@ async fn exec_internal(
     let mut session = match Client::establish_session(&options, connection).await {
         Ok(s) => s,
         Err(e) => {
-            pb.finish_and_clear();
+            pb.finish_with_message("Done");
             if is_pairing {
                 auto_save_temp_peer(&state, &ticket);
             }
@@ -171,7 +171,7 @@ async fn exec_internal(
         }
     };
 
-    pb.finish_and_clear();
+    pb.finish_with_message("Done");
 
     let metadata = session.remote_metadata();
     let display_name = if let Some(meta) = metadata {

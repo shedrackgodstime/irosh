@@ -161,7 +161,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
 
     match diagnostic::probe_network(state).await {
         Ok(probe) => {
-            pb.finish_and_clear();
+            pb.finish_with_message("Done");
             println!("  [*] P2P Endpoint:    Online");
             println!("  [*] NAT Type:        {}", probe.nat_description());
 
@@ -174,7 +174,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
             }
         }
         Err(e) => {
-            pb.finish_and_clear();
+            pb.finish_with_message("Done");
             println!("  [x] P2P Endpoint:    OFFLINE");
             println!("      Error: {:#}", e);
         }
