@@ -41,7 +41,7 @@ pub fn consume_control_sequence(state: &mut ControlSequenceState, byte: u8) -> O
                 // Should not happen as params should come first
                 *state = ControlSequenceState::None;
                 None
-            } else if byte >= 0x30 && byte <= 0x3F {
+            } else if (0x30..=0x3F).contains(&byte) {
                 *state = ControlSequenceState::CsiParams(if byte.is_ascii_digit() {
                     (byte - b'0') as usize
                 } else {
@@ -72,7 +72,7 @@ pub fn consume_control_sequence(state: &mut ControlSequenceState, byte: u8) -> O
                 };
                 *state = ControlSequenceState::None;
                 ev
-            } else if byte >= 0x30 && byte <= 0x3F {
+            } else if (0x30..=0x3F).contains(&byte) {
                 // Accumulate multi-digit params and absorb other parameter bytes like ;, ?, etc.
                 if byte.is_ascii_digit() {
                     *state = ControlSequenceState::CsiParams((*val * 10) + (byte - b'0') as usize);

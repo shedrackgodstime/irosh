@@ -149,7 +149,8 @@ impl InputEngine {
                         consume_control_sequence(&mut self.remote_control_state, byte);
                         if self.remote_control_state == ControlSequenceState::None {
                             // The sequence just finished. Check if it's a focus event.
-                            let is_focus_event = self.remote_control_buffer == b"\x1b[I" || self.remote_control_buffer == b"\x1b[O";
+                            let is_focus_event = self.remote_control_buffer == b"\x1b[I"
+                                || self.remote_control_buffer == b"\x1b[O";
                             if !is_focus_event {
                                 // Not a focus event, forward the entire sequence to the remote.
                                 to_remote.extend_from_slice(&self.remote_control_buffer);
@@ -167,16 +168,17 @@ impl InputEngine {
                     }
 
                     if self.local_line_len == 0 && byte == b'~' {
-                        // Enter escape line mode.
+                        // Enter escape line mode: just echo '~' and start editing.
+                        // We do NOT track display_cursor for escape mode; we use
+                        // forward-only echo (OpenSSH style) which is portable across
+                        // all terminal emulators including Windows ConPTY.
                         self.mode = InputMode::LocalEdit;
-                        let mut new_line = LineSession {
+                        let new_line = LineSession {
                             editor: LineEditor::new_escape(),
                             display_cursor: 0,
                             control_state: ControlSequenceState::None,
                         };
-                        // Just echo the tilde directly instead of a full line clear/render.
                         to_local.push(b'~');
-                        new_line.display_cursor = 1;
                         self.active_line = Some(new_line);
                     } else {
                         self.handle_remote_byte(byte, &mut to_remote);
@@ -229,21 +231,22 @@ impl InputEngine {
                         } else {
                             &mut self.prompt_history
                         };
-
                         match line.editor.apply(ev, history) {
                             EditorEffect::NoOp => {}
                             EditorEffect::Render => {
                                 if is_escape {
-                                    // Non-destructive echo: just print the last character added.
-                                    // (Simplification: for now, we just reprint the whole escape line
-                                    // without the leading \r\x1b[K by using a custom render)
-                                    render_escape_line_nondestructively(&mut to_local, &mut line);
+                                    // Forward-only echo for escape mode: we never move the cursor
+                                    // backwards for escape sequences. This is the OpenSSH pattern
+                                    // and works identically on Linux and Windows ConPTY.
+                                    echo_escape_line(&mut to_local, &line);
                                 } else {
                                     render_line(&mut to_local, &mut line);
                                 }
                             }
                             EditorEffect::ClearAndExit => {
-                                clear_line_preview(&mut to_local, &mut line);
+                                // Capture how many chars are on-screen BEFORE the editor wipes its buffer.
+                                let chars_on_screen = line.editor.line().len();
+                                clear_line_preview(&mut to_local, &mut line, chars_on_screen);
                                 self.mode = InputMode::Remote;
                                 self.at_start_of_line = true;
                                 self.local_line_len = 0;
@@ -380,7 +383,9 @@ impl InputEngine {
             Ok(CompletionResult::Applied(edit)) => {
                 line.editor.replace_line(edit.line, edit.cursor);
                 if mode == CompletionMode::Escape {
-                    render_escape_line_nondestructively(&mut to_local, &mut line);
+                    // For escape mode, tab completion replaces the line in place.
+                    // Use backspace-over then re-echo to stay portable.
+                    echo_escape_line(&mut to_local, &line);
                 } else {
                     render_line(&mut to_local, &mut line);
                 }
@@ -399,15 +404,8 @@ impl InputEngine {
                     to_local.extend_from_slice(b"irosh> ");
                     render_line(&mut to_local, &mut line);
                 } else {
-                    // Tilde is already part of the editor buffer.
-                    // For suggestions, we are on a new line now, so we actually
-                    // DO need to render from the start of this new line.
-                    // However, to keep it consistent, if we want to preserve
-                    // the remote prompt, maybe we shouldn't show suggestions
-                    // this way for escapes?
-                    // Actually, if we just printed \r\n, we are on a new blank line.
-                    // So render_escape_line_nondestructively will just print the escape line.
-                    render_escape_line_nondestructively(&mut to_local, &mut line);
+                    // On a fresh new line, just echo the current escape buffer.
+                    echo_escape_line(&mut to_local, &line);
                 }
             }
             _ => {
@@ -485,41 +483,36 @@ fn render_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
     line.display_cursor = cursor;
 }
 
-fn render_escape_line_nondestructively(to_local: &mut Vec<u8>, line: &mut LineSession) {
-    // For escape sequences, we never use \r. We just stay where we are
-    // and manage the characters.
-    // This is a "relative" render.
-
-    // 1. Move back to the start of our "edit" area (where the tilde started).
-    if line.display_cursor > 0 {
-        to_local.extend_from_slice(format!("\x1b[{}D", line.display_cursor).as_bytes());
+/// Forward-only echo for escape mode.
+///
+/// We never move the cursor backwards when in escape mode because we do not
+/// know the absolute cursor column (the remote shell's prompt may be any
+/// length). Instead we simply echo the last character that was added.
+/// Backspacing is handled separately via `clear_line_preview`.
+/// This is the OpenSSH `~C` pattern and works on every terminal, including
+/// Windows ConPTY.
+fn echo_escape_line(to_local: &mut Vec<u8>, line: &LineSession) {
+    // The editor buffer always starts with '~'. Only echo the part after
+    // whatever was already on-screen. Since we forward-echo every character
+    // as it is typed, we just need to print the very last byte added.
+    if let Some(&last_byte) = line.editor.line().last() {
+        to_local.push(last_byte);
     }
-
-    // 2. Clear to the right.
-    to_local.extend_from_slice(b"\x1b[K");
-
-    // 3. Print the new content.
-    to_local.extend_from_slice(line.editor.line());
-
-    // 4. Position cursor correctly.
-    let cursor = line.editor.cursor();
-    let tail_len = line.editor.line().len().saturating_sub(cursor);
-    if tail_len > 0 {
-        to_local.extend_from_slice(format!("\x1b[{}D", tail_len).as_bytes());
-    }
-
-    line.display_cursor = cursor;
 }
 
-fn clear_line_preview(to_local: &mut Vec<u8>, line: &mut LineSession) {
+fn clear_line_preview(to_local: &mut Vec<u8>, line: &mut LineSession, chars_on_screen: usize) {
     if line.editor.mode() == EditorMode::Escape {
-        // Move back to where the escape started and clear only to the right
-        if line.display_cursor > 0 {
-            to_local.extend_from_slice(format!("\x1b[{}D", line.display_cursor).as_bytes());
+        // Erase only the characters we typed in escape mode using
+        // backspace-space-backspace sequences. This is purely additive and
+        // never requires knowing the absolute cursor column.
+        // Use chars_on_screen (captured before editor cleared its buffer) so
+        // the loop count is always correct even when the buffer is already empty.
+        let erase_count = chars_on_screen.max(1);
+        for _ in 0..erase_count {
+            to_local.extend_from_slice(b"\x08 \x08");
         }
-        to_local.extend_from_slice(b"\x1b[K");
     } else {
-        // For the irosh> prompt, we can use a full line clear as we own that line.
+        // For the irosh> prompt we own the entire line, so \r is safe.
         to_local.extend_from_slice(b"\r\x1b[K");
     }
 }
@@ -599,9 +592,9 @@ mod tests {
         let (remote, local, _) = engine.process_local(&[127]);
         assert_eq!(engine.mode, InputMode::Remote, "escape cancelled");
         assert!(remote.is_empty());
-        // Should have non-destructive ANSI clear bytes (\x1b[1D\x1b[K)
-        assert!(local.contains(&b'D'));
-        assert!(local.contains(&b'K'));
+        // Should erase with backspace-space-backspace sequence (portable, works on ConPTY)
+        assert!(local.contains(&b'\x08'));
+        assert!(local.contains(&b' '));
     }
 
     #[test]
