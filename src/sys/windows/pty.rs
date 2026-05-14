@@ -141,68 +141,59 @@ impl AsyncStdin {
     /// Spawns the background input polling thread.
     pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
+        let tx_resize = tx.clone();
 
+        // We use ReadFile instead of ReadConsoleInputW because ReadFile 
+        // respects ENABLE_VIRTUAL_TERMINAL_INPUT and automatically translates
+        // keys (like arrows, backspace) into standard VT sequences, providing
+        // 100% parity with Linux terminals.
         std::thread::Builder::new()
             .name("irosh-win-input".to_string())
             .spawn(move || {
-                // SAFETY: Polling standard input for console events.
-                // We use a fixed-size buffer and check for successful read.
+                // SAFETY: Polling standard input using ReadFile.
                 let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-                let mut buffer = [unsafe { std::mem::zeroed::<INPUT_RECORD>() }; 128];
+                let mut buf = [0u8; 1024];
 
                 loop {
                     let mut read = 0;
-                    if unsafe { ReadConsoleInputW(handle, buffer.as_mut_ptr(), 128, &mut read) }
-                        == 0
+                    if unsafe {
+                        windows_sys::Win32::Storage::FileSystem::ReadFile(
+                            handle,
+                            buf.as_mut_ptr() as *mut _,
+                            buf.len() as u32,
+                            &mut read,
+                            std::ptr::null_mut(),
+                        )
+                    } == 0
                     {
                         break;
                     }
-
-                    let mut key_batch: Vec<u8> = Vec::with_capacity(read as usize);
-
-                    for i in 0..read {
-                        let record = buffer[i as usize];
-                        match record.EventType as u32 {
-                            KEY_EVENT => {
-                                // SAFETY: Accessing union field for KeyEvent is safe when EventType is KEY_EVENT.
-                                let key = unsafe { record.Event.KeyEvent };
-                                if key.bKeyDown != 0 {
-                                    // When ENABLE_VIRTUAL_TERMINAL_INPUT is set, Windows provides the VT
-                                    // escape sequences (like \x1b[A) directly as a sequence of KEY_EVENTs
-                                    // containing the Unicode characters. We can simply collect them.
-                                    let c = unsafe { key.uChar.UnicodeChar };
-                                    if c != 0 {
-                                        let mut utf8 = [0u8; 4];
-                                        let s = char::from_u32(c as u32)
-                                            .unwrap_or(' ')
-                                            .encode_utf8(&mut utf8);
-                                        key_batch.extend_from_slice(s.as_bytes());
-                                    }
-                                }
-                            }
-                            WINDOW_BUFFER_SIZE_EVENT => {
-                                // Flush pending key data before sending resize.
-                                if !key_batch.is_empty() {
-                                    if tx
-                                        .send(TerminalEvent::Data(std::mem::take(&mut key_batch)))
-                                        .is_err()
-                                    {
-                                        return;
-                                    }
-                                }
-                                let _ = tx.send(TerminalEvent::Resize(current_terminal_size()));
-                            }
-                            _ => {}
-                        }
+                    if read == 0 {
+                        break;
                     }
 
-                    // Flush any remaining key data accumulated in this read call.
-                    if !key_batch.is_empty() && tx.send(TerminalEvent::Data(key_batch)).is_err() {
-                        return;
+                    if tx.send(TerminalEvent::Data(buf[..read as usize].to_vec())).is_err() {
+                        break;
                     }
                 }
             })
             .map_err(|e| IroshError::Client(ClientError::TerminalIo { source: e }))?;
+
+        // Background task to poll for terminal size changes since ReadFile
+        // does not yield WINDOW_BUFFER_SIZE_EVENT.
+        tokio::spawn(async move {
+            let mut last_size = current_terminal_size();
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                let size = current_terminal_size();
+                if size.cols != last_size.cols || size.rows != last_size.rows {
+                    last_size = size;
+                    if tx_resize.send(TerminalEvent::Resize(size)).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
 
         Ok(Self { rx })
     }
