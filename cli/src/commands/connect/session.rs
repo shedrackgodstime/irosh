@@ -102,9 +102,21 @@ async fn handle_action(
             return Ok(false);
         }
         EscapeAction::Help => {
+            stdout.write_all(b"\x1b[?1049h\x1b[H\x1b[2J").await?;
+            stdout.flush().await?;
+
             show_help(stdout).await?;
-            let _ = stdout.write_all(b"\r\n").await;
+            let _ = stdout.write_all(b"\r\n\r\n[Press any key to return to remote shell]").await;
             let _ = stdout.flush().await;
+
+            while let Some(ev) = stdin.next_event().await {
+                if let irosh::sys::TerminalEvent::Data(_) = ev {
+                    break;
+                }
+            }
+
+            stdout.write_all(b"\x1b[?1049l").await?;
+            stdout.flush().await?;
 
             if input_engine.mode == InputMode::Remote && !remote_buffer.is_empty() {
                 stdout.write_all(remote_buffer).await?;
@@ -116,9 +128,25 @@ async fn handle_action(
             // Prompt initialization is handled inside InputEngine
         }
         EscapeAction::RunLocal(cmd) => {
-            if !execute_local_command(session, input_engine, stdout, stdin, transfer_context, cmd)
-                .await?
-            {
+            stdout.write_all(b"\x1b[?1049h\x1b[H\x1b[2J").await?;
+            stdout.flush().await?;
+
+            let res = execute_local_command(session, input_engine, stdout, stdin, transfer_context, cmd).await;
+
+            if res.is_ok() {
+                let _ = stdout.write_all(b"\r\n[Press any key to return to remote shell]").await;
+                let _ = stdout.flush().await;
+                while let Some(ev) = stdin.next_event().await {
+                    if let irosh::sys::TerminalEvent::Data(_) = ev {
+                        break;
+                    }
+                }
+            }
+
+            stdout.write_all(b"\x1b[?1049l").await?;
+            stdout.flush().await?;
+
+            if !res? {
                 return Ok(false);
             }
 
