@@ -463,8 +463,8 @@ fn render_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
         None
     };
 
-    // Surgical redraw: move to start of the edit area and clear to the right.
-    to_local.extend_from_slice(b"\r");
+    // Surgical redraw: move to column 1 and clear to the right.
+    to_local.extend_from_slice(b"\x1b[G");
     if let Some(p) = prompt {
         to_local.extend_from_slice(p.as_bytes());
     }

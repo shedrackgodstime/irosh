@@ -106,12 +106,11 @@ pub async fn execute_local_command(
     macro_rules! print_prompt {
         () => {
             if input_engine.mode == InputMode::LocalEdit {
-                // Ensure we start on a new line, but don't add an extra blank line.
-                let _ = stdout.write_all(b"\r\nirosh> ").await;
+                // We assume the previous command (or the shell) left us at the start of a line.
+                let _ = stdout.write_all(b"irosh> ").await;
                 let _ = stdout.flush().await;
             } else {
                 // Return to remote shell: force remote reprint tightly.
-                // The user complained about having to press Enter manually.
                 let _ = stdout.flush().await;
                 let _ = session.send(b"\r").await;
             }
@@ -124,9 +123,8 @@ pub async fn execute_local_command(
             print_prompt!();
         }
         LocalCommand::Exit => {
-            // Move to a fresh line locally before re-arming the remote shell.
-            let _ = stdout.write_all(b"\r\n").await;
-            let _ = stdout.flush().await;
+            // We are already on the line below the command (Enter moved us there).
+            // Just send \r to the remote to trigger its prompt on this fresh line.
             let _ = session.send(b"\r").await;
             return Ok(true);
         }
@@ -174,7 +172,7 @@ pub async fn execute_local_command(
             if !target.is_dir() {
                 stdout
                     .write_all(
-                        format!("Error: '{}' is not a local directory", target.display())
+                        format!("Error: '{}' is not a local directory\r\n", target.display())
                             .as_bytes(),
                     )
                     .await?;
@@ -200,7 +198,7 @@ pub async fn execute_local_command(
                     out.push_str(&entry);
                     out.push_str("\r\n");
                 }
-                stdout.write_all(out.trim_end().as_bytes()).await?;
+                stdout.write_all(out.as_bytes()).await?;
                 print_prompt!();
             }
         }
