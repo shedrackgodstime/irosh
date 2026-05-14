@@ -419,14 +419,8 @@ impl InputEngine {
         // as user-typed characters. Otherwise, local_line_len becomes > 0 and 
         // breaks the `~` escape sequence.
         if self.swallow_ansi {
-            // A standard ANSI sequence ends with a letter, '~', or '@'.
-            // (Exclude '[' and ']' which are introducers, even though they are in the 0x40-0x7E range).
-            let is_final = (byte >= b'A' && byte <= b'Z')
-                || (byte >= b'a' && byte <= b'z')
-                || byte == b'~'
-                || byte == b'@';
-            
-            if is_final {
+            // A standard ANSI sequence ends with a character between 0x40 and 0x7E.
+            if byte >= 0x40 && byte <= 0x7E {
                 self.swallow_ansi = false;
             }
             return;
