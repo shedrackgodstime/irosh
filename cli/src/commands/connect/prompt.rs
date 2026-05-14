@@ -110,9 +110,9 @@ pub async fn execute_local_command(
                 let _ = stdout.write_all(b"irosh> ").await;
                 let _ = stdout.flush().await;
             } else {
-                // Return to remote shell: force remote reprint tightly.
+                // Return to remote shell: do NOT force remote reprint tightly.
+                // See UX_GUIDELINES.md "The OpenSSH Pattern".
                 let _ = stdout.flush().await;
-                let _ = session.send(b"\r").await;
             }
         };
     }
@@ -124,8 +124,7 @@ pub async fn execute_local_command(
         }
         LocalCommand::Exit => {
             // We are already on the line below the command (Enter moved us there).
-            // Just send \r to the remote to trigger its prompt on this fresh line.
-            let _ = session.send(b"\r").await;
+            // Do NOT send \r to the remote. See UX_GUIDELINES.md "The OpenSSH Pattern".
             return Ok(true);
         }
         LocalCommand::Clear => {
