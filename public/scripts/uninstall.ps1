@@ -27,7 +27,7 @@ if ($Help) {
     exit
 }
 
-Write-Host "`n🗑️ Uninstalling irosh..." -ForegroundColor Red
+Write-Host "`n[*] Uninstalling irosh..." -ForegroundColor Red
 Write-Host "--------------------------------------------------" -ForegroundColor Blue
 
 $Found = $false
@@ -73,20 +73,20 @@ if (Test-Path $InstallDir) {
         # Final safety: Ensure process is killed if still alive
         taskkill /IM irosh.exe /F 2>$null
         Remove-Item $Irosh -Force
-        Write-Host "✅ Removed irosh.exe" -ForegroundColor Green
+        Write-Host "[*] Removed irosh.exe" -ForegroundColor Green
         $Found = $true
     }
     
     # Cleanup legacy binaries
     if (Test-Path $LegacyServer) {
         Remove-Item $LegacyServer -Force
-        Write-Host "✅ Removed legacy irosh-server.exe" -ForegroundColor Green
+        Write-Host "[*] Removed legacy irosh-server.exe" -ForegroundColor Green
         $Found = $true
     }
     
     if (Test-Path $LegacyClient) {
         Remove-Item $LegacyClient -Force
-        Write-Host "✅ Removed legacy irosh-client.exe" -ForegroundColor Green
+        Write-Host "[*] Removed legacy irosh-client.exe" -ForegroundColor Green
         $Found = $true
     }
     
@@ -101,7 +101,7 @@ $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($UserPath -like "*$InstallDir*") {
     $NewPath = ($UserPath -split ';' | Where-Object { $_ -ne $InstallDir }) -join ';'
     [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
-    Write-Host "✅ Removed $InstallDir from PATH" -ForegroundColor Green
+    Write-Host "[*] Removed $InstallDir from PATH" -ForegroundColor Green
     $Found = $true
 }
 
@@ -110,15 +110,15 @@ $StateDir = Join-Path $env:USERPROFILE ".irosh"
 if (Test-Path $StateDir) {
     if ($Yes) {
         Remove-Item $StateDir -Recurse -Force
-        Write-Host "✅ Removed state directory" -ForegroundColor Green
+        Write-Host "[*] Removed state directory" -ForegroundColor Green
     } else {
-        Write-Host "`n⚠️  Found state directory: $StateDir" -ForegroundColor Yellow
+        Write-Host "`n[!] Found state directory: $StateDir" -ForegroundColor Yellow
         Write-Host "   This contains your keys, trust records, and saved peers." -ForegroundColor Yellow
         $answer = Read-Host "   Do you want to remove it? (y/N)"
         
         if ($answer -eq "y" -or $answer -eq "Y") {
             Remove-Item $StateDir -Recurse -Force
-            Write-Host "✅ Removed state directory" -ForegroundColor Green
+            Write-Host "[*] Removed state directory" -ForegroundColor Green
         } else {
             Write-Host "   Preserved state directory" -ForegroundColor Gray
         }
@@ -126,10 +126,10 @@ if (Test-Path $StateDir) {
 }
 
 if (-not $Found) {
-    Write-Host "`n⚠️  No irosh binaries found in standard locations." -ForegroundColor Yellow
+    Write-Host "`n[!] No irosh binaries found in standard locations." -ForegroundColor Yellow
     Write-Host "   You may need to manually remove them." -ForegroundColor Yellow
 }
 
-Write-Host "`n✅ Uninstall complete!" -ForegroundColor Green
+Write-Host "`n[*] Uninstall complete!" -ForegroundColor Green
 Write-Host "--------------------------------------------------" -ForegroundColor Blue
-Write-Host "👉 To reinstall: iwr irosh.pages.dev/ps | iex`n"
+Write-Host "[*] To reinstall: iwr irosh.pages.dev/ps | iex`n"
