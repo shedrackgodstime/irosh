@@ -7,8 +7,8 @@ use crate::transport::ticket::Ticket;
 #[test]
 fn parse_target_resolves_saved_peer_alias() {
     let state = temp_state_dir("peer-alias");
-    let node_id = iroh::SecretKey::generate(&mut rand::rng()).public();
-    let ticket_text = Ticket::new(iroh::EndpointAddr::new(node_id)).to_string();
+    let endpoint_id = iroh::SecretKey::generate().public();
+    let ticket_text = Ticket::new(iroh::EndpointAddr::new(endpoint_id)).to_string();
 
     save_peer(
         &state,
@@ -86,8 +86,8 @@ fn public_config_and_ticket_types_support_value_comparison() {
     };
     assert_eq!(security_a, security_b);
 
-    let node_id = iroh::SecretKey::generate(&mut rand::rng()).public();
-    let ticket_a = Ticket::new(iroh::EndpointAddr::new(node_id));
+    let endpoint_id = iroh::SecretKey::generate().public();
+    let ticket_a = Ticket::new(iroh::EndpointAddr::new(endpoint_id));
     let ticket_b = ticket_a.clone();
     assert_eq!(ticket_a, ticket_b);
 }
@@ -100,7 +100,7 @@ fn public_runtime_types_implement_debug() {
     assert_debug::<Session>();
     assert_debug::<crate::Server>();
     assert_debug::<crate::ServerShutdown>();
-    assert_debug::<crate::storage::NodeIdentity>();
+    assert_debug::<crate::storage::EndpointIdentity>();
     assert_debug::<crate::session::RawTerminal>();
 }
 
@@ -112,8 +112,8 @@ fn test_session_send_sync() {
 
 #[test]
 fn ticket_supports_try_from_str_and_string() {
-    let node_id = iroh::SecretKey::generate(&mut rand::rng()).public();
-    let ticket_text = Ticket::new(iroh::EndpointAddr::new(node_id)).to_string();
+    let endpoint_id = iroh::SecretKey::generate().public();
+    let ticket_text = Ticket::new(iroh::EndpointAddr::new(endpoint_id)).to_string();
 
     let from_str = Ticket::try_from(ticket_text.as_str()).unwrap();
     let from_string = Ticket::try_from(ticket_text.clone()).unwrap();

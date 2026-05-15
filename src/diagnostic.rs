@@ -13,7 +13,7 @@ use crate::transport::iroh::derive_alpn;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkProbe {
     /// The Node ID this instance presents to the network.
-    pub node_id: String,
+    pub endpoint_id: String,
     /// Relay URLs the endpoint is connected to.
     pub relay_urls: Vec<String>,
     /// Direct IP addresses the endpoint is reachable on.
@@ -57,7 +57,7 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
     let identity = load_or_generate_identity(state).await?;
     let alpn = derive_alpn(None);
 
-    let endpoint = iroh::Endpoint::builder()
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
         .secret_key(identity.secret_key)
         .alpns(vec![alpn])
         .relay_mode(iroh::RelayMode::Default)
@@ -69,7 +69,7 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
     endpoint.online().await;
 
     let addr = endpoint.addr();
-    let node_id = endpoint.id().to_string();
+    let endpoint_id = endpoint.id().to_string();
 
     let relay_urls = addr.relay_urls().map(|u| u.to_string()).collect::<Vec<_>>();
 
@@ -79,7 +79,7 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
     endpoint.close().await;
 
     Ok(NetworkProbe {
-        node_id,
+        endpoint_id,
         relay_urls,
         direct_addresses,
     })
@@ -108,7 +108,7 @@ pub struct SystemReport {
 /// Checks the permissions of the state directory and identity keys.
 pub fn check_security(state: &StateConfig) -> SecurityReport {
     let root_path = state.root().to_path_buf();
-    let key_path = state.root().join("keys").join("node.secret");
+    let key_path = state.root().join("keys").join("endpoint.secret");
 
     #[allow(unused_mut)]
     let mut report = SecurityReport {
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn test_nat_description_logic() {
         let open_nat = NetworkProbe {
-            node_id: "test".to_string(),
+            endpoint_id: "test".to_string(),
             relay_urls: vec!["relay".to_string()],
             direct_addresses: vec!["1.2.3.4".to_string()],
         };
@@ -180,7 +180,7 @@ mod tests {
         );
 
         let restricted_nat = NetworkProbe {
-            node_id: "test".to_string(),
+            endpoint_id: "test".to_string(),
             relay_urls: vec!["relay".to_string()],
             direct_addresses: vec![],
         };
@@ -190,7 +190,7 @@ mod tests {
         );
 
         let no_conn = NetworkProbe {
-            node_id: "test".to_string(),
+            endpoint_id: "test".to_string(),
             relay_urls: vec![],
             direct_addresses: vec![],
         };

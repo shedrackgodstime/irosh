@@ -237,7 +237,7 @@ impl Client {
         options: &ClientOptions,
         (connection, endpoint): (iroh::endpoint::Connection, iroh::Endpoint),
     ) -> Result<Session> {
-        let node_id = connection.remote_id().to_string();
+        let endpoint_id = connection.remote_id().to_string();
         let identity = load_or_generate_identity(options.state()).await?;
         let client_key = identity.ssh_key;
 
@@ -245,7 +245,7 @@ impl Client {
         {
             None
         } else {
-            load_known_server(options.state(), &node_id)?
+            load_known_server(options.state(), &endpoint_id)?
         };
 
         let (send, recv): (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) =
@@ -261,7 +261,7 @@ impl Client {
         let config = Arc::new(client::Config::default());
         let last_disconnect = Arc::new(StdMutex::new(None));
         let handler = ClientHandler::new(
-            node_id,
+            endpoint_id,
             known_server,
             last_disconnect.clone(),
             options.security_config(),

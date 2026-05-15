@@ -28,7 +28,7 @@ pub struct ServerEndpoint {
     pub endpoint: Endpoint,
     /// The endpoint address, used for out-of-band P2P connection sharing.
     pub addr: EndpointAddr,
-    /// The unique identifier of the node (Node ID).
+    /// The unique identifier of the endpoint (Endpoint ID).
     pub endpoint_id: String,
     /// The list of relay server URLs this node is connected to.
     pub relay_urls: Vec<String>,
@@ -42,7 +42,7 @@ pub async fn bind_server_endpoint(
     alpns: Vec<Vec<u8>>,
     relay_mode: RelayMode,
 ) -> Result<ServerEndpoint> {
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
         .secret_key(secret_key)
         .alpns(alpns)
         .relay_mode(relay_mode)
@@ -50,12 +50,12 @@ pub async fn bind_server_endpoint(
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;
 
-    // Wait until the node finishes initial networking setup and is online.
+    // Wait until the endpoint finishes initial networking setup and is online.
     // Timeout prevents blocking forever if relays are unreachable.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), endpoint.online()).await;
 
     let endpoint_addr = endpoint.addr();
-    let node_id = endpoint.id();
+    let endpoint_id = endpoint.id();
 
     let direct_addresses = endpoint_addr
         .ip_addrs()
@@ -67,7 +67,7 @@ pub async fn bind_server_endpoint(
         .collect::<Vec<_>>();
 
     Ok(ServerEndpoint {
-        endpoint_id: node_id.to_string(),
+        endpoint_id: endpoint_id.to_string(),
         endpoint,
         addr: endpoint_addr,
         relay_urls,
@@ -81,7 +81,7 @@ pub async fn bind_client_endpoint(
     alpns: Vec<Vec<u8>>,
     relay_mode: RelayMode,
 ) -> Result<Endpoint> {
-    let endpoint = Endpoint::builder()
+    let endpoint = Endpoint::builder(iroh::endpoint::presets::N0)
         .secret_key(secret_key)
         .alpns(alpns)
         .relay_mode(relay_mode)
@@ -89,7 +89,7 @@ pub async fn bind_client_endpoint(
         .await
         .map_err(|source| TransportError::EndpointBind { source })?;
 
-    // Wait until the node finishes initial networking setup and is online.
+    // Wait until the endpoint finishes initial networking setup and is online.
     // Timeout prevents blocking forever if relays are unreachable.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), endpoint.online()).await;
     Ok(endpoint)

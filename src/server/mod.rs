@@ -263,6 +263,140 @@ struct ActiveWormhole {
     expiry_task: tokio::task::JoinHandle<()>,
 }
 
+#[derive(Clone)]
+struct GossipProtocol(iroh_gossip::net::Gossip);
+
+impl std::fmt::Debug for GossipProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GossipProtocol")
+    }
+}
+
+impl iroh::protocol::ProtocolHandler for GossipProtocol {
+    async fn accept(
+        &self,
+        connection: iroh::endpoint::Connection,
+    ) -> std::result::Result<(), iroh::protocol::AcceptError> {
+        if let Err(e) = self.0.handle_connection(connection).await {
+            tracing::debug!("Gossip connection handling failed: {}", e);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct SshProtocol {
+    is_pairing: bool,
+    state: StateConfig,
+    security: SecurityConfig,
+    config: Arc<server::Config>,
+    authenticator: Arc<dyn Authenticator>,
+    wormhole: Arc<tokio::sync::Mutex<Option<ActiveWormhole>>>,
+    success_tx: tokio::sync::mpsc::Sender<()>,
+    failure_tx: tokio::sync::mpsc::Sender<()>,
+    active_sessions: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl std::fmt::Debug for SshProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SshProtocol {{ is_pairing: {} }}", self.is_pairing)
+    }
+}
+
+impl iroh::protocol::ProtocolHandler for SshProtocol {
+    async fn accept(
+        &self,
+        connection: iroh::endpoint::Connection,
+    ) -> std::result::Result<(), iroh::protocol::AcceptError> {
+        self.active_sessions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        struct SessionGuard(Arc<std::sync::atomic::AtomicUsize>);
+        impl Drop for SessionGuard {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let _guard = SessionGuard(self.active_sessions.clone());
+
+        tracing::debug!("P2P connection established: {:?}", connection.remote_id());
+
+        let (send, recv) = match connection.accept_bi().await {
+            Ok(pair) => pair,
+            Err(err) => {
+                warn!("Failed to establish bi-directional stream: {}", err);
+                return Ok(());
+            }
+        };
+
+        info!("Established bi-directional SSH stream over Irosh");
+
+        let shell_state = ConnectionShellState::new(self.state.root().to_path_buf());
+        spawn_side_stream_listener(connection, shell_state.clone());
+
+        let stream = IrohDuplex::new(send, recv);
+        let mut session_authenticator = self.authenticator.clone();
+        let mut session_config = self.config.clone();
+
+        if self.is_pairing {
+            let mut wh_lock = self.wormhole.lock().await;
+            if let Some(wh) = wh_lock.as_mut() {
+                info!("Pairing connection established via wormhole code.");
+                let vault =
+                    crate::storage::load_all_authorized_clients(&self.state).unwrap_or_default();
+                let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
+
+                let pairing_auth = crate::auth::UnifiedAuthenticator::with_tracking(
+                    self.state.clone(),
+                    self.security.host_key_policy,
+                    keys,
+                    wh.password.clone(),
+                    crate::auth::PairingMonitor {
+                        success_flag: wh.success.clone(),
+                        failed_attempts: wh.failed_attempts.clone(),
+                        success_tx: Some(self.success_tx.clone()),
+                        failure_tx: Some(self.failure_tx.clone()),
+                    },
+                );
+
+                let pairing_methods = pairing_auth.supported_methods();
+                let mut pairing_method_set = russh::MethodSet::empty();
+                for m in &pairing_methods {
+                    match m {
+                        crate::auth::AuthMethod::PublicKey => {
+                            pairing_method_set.push(russh::MethodKind::PublicKey)
+                        }
+                        crate::auth::AuthMethod::Password => {
+                            pairing_method_set.push(russh::MethodKind::Password)
+                        }
+                    }
+                }
+                session_config = Arc::new(russh::server::Config {
+                    auth_rejection_time: self.config.auth_rejection_time,
+                    keys: self.config.keys.clone(),
+                    methods: pairing_method_set,
+                    ..Default::default()
+                });
+
+                session_authenticator = Arc::new(pairing_auth);
+            } else {
+                warn!("Pairing connection attempted but no wormhole active.");
+                return Ok(());
+            }
+        }
+
+        let handler = ServerHandler::new(session_authenticator, shell_state);
+        let config = session_config;
+
+        tracing::debug!("Starting SSH session task");
+        if let Err(err) = server::run_stream(config, stream, handler).await {
+            warn!("Server session error: {:?}", err);
+        }
+        tracing::debug!("SSH session task finished");
+
+        Ok(())
+    }
+}
+
 impl Server {
     /// Inspects the server's readiness details without binding to the network.
     ///
@@ -324,10 +458,7 @@ impl Server {
     /// normal shutdown path. Individual session failures are logged and do not
     /// stop the accept loop.
     pub async fn run(mut self) -> Result<()> {
-        use tokio::task::JoinSet;
         info!("Server actively listening for connections.");
-
-        let mut sessions = JoinSet::new();
 
         let (ipc_shutdown_tx, ipc_shutdown_rx) = tokio::sync::mpsc::channel(1);
 
@@ -342,172 +473,48 @@ impl Server {
             });
         }
 
-        let mut wormhole: Option<ActiveWormhole> = None;
+        let wormhole = Arc::new(tokio::sync::Mutex::new(None));
         let (success_tx, mut success_rx) = tokio::sync::mpsc::channel(1);
         let (failure_tx, mut failure_rx) = tokio::sync::mpsc::channel(1);
+        let active_sessions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let primary_alpn = crate::transport::iroh::derive_alpn(self.secret.as_deref());
+        let pairing_alpn = crate::transport::wormhole::PAIRING_ALPN.to_vec();
+
+        let base_protocol = SshProtocol {
+            is_pairing: false,
+            state: self.state.clone(),
+            security: self.security,
+            config: self.config.clone(),
+            authenticator: self.authenticator.clone(),
+            wormhole: wormhole.clone(),
+            success_tx: success_tx.clone(),
+            failure_tx: failure_tx.clone(),
+            active_sessions: active_sessions.clone(),
+        };
+
+        let mut pairing_protocol = base_protocol.clone();
+        pairing_protocol.is_pairing = true;
+
+        let router = iroh::protocol::Router::builder(self.endpoint.clone())
+            .accept(primary_alpn, base_protocol)
+            .accept(pairing_alpn, pairing_protocol)
+            .accept(iroh_gossip::ALPN, GossipProtocol(self.gossip.clone()))
+            .spawn();
+
         let mut shutdown_requested = false;
 
         loop {
-            if shutdown_requested && sessions.is_empty() {
+            if shutdown_requested && active_sessions.load(std::sync::atomic::Ordering::Relaxed) == 0
+            {
                 break;
             }
+
             tokio::select! {
                 _ = self.shutdown_rx.recv() => {
                     tracing::debug!("Server received explicit shutdown signal.");
                     shutdown_requested = true;
                     let _ = ipc_shutdown_tx.send(()).await;
-                }
-                incoming = self.endpoint.accept(), if !shutdown_requested => {
-                    let Some(incoming) = incoming else {
-                        tracing::debug!("Server endpoint closed, no more incoming connections.");
-                        break;
-                    };
-
-                    tracing::debug!("Server accepted new incoming connection");
-                    let mut accepting = match incoming.accept() {
-                        Ok(accepting) => accepting,
-                        Err(err) => {
-                            warn!("Incoming connection rejected before ALPN exchange: {err}");
-                            continue;
-                        }
-                    };
-
-                    let alpn = match accepting.alpn().await {
-                        Ok(alpn) => alpn,
-                        Err(err) => {
-                            warn!("Failed ALPN read: {}", err);
-                            continue;
-                        }
-                    };
-
-                    if alpn == iroh_gossip::ALPN {
-                        let gossip = self.gossip.clone();
-                        tokio::spawn(async move {
-                            match accepting.await {
-                                Ok(conn) => {
-                                    if let Err(e) = gossip.handle_connection(conn).await {
-                                        tracing::debug!("Gossip connection handling failed: {}", e);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::debug!("Failed to confirm Gossip connection: {}", e);
-                                }
-                            }
-                        });
-                        continue;
-                    }
-
-                    let primary_alpn = crate::transport::iroh::derive_alpn(self.secret.as_deref());
-                    let is_pairing_alpn = alpn == crate::transport::wormhole::PAIRING_ALPN;
-
-                    if alpn != primary_alpn && !is_pairing_alpn {
-                        warn!(
-                            "Ignoring unexpected ALPN: {}",
-                            String::from_utf8_lossy(&alpn)
-                        );
-                        continue;
-                    }
-
-                    let conn = match accepting.await {
-                        Ok(conn) => conn,
-                        Err(err) => {
-                            warn!("P2P connection handshake failed: {}", err);
-                            continue;
-                        }
-                    };
-
-                    tracing::debug!("P2P connection established: {:?}", conn.remote_id());
-
-                    let (send, recv) = match conn.accept_bi().await {
-                        Ok(pair) => pair,
-                        Err(err) => {
-                            warn!("Failed to establish bi-directional stream: {}", err);
-                            continue;
-                        }
-                    };
-
-                    info!("Established bi-directional SSH stream over Irosh");
-
-                    let shell_state = ConnectionShellState::new(self.state.root().to_path_buf());
-                    spawn_side_stream_listener(conn, shell_state.clone());
-
-                    let stream = IrohDuplex::new(send, recv);
-                    let mut session_authenticator = self.authenticator.clone();
-                    // By default, use the server-wide config (pre-built method set).
-                    let mut session_config = self.config.clone();
-
-                    if is_pairing_alpn {
-                        if let Some(wh) = &wormhole {
-                            info!("Pairing connection established via wormhole code.");
-
-                            let vault = crate::storage::load_all_authorized_clients(&self.state).unwrap_or_default();
-                            let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
-
-                            let pairing_auth = crate::auth::UnifiedAuthenticator::with_tracking(
-                                self.state.clone(),
-                                self.security.host_key_policy,
-                                keys,
-                                wh.password.clone(),
-                                crate::auth::PairingMonitor {
-                                    success_flag: wh.success.clone(),
-                                    failed_attempts: wh.failed_attempts.clone(),
-                                    success_tx: Some(success_tx.clone()),
-                                    failure_tx: Some(failure_tx.clone()),
-                                },
-                            );
-
-                            // CRITICAL: Build a per-session russh::Config that advertises
-                            // the correct auth methods for THIS connection. The server-wide
-                            // config may not include Password if no permanent password was
-                            // set at startup, but this session may have a temp password.
-                            let pairing_methods = pairing_auth.supported_methods();
-                            let mut pairing_method_set = russh::MethodSet::empty();
-                            for m in &pairing_methods {
-                                match m {
-                                    crate::auth::AuthMethod::PublicKey => pairing_method_set.push(russh::MethodKind::PublicKey),
-                                    crate::auth::AuthMethod::Password => pairing_method_set.push(russh::MethodKind::Password),
-                                }
-                            }
-                            session_config = Arc::new(russh::server::Config {
-                                auth_rejection_time: self.config.auth_rejection_time,
-                                keys: self.config.keys.clone(),
-                                methods: pairing_method_set,
-                                ..Default::default()
-                            });
-
-                            session_authenticator = Arc::new(pairing_auth);
-                        } else {
-                            warn!("Pairing connection attempted but no wormhole active.");
-                            continue;
-                        }
-                    }
-
-                    let handler = ServerHandler::new(
-                        session_authenticator,
-                        shell_state,
-                    );
-
-                    let config = session_config;
-                    sessions.spawn(async move {
-                        tracing::debug!("Starting SSH session task");
-                        if let Err(err) = server::run_stream(config, stream, handler).await {
-                            warn!("Server session error: {:?}", err);
-                        }
-                        tracing::debug!("SSH session task finished");
-                    });
-                }
-                res = sessions.join_next(), if !sessions.is_empty() => {
-                    if let Some(res) = res {
-                        match res {
-                            Ok(()) => {},
-                            Err(err) if err.is_cancelled() => {
-                                tracing::debug!("SSH session task was cancelled.");
-                            }
-                            Err(err) => {
-                                warn!("SSH session task panicked or failed: {:?}", err);
-                            }
-                        }
-                    }
                 }
                 msg = self.control_rx.recv() => {
                     if let Some(msg) = msg {
@@ -523,14 +530,13 @@ impl Server {
                                     code, persistent
                                 );
 
-                                // Abort existing wormhole if any.
-                                if let Some(wh) = wormhole.take() {
+                                let mut wh_lock = wormhole.lock().await;
+                                if let Some(wh) = wh_lock.take() {
                                     wh.task.abort();
                                     wh.expiry_task.abort();
-                                    let code = wh.code.clone();
+                                    let old_code = wh.code.clone();
                                     tokio::spawn(async move {
-                                        let _ =
-                                            crate::transport::wormhole::unpublish_ticket(&code).await;
+                                        let _ = crate::transport::wormhole::unpublish_ticket(&old_code).await;
                                     });
                                 }
 
@@ -549,8 +555,6 @@ impl Server {
                                     }
                                 });
 
-                                // 24-hour expiry timer: automatically disables
-                                // the wormhole if no pairing occurs.
                                 let expiry_control = self.control_tx.clone();
                                 let expiry_task = tokio::spawn(async move {
                                     tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60))
@@ -562,9 +566,9 @@ impl Server {
                                         .await;
                                 });
 
-                                wormhole = Some(ActiveWormhole {
+                                *wh_lock = Some(ActiveWormhole {
                                     code,
-                                    password: password.clone(),
+                                    password,
                                     persistent,
                                     task,
                                     failed_attempts: Arc::new(AtomicU32::new(0)),
@@ -575,24 +579,25 @@ impl Server {
                             }
                             ipc::InternalCommand::DisableWormhole { tx } => {
                                 info!("Wormhole disabled via IPC");
-                                if let Some(wh) = wormhole.take() {
+                                let mut wh_lock = wormhole.lock().await;
+                                if let Some(wh) = wh_lock.take() {
                                     wh.task.abort();
                                     wh.expiry_task.abort();
-                                    let code = wh.code.clone();
+                                    let old_code = wh.code.clone();
                                     tokio::spawn(async move {
-                                        let _ =
-                                            crate::transport::wormhole::unpublish_ticket(&code).await;
+                                        let _ = crate::transport::wormhole::unpublish_ticket(&old_code).await;
                                     });
                                 }
                                 let _ = tx.send(ipc::IpcResponse::Ok);
                             }
                             ipc::InternalCommand::GetStatus { tx } => {
+                                let wh_lock = wormhole.lock().await;
                                 let _ = tx.send(ipc::IpcResponse::Status(ipc::DaemonStatus {
                                     endpoint_id: self.endpoint.id().to_string(),
                                     ticket: self.ticket.to_string(),
-                                    wormhole_active: wormhole.is_some(),
-                                    wormhole_code: wormhole.as_ref().map(|w| w.code.clone()),
-                                    active_sessions: sessions.len(),
+                                    wormhole_active: wh_lock.is_some(),
+                                    wormhole_code: wh_lock.as_ref().map(|w| w.code.clone()),
+                                    active_sessions: active_sessions.load(std::sync::atomic::Ordering::Relaxed),
                                 }));
                             }
                             ipc::InternalCommand::Shutdown { tx } => {
@@ -602,10 +607,13 @@ impl Server {
                                 let _ = tx.send(ipc::IpcResponse::Ok);
                             }
                         }
+                    } else {
+                        break;
                     }
                 }
                 _ = success_rx.recv() => {
-                    if let Some(wh) = &wormhole {
+                    let mut wh_lock = wormhole.lock().await;
+                    if let Some(wh) = wh_lock.as_ref() {
                         if !wh.persistent {
                             info!("Wormhole pairing successful. Auto-burning.");
                             wh.task.abort();
@@ -616,16 +624,17 @@ impl Server {
                             });
 
                             if self.shutdown_on_wormhole_success {
-                                info!("Shutdown on wormhole success requested. Server will exit after all sessions close.");
+                                info!("Shutdown on wormhole success requested.");
                                 shutdown_requested = true;
                                 let _ = ipc_shutdown_tx.send(()).await;
                             }
-                            wormhole = None;
+                            *wh_lock = None;
                         }
                     }
                 }
                 _ = failure_rx.recv() => {
-                    if let Some(wh) = &wormhole {
+                    let mut wh_lock = wormhole.lock().await;
+                    if let Some(wh) = wh_lock.take() {
                         warn!("Wormhole rate limit exceeded. Burning wormhole.");
                         wh.task.abort();
                         wh.expiry_task.abort();
@@ -633,36 +642,23 @@ impl Server {
                         tokio::spawn(async move {
                             let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
                         });
-                        wormhole = None;
                     }
                 }
             }
 
-            if shutdown_requested && sessions.is_empty() {
+            if shutdown_requested && active_sessions.load(std::sync::atomic::Ordering::Relaxed) == 0
+            {
                 info!("Shutdown conditions met. Exiting server loop.");
                 break;
             }
         }
 
-        tracing::debug!(
-            "Server loop exiting, waiting for {} sessions to finish",
-            sessions.len()
-        );
-        while let Some(res) = sessions.join_next().await {
-            match res {
-                Ok(()) => {}
-                Err(err) if err.is_cancelled() => {
-                    tracing::debug!("SSH session task was cancelled during shutdown.");
-                }
-                Err(err) => {
-                    warn!(
-                        "SSH session task panicked or failed during shutdown: {:?}",
-                        err
-                    );
-                }
-            }
+        tracing::debug!("Server loop exiting, waiting for sessions to finish");
+        while active_sessions.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
 
+        let _ = router.shutdown().await;
         self.endpoint.close().await;
         info!("Server shut down gracefully.");
         Ok(())

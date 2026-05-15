@@ -32,12 +32,12 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
 
     // 2. Identity
     if let Ok(identity) = storage::load_or_generate_identity(&state).await {
-        let node_id = identity.node_id();
+        let endpoint_id = identity.endpoint_id();
         let addr = irosh::iroh::EndpointAddr::from(identity.secret_key.public());
         let ticket = irosh::transport::ticket::Ticket::new(addr);
 
         eprintln!("\n  Local Identity");
-        eprintln!("  Node ID:          {}", &node_id[..16]);
+        eprintln!("  Endpoint ID:      {}", &endpoint_id[..16]);
         eprintln!(
             "  Public Ticket:    {}",
             crate::display::shorten_ticket(&ticket)

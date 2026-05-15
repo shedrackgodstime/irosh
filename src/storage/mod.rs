@@ -17,7 +17,8 @@ pub(crate) mod utils;
 
 pub use config::{load_config, save_config};
 pub use keys::{
-    NodeIdentity, delete_secret_key, load_or_generate_identity, load_secret_key, save_secret_key,
+    EndpointIdentity, delete_secret_key, load_or_generate_identity, load_secret_key,
+    save_secret_key,
 };
 pub use peers::{PeerProfile, delete_peer, list_peers, load_peer, rename_peer, save_peer};
 pub use shadow::{delete_shadow_file, load_shadow_file, write_shadow_file};
@@ -40,7 +41,7 @@ pub fn reset_vault(state: &crate::config::StateConfig) -> crate::error::Result<(
 /// Rotates the node's identity by deleting the existing secret key.
 pub async fn rotate_identity(
     state: &crate::config::StateConfig,
-) -> crate::error::Result<NodeIdentity> {
+) -> crate::error::Result<EndpointIdentity> {
     keys::delete_secret_key(state)?;
     keys::load_or_generate_identity(state).await
 }

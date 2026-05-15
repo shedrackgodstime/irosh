@@ -26,44 +26,44 @@ fn ensure_key_dir(state: &StateConfig) -> Result<()> {
 
 /// Holds the unified cryptographic identity for both Iroh and SSH layers.
 ///
-/// The same seed material is used to derive both the Iroh node identity and
+/// The same seed material is used to derive both the Iroh endpoint identity and
 /// the SSH host/client key used by the library.
-pub struct NodeIdentity {
+pub struct EndpointIdentity {
     /// The Iroh networking secret key.
     pub secret_key: SecretKey,
     /// The SSH protocol private key.
     pub ssh_key: PrivateKey,
 }
 
-impl fmt::Debug for NodeIdentity {
+impl fmt::Debug for EndpointIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NodeIdentity")
-            .field("node_id", &self.node_id())
+        f.debug_struct("EndpointIdentity")
+            .field("endpoint_id", &self.endpoint_id())
             .field("secret_key", &"<redacted>")
             .field("ssh_key", &"<redacted>")
             .finish()
     }
 }
 
-impl NodeIdentity {
-    /// Returns the public Node ID for this identity.
-    pub fn node_id(&self) -> String {
+impl EndpointIdentity {
+    /// Returns the public Endpoint ID for this identity.
+    pub fn endpoint_id(&self) -> String {
         self.secret_key.public().to_string()
     }
 }
 
-const SECRET_KEY_FILE: &str = "keys/node.secret";
+const SECRET_KEY_FILE: &str = "keys/endpoint.secret";
 
 /// Loads the local identity from storage, or generates a new one if none exists.
 ///
-/// This ensures that the Iroh node ID and the SSH host key are derived from the
+/// This ensures that the Iroh endpoint ID and the SSH host key are derived from the
 /// same secret seed for self-authenticating connections.
 ///
 /// # Errors
 ///
 /// Returns an error if the key directory cannot be created, if the persisted
 /// secret cannot be read or parsed, or if a generated secret cannot be written.
-pub async fn load_or_generate_identity(state: &StateConfig) -> Result<NodeIdentity> {
+pub async fn load_or_generate_identity(state: &StateConfig) -> Result<EndpointIdentity> {
     let state = state.clone();
     task::spawn_blocking(move || load_or_generate_identity_blocking(&state))
         .await
@@ -94,7 +94,7 @@ pub fn load_secret_key(state: &StateConfig) -> Result<SecretKey> {
         path: path.clone(),
         source,
     })?;
-    let key = SecretKey::from_str(raw.trim()).map_err(|e| StorageError::NodeSecretInvalid {
+    let key = SecretKey::from_str(raw.trim()).map_err(|e| StorageError::EndpointSecretInvalid {
         path: path.clone(),
         details: e.to_string(),
         source: Box::new(e),
@@ -102,7 +102,7 @@ pub fn load_secret_key(state: &StateConfig) -> Result<SecretKey> {
     Ok(key)
 }
 
-fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<NodeIdentity> {
+fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<EndpointIdentity> {
     ensure_key_dir(state)?;
 
     let path = state.root().join(SECRET_KEY_FILE);
@@ -112,13 +112,13 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<NodeIdentit
             path: path.clone(),
             source,
         })?;
-        SecretKey::from_str(raw.trim()).map_err(|e| StorageError::NodeSecretInvalid {
+        SecretKey::from_str(raw.trim()).map_err(|e| StorageError::EndpointSecretInvalid {
             path: path.clone(),
             details: e.to_string(),
             source: Box::new(e),
         })?
     } else {
-        let secret_key = SecretKey::generate(&mut rand::rng());
+        let secret_key = SecretKey::generate();
         let hex = secret_key
             .to_bytes()
             .iter()
@@ -133,14 +133,14 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<NodeIdentit
     let keypair = Ed25519Keypair::from_seed(&seed);
     let ssh_key = PrivateKey::from(keypair);
 
-    Ok(NodeIdentity {
+    Ok(EndpointIdentity {
         secret_key,
         ssh_key,
     })
 }
 /// Deletes the local secret key from storage.
 ///
-/// This is used to "rotate" the node identity. Returns `true` if a file was deleted,
+/// This is used to "rotate" the endpoint identity. Returns `true` if a file was deleted,
 /// `false` if it didn't exist.
 pub fn delete_secret_key(state: &StateConfig) -> Result<bool> {
     let path = state.root().join(SECRET_KEY_FILE);

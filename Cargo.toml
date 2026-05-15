@@ -34,11 +34,11 @@ console = ["dep:console"]
 
 [dependencies]
 # iroh: core P2P transport, endpoint management, hole-punching.
-iroh = { version = "0.96.0", optional = true, features = ["address-lookup-mdns", "address-lookup-pkarr-dht"] }
-iroh-gossip = { version = "0.96.0", optional = true, features = ["net"] }
+iroh = { version = "1.0.0-rc.0", optional = true }
+iroh-gossip = { version = "0.99.0", optional = true, features = ["net"] }
 
 # iroh-tickets: handling the official human-readable tickets (endpoint...).
-iroh-tickets = { version = "0.3.0", optional = true }
+iroh-tickets = { version = "1.0.0-rc.0", optional = true }
 pkarr = "5.0.2"
 
 # portable-pty: cross-platform PTY allocation and process spawning.

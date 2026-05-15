@@ -135,8 +135,8 @@ pub enum StorageError {
         source: tokio::task::JoinError,
     },
 
-    #[error("invalid node secret at {path}: {details}")]
-    NodeSecretInvalid {
+    #[error("invalid endpoint secret at {path}: {details}")]
+    EndpointSecretInvalid {
         path: PathBuf,
         details: String,
         #[source]

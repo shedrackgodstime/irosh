@@ -51,11 +51,11 @@ impl Ui {
         prompts::input(prompt, default)
     }
 
-    pub fn machine_identity(node_id: &str, fingerprint: &str, ticket: &str, label: &str) {
+    pub fn machine_identity(endpoint_id: &str, fingerprint: &str, ticket: &str, label: &str) {
         use console::style;
         eprintln!("\n  Machine Identity ({})", label);
         eprintln!("  ----------------------------------------------------");
-        eprintln!("  Node ID:     {}", node_id);
+        eprintln!("  Endpoint ID: {}", endpoint_id);
         eprintln!("  Fingerprint: {}", fingerprint);
         eprintln!("  Ticket:      {}", style(ticket).cyan().bold());
         eprintln!("  ----------------------------------------------------\n");

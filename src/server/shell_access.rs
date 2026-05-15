@@ -7,7 +7,7 @@ use crate::error::{IroshError, Result, ServerError};
 
 pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Result<PathBuf> {
     task::spawn_blocking(move || {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let link = format!("/proc/{pid}/cwd");
             let cwd = std::fs::read_link(&link).unwrap_or(fallback_dir);
@@ -129,7 +129,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 }
             }
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         {
             Ok(fallback_dir)
         }
@@ -144,7 +144,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
 }
 
 pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: `pre_exec` is unsafe because it runs in the child process after `fork` but
         // before `exec`. We must only use async-signal-safe functions. `libc::setns`,
@@ -166,7 +166,7 @@ pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn join_linux_namespace(ns_path: &str, self_path: &str, nstype: i32) -> std::io::Result<()> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
@@ -186,10 +186,10 @@ fn join_linux_namespace(ns_path: &str, self_path: &str, nstype: i32) -> std::io:
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn namespace_matches(ns_path: &str, self_path: &str) -> std::io::Result<bool> {
-    use std::os::linux::fs::MetadataExt;
+    use std::os::unix::fs::MetadataExt;
     let target = std::fs::metadata(ns_path)?;
     let current = std::fs::metadata(self_path)?;
-    Ok(target.st_ino() == current.st_ino())
+    Ok(target.ino() == current.ino())
 }

@@ -130,12 +130,12 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 #[derive(serde::Serialize)]
                 struct PeerAddResponse {
                     name: String,
-                    node_id: String,
+                    endpoint_id: String,
                     ticket: String,
                 }
                 crate::output::print_success(PeerAddResponse {
                     name: target_name,
-                    node_id: ticket_parsed.to_addr().id.to_string(),
+                    endpoint_id: ticket_parsed.to_addr().id.to_string(),
                     ticket: ticket_parsed.to_string(),
                 });
                 return Ok(());
@@ -210,13 +210,13 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     #[derive(serde::Serialize)]
                     struct PeerDetailResponse {
                         name: String,
-                        node_id: String,
+                        endpoint_id: String,
                         ticket: String,
                         relay: Option<String>,
                     }
                     crate::output::print_success(PeerDetailResponse {
                         name: target_name.clone(),
-                        node_id: addr.id.to_string(),
+                        endpoint_id: addr.id.to_string(),
                         ticket: p.ticket.to_string(),
                         relay: relay.clone(),
                     });
@@ -225,8 +225,8 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
 
                 println!("\n  Peer Detail: {}", target_name);
                 println!("  ----------------------------------------------------");
-                println!("  Alias:     {}", target_name);
-                println!("  Node ID:   {}", addr.id);
+                println!("  Alias:       {}", target_name);
+                println!("  Endpoint ID: {}", addr.id);
                 println!("  Ticket:    {}", p.ticket);
 
                 if let Some(r) = relay {

@@ -19,14 +19,14 @@ pub async fn exec(action: IdentityAction, ctx: &CliContext) -> Result<()> {
             if ctx.args.json {
                 #[derive(serde::Serialize)]
                 struct IdentityShowResponse {
-                    node_id: String,
+                    endpoint_id: String,
                     fingerprint: String,
                     ticket: String,
                     kind: &'static str,
                 }
 
                 crate::output::print_success(IdentityShowResponse {
-                    node_id: ready.endpoint_id().to_string(),
+                    endpoint_id: ready.endpoint_id().to_string(),
                     fingerprint: fingerprint.to_string(),
                     ticket: ready.ticket().to_string(),
                     kind: "local",
@@ -46,16 +46,16 @@ pub async fn exec(action: IdentityAction, ctx: &CliContext) -> Result<()> {
                 "IDENTITY ROTATION",
                 "This will permanently delete your current cryptographic keys.",
             );
-            Ui::info("      - Your Node ID and Ticket will change immediately.");
+            Ui::info("      - Your Endpoint ID and Ticket will change immediately.");
             Ui::info("      - All trusted relationships with other servers will be broken.");
             Ui::info("      - You will need to re-pair with all existing devices.");
 
             if Ui::danger_confirm("Type ROTATE to confirm this destructive action", "ROTATE") {
                 let identity = storage::rotate_identity(&state).await?;
-                let node_id = identity.node_id();
+                let endpoint_id = identity.endpoint_id();
 
                 Ui::success("New identity generated and saved.");
-                Ui::info(&format!("New Node ID: {}", node_id));
+                Ui::info(&format!("New Endpoint ID: {}", endpoint_id));
                 Ui::info("Don't forget to update your saved tickets on other machines.");
             }
         }

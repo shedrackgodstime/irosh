@@ -98,12 +98,12 @@ pub async fn exec(
     if ctx.args.json {
         #[derive(serde::Serialize)]
         struct HostIdentityJson {
-            node_id: String,
+            endpoint_id: String,
             fingerprint: String,
             ticket: String,
         }
         crate::output::print_success(HostIdentityJson {
-            node_id: ready.endpoint_id().to_string(),
+            endpoint_id: ready.endpoint_id().to_string(),
             fingerprint: fingerprint.to_string(),
             ticket: ready.ticket.to_string(),
         });

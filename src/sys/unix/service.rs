@@ -1,8 +1,12 @@
 //! Unix implementation of service management (systemd and launchd).
 
-use crate::error::{IroshError, Result, ServerError};
+use crate::error::{IroshError, Result};
 use crate::sys::service::{ServiceAction, ServiceStatus};
 use std::path::PathBuf;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::error::ServerError;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use tracing::info;
 
 pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
@@ -92,7 +96,9 @@ pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Re
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (action, state);
-        Err(IroshError::PlatformNotSupported)
+        Err(IroshError::PlatformNotSupported(
+            "Service management is not supported on this platform".to_string(),
+        ))
     }
 }
 
@@ -383,7 +389,9 @@ pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (follow, state);
-        Err(IroshError::PlatformNotSupported)
+        Err(IroshError::PlatformNotSupported(
+            "Log viewing is not supported on this platform".to_string(),
+        ))
     }
 }
 

@@ -134,12 +134,20 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     let transport =
         bind_server_endpoint(identity.secret_key, alpns, options.relay_mode.clone()).await?;
 
-    // Generate a stable ticket by using only NodeId and Relay information.
+    // Generate a stable ticket by using only EndpointId and Relay information.
     // Transient direct addresses are omitted to ensure the ticket string
     // remains identical across server restarts and network changes.
     let mut stable_addr = iroh::EndpointAddr::new(transport.addr.id);
     for relay_url in transport.addr.relay_urls() {
         stable_addr = stable_addr.with_relay_url(relay_url.clone());
+    }
+
+    if matches!(options.relay_mode, iroh::RelayMode::Disabled) {
+        // For local testing without relays, we MUST include direct addresses
+        // otherwise discovery will fail.
+        for addr in transport.addr.ip_addrs() {
+            stable_addr = stable_addr.with_ip_addr(*addr);
+        }
     }
 
     let startup = ServerReady {
