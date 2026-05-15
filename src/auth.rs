@@ -5,16 +5,16 @@
 //! logic. The CLI ships with built-in implementations for common use cases.
 //!
 //! Under the **C-CALLER-CONTROL** principle, the library never decides **how** to
-//! validate credentials — it only calls the trait methods and respects the result.
+//! validate credentials - it only calls the trait methods and respects the result.
 //!
 //! # Built-in Backends
 //!
-//! - [`KeyOnlyAuth`] — The default. Replicates the existing TOFU/Strict/AcceptAll
+//! - [`KeyOnlyAuth`] - The default. Replicates the existing TOFU/Strict/AcceptAll
 //!   key-based authentication. Zero change for existing users.
-//! - [`PasswordAuth`] — A single shared password for all connections. Good for
+//! - [`PasswordAuth`] - A single shared password for all connections. Good for
 //!   personal or simple setups.
-//! - [`CombinedAuth`] — Accepts either public keys or passwords.
-//! - [`UnifiedAuthenticator`] — The master security policy for Irosh V2. Manages the
+//! - [`CombinedAuth`] - Accepts either public keys or passwords.
+//! - [`UnifiedAuthenticator`] - The master security policy for Irosh V2. Manages the
 //!   precedence between established trust, node passwords, and temporary wormhole codes.
 
 use std::fmt;
@@ -171,7 +171,7 @@ impl Authenticator for KeyOnlyAuth {
             return Ok(false);
         }
 
-        // No authorized keys yet — check policy for new keys.
+        // No authorized keys yet - check policy for new keys.
         match self.policy {
             HostKeyPolicy::Strict => {
                 warn!(%fingerprint, "Strict policy: No pre-authorized keys found. Rejecting connection.");
@@ -199,7 +199,7 @@ impl Authenticator for KeyOnlyAuth {
 /// Simple password authentication with a single shared password.
 ///
 /// This is intended for personal or simple setups where one password
-/// protects the server. The username is ignored — any user with the
+/// protects the server. The username is ignored - any user with the
 /// correct password is accepted.
 ///
 /// # Example (CLI)
@@ -713,7 +713,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // UnifiedAuthenticator — wormhole / temp-password security paths
+    // UnifiedAuthenticator - wormhole / temp-password security paths
     // -----------------------------------------------------------------------
 
     /// Helper: generate a deterministic ed25519 public key from a seed byte.
@@ -760,7 +760,7 @@ mod tests {
         let vault = crate::storage::load_all_authorized_clients(&state)?;
         assert_eq!(vault.len(), 1, "paired key must be persisted to vault");
 
-        // Step 4: the key is now trusted — subsequent connection must succeed
+        // Step 4: the key is now trusted - subsequent connection must succeed
         // without a password, even on a freshly loaded authenticator.
         let auth2 = UnifiedAuthenticator::new(
             state.clone(),
@@ -810,7 +810,7 @@ mod tests {
     }
 
     /// Under Strict policy with a non-empty vault, unknown keys must be
-    /// rejected immediately — no password challenge offered.
+    /// rejected immediately - no password challenge offered.
     #[test]
     fn unified_auth_strict_policy_rejects_stranger_immediately() -> crate::Result<()> {
         let state = temp_state("unified-strict-reject");
@@ -833,7 +833,7 @@ mod tests {
     }
 
     /// `supported_methods` must dynamically include `Password` when and
-    /// only when a temp password hash is active — i.e. the method set must
+    /// only when a temp password hash is active - i.e. the method set must
     /// match the live security state.
     #[test]
     fn unified_auth_advertises_password_method_when_temp_hash_present() -> crate::Result<()> {
@@ -862,7 +862,7 @@ mod tests {
     }
 
     /// When the vault is non-empty but no password is configured, an unknown
-    /// key must be rejected — there is no mechanism to admit it.
+    /// key must be rejected - there is no mechanism to admit it.
     #[test]
     fn unified_auth_claimed_vault_no_password_rejects_unknown_key() -> crate::Result<()> {
         let state = temp_state("unified-claimed-vault");
@@ -873,7 +873,7 @@ mod tests {
         let bootstrap = UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], None);
         assert!(bootstrap.check_public_key("user", &existing_key)?);
 
-        // Load vault keys into a fresh authenticator — no password.
+        // Load vault keys into a fresh authenticator - no password.
         let vault = crate::storage::load_all_authorized_clients(&state)?;
         let auth = UnifiedAuthenticator::new(
             state,

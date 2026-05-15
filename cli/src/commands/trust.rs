@@ -85,18 +85,41 @@ pub async fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
             match Ui::select("Select a device to revoke", &items) {
                 Some(idx) => {
                     let (id, _) = &keys[idx];
-                    if Ui::danger_confirm(
-                        &format!("Are you sure you want to revoke trust for '{}'?", id),
-                        "yes",
-                    ) {
+                    if ctx.args.json
+                        || Ui::danger_confirm(
+                            &format!("Are you sure you want to revoke trust for '{}'?", id),
+                            "yes",
+                        )
+                    {
                         storage::revoke_key(&state, id)?;
+
+                        if ctx.args.json {
+                            #[derive(serde::Serialize)]
+                            struct TrustRevokeResponse {
+                                identity: String,
+                            }
+                            crate::output::print_success(TrustRevokeResponse {
+                                identity: id.clone(),
+                            });
+                            return Ok(());
+                        }
+
                         Ui::success(&format!(
                             "Identity '{}' has been removed from the vault.",
                             id
                         ));
                     }
                 }
-                None => Ui::info("Cancelled."),
+                None => {
+                    if ctx.args.json {
+                        crate::output::print_error(
+                            "No identity specified for revocation",
+                            "missing_args",
+                        );
+                        return Ok(());
+                    }
+                    Ui::info("Cancelled.");
+                }
             }
         }
         TrustAction::Reset => {

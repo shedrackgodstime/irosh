@@ -25,7 +25,7 @@ pub(crate) mod transfer;
 use russh::server;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use tracing::{info, warn};
 
 use crate::auth::Authenticator;
@@ -253,6 +253,16 @@ impl ServerShutdown {
     }
 }
 
+struct ActiveWormhole {
+    code: String,
+    password: Option<String>,
+    persistent: bool,
+    task: tokio::task::JoinHandle<()>,
+    failed_attempts: Arc<AtomicU32>,
+    success: Arc<std::sync::atomic::AtomicBool>,
+    expiry_task: tokio::task::JoinHandle<()>,
+}
+
 impl Server {
     /// Inspects the server's readiness details without binding to the network.
     ///
@@ -319,24 +329,17 @@ impl Server {
 
         let mut sessions = JoinSet::new();
 
+        let (ipc_shutdown_tx, ipc_shutdown_rx) = tokio::sync::mpsc::channel(1);
+
         // Spawn the IPC control server if enabled.
         if self.ipc_enabled {
             let ipc_server =
                 ipc::IpcServer::new(self.state.root().to_path_buf(), self.control_tx.clone());
             tokio::spawn(async move {
-                if let Err(e) = ipc_server.run().await {
+                if let Err(e) = ipc_server.run(ipc_shutdown_rx).await {
                     warn!("IPC server failed: {}", e);
                 }
             });
-        }
-        struct ActiveWormhole {
-            code: String,
-            password: Option<String>,
-            persistent: bool,
-            task: tokio::task::JoinHandle<()>,
-            failed_attempts: Arc<AtomicU32>,
-            success: Arc<std::sync::atomic::AtomicBool>,
-            expiry_task: tokio::task::JoinHandle<()>,
         }
 
         let mut wormhole: Option<ActiveWormhole> = None;
@@ -352,6 +355,7 @@ impl Server {
                 _ = self.shutdown_rx.recv() => {
                     tracing::debug!("Server received explicit shutdown signal.");
                     shutdown_requested = true;
+                    let _ = ipc_shutdown_tx.send(()).await;
                 }
                 incoming = self.endpoint.accept(), if !shutdown_requested => {
                     let Some(incoming) = incoming else {
@@ -504,34 +508,6 @@ impl Server {
                             }
                         }
                     }
-
-                    // After any session completes, check if the wormhole needs to be rate-limited
-                    // or auto-burned on success.
-                    if let Some(wh) = &wormhole {
-                        let fails = wh.failed_attempts.load(Ordering::Relaxed);
-                        let success = wh.success.load(Ordering::Relaxed);
-
-
-                        if fails >= 3 {
-                            warn!("Wormhole rate limit exceeded ({} failed attempts). Burning wormhole.", fails);
-                            wh.task.abort();
-                            wh.expiry_task.abort();
-                            let code = wh.code.clone();
-                            tokio::spawn(async move {
-                                let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
-                            });
-                            wormhole = None;
-                        } else if success && !wh.persistent {
-                            info!("Wormhole successfully consumed. Auto-burning.");
-                            wh.task.abort();
-                            wh.expiry_task.abort();
-                            let code = wh.code.clone();
-                            tokio::spawn(async move {
-                                let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
-                            });
-                            wormhole = None;
-                        }
-                    }
                 }
                 msg = self.control_rx.recv() => {
                     if let Some(msg) = msg {
@@ -622,6 +598,7 @@ impl Server {
                             ipc::InternalCommand::Shutdown { tx } => {
                                 info!("Graceful shutdown requested via IPC");
                                 shutdown_requested = true;
+                                let _ = ipc_shutdown_tx.send(()).await;
                                 let _ = tx.send(ipc::IpcResponse::Ok);
                             }
                         }
@@ -641,6 +618,7 @@ impl Server {
                             if self.shutdown_on_wormhole_success {
                                 info!("Shutdown on wormhole success requested. Server will exit after all sessions close.");
                                 shutdown_requested = true;
+                                let _ = ipc_shutdown_tx.send(()).await;
                             }
                             wormhole = None;
                         }

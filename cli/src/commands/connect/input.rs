@@ -45,7 +45,7 @@ pub enum ControlSequenceState {
 /// This prevents escape sequences emitted by remote shells (e.g. colored
 /// prompts like `\x1b[38;5;196m`) from corrupting `local_line_len`, which
 /// gates the `~` escape-sequence arm. The old approach used a single `bool`
-/// that terminated on any ASCII letter — failing on multi-parameter CSI
+/// that terminated on any ASCII letter - failing on multi-parameter CSI
 /// sequences where the parameter bytes (`38;5;196`) were mistakenly counted
 /// as typed characters.
 ///
@@ -291,21 +291,12 @@ impl InputEngine {
                     }
                     None => {
                         finalize_submitted_line(to_local, line);
-                        let cmd_str = String::from_utf8_lossy(trim_bytes(
-                            bytes.strip_prefix(b"~").unwrap_or(&bytes),
-                        ));
-                        let keyword = cmd_str.split_whitespace().next().unwrap_or("");
-                        if ["put", "get", "lls", "ls", "lcd", "cd"].contains(&keyword) {
-                            to_local.extend_from_slice(b"Usage error. Type ~? for help.\r\n");
-                            self.exit_local_prompt(to_remote);
-                        } else {
-                            self.exit_local_prompt(to_remote);
-                            let mut r_bytes = Vec::with_capacity(bytes.len() + 2);
-                            r_bytes.push(b'~');
-                            r_bytes.extend_from_slice(&bytes);
-                            r_bytes.push(b'\r');
-                            to_remote.extend_from_slice(&r_bytes);
-                        }
+                        self.exit_local_prompt(to_remote);
+                        let mut r_bytes = Vec::with_capacity(bytes.len() + 2);
+                        r_bytes.push(b'~');
+                        r_bytes.extend_from_slice(&bytes);
+                        r_bytes.push(b'\r');
+                        to_remote.extend_from_slice(&r_bytes);
                     }
                 }
                 self.at_start_of_line = true;
@@ -753,13 +744,13 @@ mod tests {
 // ---------------------------------------------------------------------------
 //
 // Invariants enforced across all fuzz targets:
-//   1. No panic on any input — crash safety.
+//   1. No panic on any input - crash safety.
 //   2. `engine.mode` is always one of the two valid variants.
 //   3. When `active_line` is Some, its editor cursor ≤ line length.
 //   4. `to_remote` and `to_local` vectors are structurally sound (no OOB).
 //
-// These tests intentionally have no `assert` on the *values* of output — only
-// on structural properties — because the semantics of arbitrary byte input are
+// These tests intentionally have no `assert` on the *values* of output - only
+// on structural properties - because the semantics of arbitrary byte input are
 // not well-defined. The goal is to shake out panics, index-out-of-bounds,
 // arithmetic overflows, and corrupted state.
 // ---------------------------------------------------------------------------
@@ -794,7 +785,7 @@ mod fuzz {
         ///
         /// Covers: crash safety, mode invariant.
         /// Strategy: random byte slices of length 0–512, fed one call at a time
-        /// (matching how `drive_session` calls it in production — one stdin read
+        /// (matching how `drive_session` calls it in production - one stdin read
         /// at a time, not individual bytes).
         #[test]
         fn fuzz_input_engine_no_panic(
@@ -878,7 +869,7 @@ mod fuzz {
         ///
         /// Covers: shell-words tokenisation + keyword matching on untrusted strings.
         /// Strategy: arbitrary printable strings (proptest `".*"` regex generates
-        /// valid Unicode strings, which is the real input domain — bytes are already
+        /// valid Unicode strings, which is the real input domain - bytes are already
         /// UTF-8 decoded before `parse_local_command` is called).
         #[test]
         fn fuzz_parse_local_command_no_panic(raw in ".*") {

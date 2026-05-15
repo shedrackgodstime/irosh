@@ -35,3 +35,6 @@ api-guidelines
 /notes
 /irosh.service
 /irosh.plist
+
+# Internal development docs
+docs_dev/

@@ -56,7 +56,7 @@ impl PeerMetadata {
             }
         }
 
-        // Syscall fallback — works even when launched as a service
+        // Syscall fallback - works even when launched as a service
         hostname_syscall().unwrap_or_else(|| "unknown-host".to_string())
     }
 
@@ -82,7 +82,7 @@ impl PeerMetadata {
 
 /// Resolves the system hostname via a platform syscall, then subprocess fallback.
 fn hostname_syscall() -> Option<String> {
-    // Try libc::gethostname on Unix — fastest and most reliable in daemon context
+    // Try libc::gethostname on Unix - fastest and most reliable in daemon context
     #[cfg(unix)]
     {
         let mut buf = vec![0u8; 256];
@@ -99,7 +99,7 @@ fn hostname_syscall() -> Option<String> {
         }
     }
 
-    // Universal subprocess fallback — works on Linux, Windows, macOS
+    // Universal subprocess fallback - works on Linux, Windows, macOS
     let output = std::process::Command::new("hostname").output().ok()?;
     if output.status.success() {
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -112,7 +112,7 @@ fn hostname_syscall() -> Option<String> {
 
 /// Resolves the current username via a platform syscall, then subprocess fallback.
 fn username_syscall() -> Option<String> {
-    // On Unix, getpwuid is most reliable — reads /etc/passwd even in daemon context
+    // On Unix, getpwuid is most reliable - reads /etc/passwd even in daemon context
     #[cfg(unix)]
     {
         // SAFETY: `getuid` and `getpwuid` are standard Unix syscalls.
@@ -131,11 +131,11 @@ fn username_syscall() -> Option<String> {
         }
     }
 
-    // Universal subprocess fallback — `whoami` works on Linux, Windows, macOS
+    // Universal subprocess fallback - `whoami` works on Linux, Windows, macOS
     let output = std::process::Command::new("whoami").output().ok()?;
     if output.status.success() {
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        // On Windows, whoami returns "DOMAIN\user" — strip the domain prefix
+        // On Windows, whoami returns "DOMAIN\user" - strip the domain prefix
         let s = s.rsplit('\\').next().unwrap_or(&s).to_string();
         if !s.is_empty()
             && !s.eq_ignore_ascii_case("system")

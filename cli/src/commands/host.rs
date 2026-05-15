@@ -27,7 +27,9 @@ pub async fn exec(
 
     // Check if vault is empty to show security notice
     let vault = irosh::storage::load_all_authorized_clients(&state)?;
-    if vault.is_empty() && !simple {
+    let password_set = irosh::storage::load_shadow_file(&state)?.is_some();
+    
+    if vault.is_empty() && !password_set && !simple && !ctx.args.json {
         Ui::warn(
             "Vault is empty",
             "The first device to connect will be permanently trusted.\nTip: Run 'irosh passwd set' now to require a password instead.",
@@ -62,6 +64,10 @@ pub async fn exec(
                     .is_ok();
 
                 if daemon_running {
+                    if ctx.args.json {
+                        crate::output::print_error("Daemon is already running.", "daemon_conflict");
+                        return Ok(());
+                    }
                     Ui::error(
                         "Failed to start: The Irosh daemon is already running in the background.",
                     );
@@ -76,7 +82,9 @@ pub async fn exec(
             }
         },
         _ = tokio::signal::ctrl_c() => {
-            Ui::info("Host startup cancelled by user.");
+            if !ctx.args.json {
+                Ui::info("Host startup cancelled by user.");
+            }
             anyhow::bail!("Cancelled");
         }
     };
@@ -87,7 +95,19 @@ pub async fn exec(
         .public_key()
         .fingerprint(irosh::russh::keys::ssh_key::HashAlg::Sha256);
 
-    if !simple {
+    if ctx.args.json {
+        #[derive(serde::Serialize)]
+        struct HostIdentityJson {
+            node_id: String,
+            fingerprint: String,
+            ticket: String,
+        }
+        crate::output::print_success(HostIdentityJson {
+            node_id: ready.endpoint_id().to_string(),
+            fingerprint: fingerprint.to_string(),
+            ticket: ready.ticket.to_string(),
+        });
+    } else if !simple {
         Ui::p2p("Server is starting...");
         Ui::machine_identity(
             ready.endpoint_id(),
@@ -104,7 +124,9 @@ pub async fn exec(
     let shutdown = server.shutdown_handle();
     tokio::spawn(async move {
         irosh::sys::signals::wait_for_shutdown_signal().await;
-        Ui::info("Shutting down gracefully...");
+        if !crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+            Ui::info("Shutting down gracefully...");
+        }
         shutdown.close().await;
     });
 

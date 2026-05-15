@@ -5,23 +5,29 @@ All notable changes to the `irosh` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-05-10
+## [0.3.0] - 2026-05-15
 
 ### Added
+- **RAII Terminal Guard**: Introduced `TerminalGuard` to guarantee terminal state restoration (echo/raw mode) even during panics or crashes.
+- **IPC Shutdown Synchronization**: The daemon control listener now shuts down gracefully alongside the main server loop, preventing "zombie" listeners and stale socket files.
+- **Windows ACL Hardening**: Implemented secure, non-inherited ACLs for persistent storage on Windows, matching Unix `0600` privacy standards.
 - **Structured Transfer Errors**: Replaced string-based error checking with a robust `TransferFailureCode` protocol for precise error reporting (NotFound, PermissionDenied, IsDirectory).
-- **Interactive Parity**: Restored legacy V1 `~`-prefixed aliases (`~put`, `~get`, `~lls`, etc.) to the local command prompt.
+- **Interactive Parity**: Restored legacy V1 `~`-prefixed aliases (`~put`, `~get`, `~lls`, etc.) to the local command prompt with full history and path completion.
+
+### Improved
+- **Server Loop Architecture**: Refactored the core select-loop for better maintainability and eliminated redundant state checks in the Wormhole pairing flow.
+- **Shell Namespace Integration**: Hardened the Linux `nsenter` and Windows PEB-walking logic for more reliable CWD resolution during file transfers.
+- **Memory Safety**: Fixed potential memory leaks in the Windows SID allocation path and null-pointer dereferences in security error handlers.
+- **Usage Feedback**: Added professional usage hints for interactive commands (`put`, `get`, `lcd`) when invoked without arguments.
+- **Wormhole Auto-Save**: Restored seamless peer identity resolution and silent auto-saving for new connections.
+- **Documentation "De-AI"**: Performed a global polish to remove AI-generated punctuation artifacts and ensure a human, authoritative voice.
+- **Liability Hardening**: Synchronized the "Ironclad Disclaimer" across all public-facing documentation.
 - **Enhanced Tab Completion**: Fixed and optimized path completion for both local and remote filesystems.
-- **Shortcut Connect Hardening**: Improved target parsing to reliably distinguish between tickets, aliases, and wormhole codes.
 
 ### Changed
-- **Codebase Hardening**: Performed a total audit, pruning over 500 lines of dead code and stale `#[allow(dead_code)]` attributes.
+- **Codebase Hardening**: Performed a total audit, pruning over 1,200 lines of dead code and stale legacy artifacts.
 - **Zero-Warning Compliance**: Achieved 100% Clippy compliance with warnings-as-errors across the entire workspace.
-- **Dependency Optimization**: Pruned unused crates like `futures` and `futures-lite` to reduce binary size and compilation time.
-
-### Fixed
-- **Recursive Path Logic**: Resolved a regression where relative paths were incorrectly reported during recursive directory uploads.
-- **CLI Prompt UX**: Fixed the "silent help" bug where unrecognized commands would trigger the help screen without an error message.
-- **Type-Safe Connection**: Resolved nested result flattening bugs in the SSH handshake timeout logic.
+- **Documentation Hygiene**: Moved internal planning and design documents to `docs_dev/` to keep the public repository clean.
 
 ## [0.2.0] - 2026-05-07
 

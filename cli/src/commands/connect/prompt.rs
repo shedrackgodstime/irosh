@@ -26,6 +26,7 @@ pub enum LocalCommand {
         local: Option<String>,
         recursive: bool,
     },
+    UsageError(String),
     Unknown(String),
 }
 
@@ -44,7 +45,15 @@ pub fn parse_local_command(buf: &[u8]) -> Option<LocalCommand> {
         "help" | "?" | "~?" | "~help" => Some(LocalCommand::Help),
         "lpwd" | "pwd" | "~lpwd" | "~pwd" => Some(LocalCommand::Lpwd),
         "lls" | "ls" | "~lls" | "~ls" => Some(LocalCommand::Lls(parts.get(1).cloned())),
-        "lcd" | "cd" | "~lcd" | "~cd" => parts.get(1).map(|p| LocalCommand::Lcd(p.clone())),
+        "lcd" | "cd" | "~lcd" | "~cd" => {
+            if let Some(path) = parts.get(1) {
+                Some(LocalCommand::Lcd(path.clone()))
+            } else {
+                Some(LocalCommand::UsageError(
+                    "lcd: missing directory path. Usage: lcd <path>".to_string(),
+                ))
+            }
+        }
         "paths" => Some(LocalCommand::Paths),
         "exit" | "~exit" => Some(LocalCommand::Exit),
         "disconnect" | "~disconnect" => Some(LocalCommand::Disconnect),
@@ -66,7 +75,9 @@ pub fn parse_local_command(buf: &[u8]) -> Option<LocalCommand> {
                     recursive,
                 })
             } else {
-                Some(LocalCommand::Unknown("put (missing path)".to_string()))
+                Some(LocalCommand::UsageError(
+                    "put: missing local path. Usage: put [-r] <local> [remote]".to_string(),
+                ))
             }
         }
         "get" | "~get" => {
@@ -86,7 +97,9 @@ pub fn parse_local_command(buf: &[u8]) -> Option<LocalCommand> {
                     recursive,
                 })
             } else {
-                Some(LocalCommand::Unknown("get (missing path)".to_string()))
+                Some(LocalCommand::UsageError(
+                    "get: missing remote path. Usage: get [-r] <remote> [local]".to_string(),
+                ))
             }
         }
         _ => Some(LocalCommand::Unknown(keyword.to_string())),
@@ -266,6 +279,13 @@ pub async fn execute_local_command(
             .await?;
             print_prompt!();
             Ok((true, 2))
+        }
+        LocalCommand::UsageError(msg) => {
+            stdout
+                .write_all(format!("Error: {}\r\n", msg).as_bytes())
+                .await?;
+            print_prompt!();
+            Ok((true, 1))
         }
         LocalCommand::Unknown(cmd) => {
             stdout

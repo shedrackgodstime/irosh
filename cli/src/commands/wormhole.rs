@@ -168,8 +168,24 @@ async fn handle_status(client: &IpcClient) -> Result<()> {
 
 async fn handle_disable(client: &IpcClient) -> Result<()> {
     match client.send(IpcCommand::DisableWormhole).await? {
-        IpcResponse::Ok => Ui::success("Wormhole disabled."),
-        IpcResponse::Error(e) => Ui::error(&format!("Failed to disable: {}", e)),
+        IpcResponse::Ok => {
+            if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+                #[derive(serde::Serialize)]
+                struct WormholeDisableJson {
+                    success: bool,
+                }
+                crate::output::print_success(WormholeDisableJson { success: true });
+                return Ok(());
+            }
+            Ui::success("Wormhole disabled.");
+        }
+        IpcResponse::Error(e) => {
+            if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::output::print_error(&e, "disable_failed");
+                return Ok(());
+            }
+            Ui::error(&format!("Failed to disable: {}", e));
+        }
         _ => anyhow::bail!("Unexpected response from daemon"),
     }
     Ok(())
@@ -192,6 +208,21 @@ async fn handle_enable_daemon(
         .await?
     {
         IpcResponse::Ok => {
+            if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+                #[derive(serde::Serialize)]
+                struct WormholeActiveJson {
+                    code: String,
+                    persistent: bool,
+                    mode: &'static str,
+                }
+                crate::output::print_success(WormholeActiveJson {
+                    code: final_code,
+                    persistent,
+                    mode: "daemon",
+                });
+                return Ok(());
+            }
+
             Ui::success(&format!(
                 "Wormhole active in background! Code: {}",
                 style(&final_code).magenta().bold()
@@ -201,7 +232,13 @@ async fn handle_enable_daemon(
                 style(&final_code).magenta()
             ));
         }
-        IpcResponse::Error(e) => Ui::error(&format!("Daemon rejected: {}", e)),
+        IpcResponse::Error(e) => {
+            if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+                crate::output::print_error(&e, "daemon_error");
+                return Ok(());
+            }
+            Ui::error(&format!("Daemon rejected: {}", e));
+        }
         _ => anyhow::bail!("Unexpected response from daemon"),
     }
     Ok(())
@@ -224,26 +261,41 @@ async fn handle_foreground_wormhole(
     let (_ready, server) = Server::bind(options).await?;
     let control = server.control_handle();
 
-    Ui::success(&format!(
-        "Wormhole active (Foreground)! Code: {}",
-        style(&final_code).magenta().bold()
-    ));
-    Ui::info(&format!(
-        "Run 'irosh connect {}' on the other machine.",
-        style(&final_code).magenta()
-    ));
-    Ui::info("Waiting for peer... (Ctrl+C to cancel)");
-
     let (tx, _) = tokio::sync::oneshot::channel();
+    let code_to_send = final_code.clone();
     control
         .send(irosh::InternalCommand::EnableWormhole {
-            code: final_code,
+            code: final_code.clone(),
             password,
             persistent,
             tx,
         })
         .await
         .map_err(|_| anyhow::anyhow!("Server channel closed"))?;
+
+    if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+        #[derive(serde::Serialize)]
+        struct WormholeActiveJson {
+            code: String,
+            persistent: bool,
+            mode: &'static str,
+        }
+        crate::output::print_success(WormholeActiveJson {
+            code: code_to_send,
+            persistent,
+            mode: "foreground",
+        });
+    } else {
+        Ui::success(&format!(
+            "Wormhole active (Foreground)! Code: {}",
+            style(&final_code).magenta().bold()
+        ));
+        Ui::info(&format!(
+            "Run 'irosh connect {}' on the other machine.",
+            style(&final_code).magenta()
+        ));
+        Ui::info("Waiting for peer... (Ctrl+C to cancel)");
+    }
 
     let shutdown = server.shutdown_handle();
     tokio::spawn(async move {

@@ -1,28 +1,33 @@
-# Irosh Development Roadmap (v0.2.x -> v1.0)
+# Irosh Development Roadmap (v0.3.0 -> v1.0)
 
-The primary goal of the v0.2.x series is to achieve **Production Stability** and **Feature Parity** with the legacy Irosh MVP while maintaining the new "Fat Library" architecture.
+The primary goal of the v0.3.0 series is to achieve **Production Stability** and **OS-Native Integration** while maintaining the high-performance "Fat Library" architecture.
 
-## Phase 1: Feature Parity & Stability (v0.2.5)
-The immediate focus is restoring professional-grade CLI features that were temporarily simplified during the V2 refactor.
+## Phase 1: Feature Parity (v0.2.x) - [COMPLETE]
+Restored professional-grade CLI features and unified the library architecture.
+*   **[✓] Authentication Parity**: Unified authenticator with multi-mode support.
+*   **[✓] Terminal Fidelity**: RAII-based `TerminalGuard` and robust Windows ConPTY handling.
+*   **[✓] Interactive Escapes**: Full `~` command mode with history and completion.
+*   **[✓] Wormhole Hardening**: Pkarr-based rendezvous and rate-limiting.
 
-*   **Authentication Parity**: Restore `--auth-mode` (key, password, combined) and `--authorize <key>` flags to the `host` command.
-*   **Terminal Fidelity**: Implement full VT100 support for Windows consoles and non-blocking `AsyncStdin` for Unix.
-*   **Interactive Escapes**: Restore the `~.` (disconnect), `~c` (command mode), and `~get`/`~put` (file transfer) escape sequences.
-*   **Wormhole Hardening**: Enforce 8-character safety minimums and improve rendezvous reliability.
-
-## Phase 2: OS Integration (v0.3.0)
+## Phase 2: OS Integration (v0.3.0) - [COMPLETE]
 Expanding the "Service-Oriented" nature of Irosh across all major platforms.
+*   **[✓] Native Service Managers**: Cross-platform installers for systemd, launchd, and Windows Task Scheduler.
+*   **[✓] Service Diagnostics**: Unified `system status` command with real-time daemon health.
+*   **[✓] Storage Hardening**: High-assurance Windows ACLs and atomic secure writes.
+*   **[✓] IPC Lifecycle**: Synchronized shutdown of control listeners and session tasks.
 
-*   **Native Service Managers**: Complete the implementation of the Windows Task Scheduler and macOS launchd installers.
-*   **Service Diagnostics**: Add a unified `system status` command to report the health of background P2P daemons.
-*   **Auto-Update**: Implement a secure P2P-native update mechanism for the CLI binary.
+## Phase 3: Stabilization & Polish (v0.3.x) - [CURRENT]
+Focusing on developer experience, documentation, and performance edge cases.
+*   **Optimized Binary**: Reduce binary size and further prune unused transitive dependencies.
+*   **Audit & Documentation**: Complete the technical manual and finalize public API documentation for library users.
+*   **P2P-Native Updates**: Implement the secure binary update flow via Iroh's blob transport.
+*   **Diagnostics Extension**: Add NAT traversal debugging and peer latency metrics to `system status`.
 
-## Phase 3: Path to v1.0
-Hardening and auditing the codebase for mission-critical usage.
-
-*   **Security Audit**: Review of the authentication handshake and trust store persistence logic.
-*   **Performance Optimization**: Tuning QUIC congestion control for high-latency P2P links.
-*   **API Stabilization**: Finalizing the `irosh` library API for 1.0 stability.
+## Phase 4: Production Readiness (v1.0)
+Finalizing the protocol and committing to API stability.
+*   **Stability Freeze**: Finalize the IPC and pairing protocol versions.
+*   **Security Audit**: Independent review of the authentication and namespace-joining logic.
+*   **Cloud Relay Fleet**: Deployment of a global relay network for zero-config internet traversal.
 
 ---
 

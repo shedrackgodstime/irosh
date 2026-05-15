@@ -8,11 +8,11 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Shedrack Godstime <shedrackgodstime@gmail.com>"]
-description = "SSH sessions over Iroh peer-to-peer transport"
+description = "Secure P2P SSH and data transfer protocol. Connect to any machine without an IP address, open ports, or VPNs."
 readme = "src/README.md"
 repository = "https://github.com/shedrackgodstime/irosh"
 license = "MIT OR Apache-2.0"
-keywords = ["ssh", "iroh", "p2p", "remote", "shell"]
+keywords = ["ssh", "p2p", "iroh", "nat-traversal", "secure-shell", "quic"]
 categories = ["network-programming", "asynchronous"]
 exclude = ["cli/"]
 

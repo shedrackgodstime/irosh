@@ -210,9 +210,9 @@ pub enum PeerAction {
     /// Add a new peer to the address book.
     /// If arguments are omitted, interactive prompts will be shown.
     Add {
-        /// A friendly alias for this peer (optional — interactive prompt if omitted)
+        /// A friendly alias for this peer (optional - interactive prompt if omitted)
         name: Option<String>,
-        /// The connection ticket (optional — interactive prompt if omitted)
+        /// The connection ticket (optional - interactive prompt if omitted)
         ticket: Option<String>,
     },
     /// Remove a peer from the address book.
@@ -224,7 +224,7 @@ pub enum PeerAction {
     /// View detailed information about a saved peer.
     /// If name is omitted, an interactive selection prompt will be shown.
     Info {
-        /// The alias of the peer (optional — interactive prompt if omitted)
+        /// The alias of the peer (optional - interactive prompt if omitted)
         name: Option<String>,
     },
     /// Rename (or re-alias) a saved peer.

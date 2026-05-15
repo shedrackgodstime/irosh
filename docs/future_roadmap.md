@@ -1,6 +1,6 @@
-# Irosh Future Roadmap: V3 & Beyond
+# Irosh Future Roadmap: The "Impossible" Dreams
 
-This document outlines the strategic roadmap for Irosh after the V2 migration is complete. The goal is to achieve full feature parity with OpenSSH while leveraging the unique advantages of the Iroh P2P transport.
+This document outlines the strategic aspirations for Irosh. While our immediate goal is feature parity with OpenSSH, many of the sections below represent the "Outer Limits" of P2P engineering—features that might seem impossible today, but that we hope to explore for the sheer challenge and fun of building a truly decentralized world.
 
 ## 1. OpenSSH Escape Sequence Parity
 To provide a familiar environment for sysadmins, Irosh will implement the standard SSH escape character logic (triggered by `~` after a newline).
@@ -19,17 +19,17 @@ To provide a familiar environment for sysadmins, Irosh will implement the standa
 
 ### Interactive Command Line (`~C`)
 Opening the command line will provide an `irosh> ` prompt for dynamic session management:
-*   `-L[bind_address:]port:host:hostport` — Request local forward.
-*   `-R[bind_address:]port:host:hostport` — Request remote forward.
-*   `-D[bind_address:]port` — Request dynamic SOCKS forward.
-*   `-KL[bind_address:]port` — Cancel local forward.
-*   `-KR[bind_address:]port` — Cancel remote forward.
-*   `-KD[bind_address:]port` — Cancel dynamic forward.
-*   `lls [path]` — List local files for transfer.
-*   `lcd <path>` — Change local transfer directory.
-*   `lpwd` — Show current local transfer directory.
-*   `put [-r] <local> [remote]` — Upload file/dir to peer.
-*   `get [-r] <remote> [local]` — Download file/dir from peer.
+*   `-L[bind_address:]port:host:hostport` - Request local forward.
+*   `-R[bind_address:]port:host:hostport` - Request remote forward.
+*   `-D[bind_address:]port` - Request dynamic SOCKS forward.
+*   `-KL[bind_address:]port` - Cancel local forward.
+*   `-KR[bind_address:]port` - Cancel remote forward.
+*   `-KD[bind_address:]port` - Cancel dynamic forward.
+*   `lls [path]` - List local files for transfer.
+*   `lcd <path>` - Change local transfer directory.
+*   `lpwd` - Show current local transfer directory.
+*   `put [-r] <local> [remote]` - Upload file/dir to peer.
+*   `get [-r] <remote> [local]` - Download file/dir from peer.
 
 ---
 
@@ -105,6 +105,11 @@ Transforming Irosh into a "P2P Nervous System" where AI agents can operate the n
 
 ### Machine-Readable CLI (Agent-First)
 *   Strict, first-class JSON output for every command to ensure AI agents can parse state and execute logic with 100% reliability.
+
+### Interactive Session Automation (The "Ghost Operator")
+*   **Goal**: Full parity between human interaction and programmatic control.
+*   **Vision**: Enabling scripts to "drive" a live interactive session, triggering `~put`, `~get`, and complex shell commands via high-performance stream-based automation.
+*   **Impact**: Allows autonomous agents to perform "Hand-on-Terminal" tasks (like live debugging or interactive software installation) exactly as a human would, but with 100% precision and zero latency.
 
 ### Self-Healing Mesh Coordination
 *   Node-resident agents that communicate via the Iroh Gossip network to detect failures, optimize routing, and coordinate software updates across the entire mesh without human intervention.

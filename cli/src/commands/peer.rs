@@ -56,13 +56,22 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
         PeerAction::Add { name, ticket } => {
             let target_ticket = match ticket {
                 Some(t) => t,
-                None => match Ui::input("Enter the peer connection ticket", None) {
-                    Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-                    _ => {
-                        Ui::info("Cancelled.");
+                None => {
+                    if ctx.args.json {
+                        crate::output::print_error(
+                            "Missing required argument: ticket",
+                            "missing_args",
+                        );
                         return Ok(());
                     }
-                },
+                    match Ui::input("Enter the peer connection ticket", None) {
+                        Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+                        _ => {
+                            Ui::info("Cancelled.");
+                            return Ok(());
+                        }
+                    }
+                }
             };
 
             // Validate ticket early
@@ -78,13 +87,19 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             let target_name = match name {
                 Some(n) => n,
                 None => {
-                    let default_name =
-                        format!("peer-{}", &ticket_parsed.to_addr().id.to_string()[..8]);
-                    match Ui::input("Enter a friendly alias for this peer", Some(&default_name)) {
-                        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
-                        _ => {
-                            Ui::info("Cancelled.");
-                            return Ok(());
+                    if ctx.args.json {
+                        // In JSON mode, if no name is provided, use the default without prompting
+                        format!("peer-{}", &ticket_parsed.to_addr().id.to_string()[..8])
+                    } else {
+                        let default_name =
+                            format!("peer-{}", &ticket_parsed.to_addr().id.to_string()[..8]);
+                        match Ui::input("Enter a friendly alias for this peer", Some(&default_name))
+                        {
+                            Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+                            _ => {
+                                Ui::info("Cancelled.");
+                                return Ok(());
+                            }
                         }
                     }
                 }
@@ -92,6 +107,13 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
 
             // Check for duplicate name
             if storage::load_peer(state, &target_name)?.is_some() {
+                if ctx.args.json {
+                    crate::output::print_error(
+                        &format!("A peer named '{}' already exists.", target_name),
+                        "duplicate_name",
+                    );
+                    return Ok(());
+                }
                 Ui::error(&format!("A peer named '{}' already exists.", target_name));
                 return Ok(());
             }
@@ -100,9 +122,25 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 state,
                 &storage::PeerProfile {
                     name: target_name.clone(),
-                    ticket: ticket_parsed,
+                    ticket: ticket_parsed.clone(),
                 },
             )?;
+
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct PeerAddResponse {
+                    name: String,
+                    node_id: String,
+                    ticket: String,
+                }
+                crate::output::print_success(PeerAddResponse {
+                    name: target_name,
+                    node_id: ticket_parsed.to_addr().id.to_string(),
+                    ticket: ticket_parsed.to_string(),
+                });
+                return Ok(());
+            }
+
             Ui::success(&format!(
                 "Peer '{}' has been added to your address book.",
                 target_name
@@ -127,8 +165,20 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     }
                 }
             };
-            if Ui::soft_confirm(&format!("Remove peer '{}' from address book?", target_name)) {
+            if ctx.args.json
+                || Ui::soft_confirm(&format!("Remove peer '{}' from address book?", target_name))
+            {
                 storage::delete_peer(state, &target_name)?;
+
+                if ctx.args.json {
+                    #[derive(serde::Serialize)]
+                    struct PeerRemoveResponse {
+                        name: String,
+                    }
+                    crate::output::print_success(PeerRemoveResponse { name: target_name });
+                    return Ok(());
+                }
+
                 Ui::success(&format!("Peer '{}' removed.", target_name));
             }
         }

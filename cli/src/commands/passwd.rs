@@ -12,19 +12,52 @@ pub async fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
             if let Some(pw) = Ui::password_set() {
                 let hash = irosh::auth::hash_password(&pw)?;
                 storage::write_shadow_file(&state, &hash)?;
+
+                if ctx.args.json {
+                    #[derive(serde::Serialize)]
+                    struct PasswdSetResponse {
+                        success: bool,
+                        status: &'static str,
+                    }
+                    crate::output::print_success(PasswdSetResponse {
+                        success: true,
+                        status: "password_updated",
+                    });
+                    return Ok(());
+                }
+
                 Ui::success("Node Password has been updated and hashed securely.");
                 Ui::info(
                     "New unknown devices will now be required to enter this password to pair.",
                 );
+            } else {
+                if ctx.args.json {
+                    crate::output::print_error("No password provided.", "missing_input");
+                    return Ok(());
+                }
             }
         }
         PasswdAction::Remove => {
-            Ui::warn(
-                "SECURITY NOTICE",
-                "Removing the password will re-enable TOFU (Trust on First Use) if your vault is empty.",
-            );
-            if Ui::danger_confirm("Are you sure you want to remove the Node Password?", "yes") {
+            if !ctx.args.json {
+                Ui::warn(
+                    "SECURITY NOTICE",
+                    "Removing the password will re-enable TOFU (Trust on First Use) if your vault is empty.",
+                );
+            }
+            if ctx.args.json
+                || Ui::danger_confirm("Are you sure you want to remove the Node Password?", "yes")
+            {
                 storage::delete_shadow_file(&state)?;
+
+                if ctx.args.json {
+                    #[derive(serde::Serialize)]
+                    struct PasswdRemoveResponse {
+                        success: bool,
+                    }
+                    crate::output::print_success(PasswdRemoveResponse { success: true });
+                    return Ok(());
+                }
+
                 Ui::success("Node Password has been removed.");
             }
         }

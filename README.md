@@ -1,131 +1,112 @@
 # Irosh
 
-**Cryptographically-Identified P2P Secure Shell and Decentralized Data Transfer Protocol.**
+**Secure P2P SSH. No IP addresses. No open ports. No VPNs.**
 
 [![Crates.io](https://img.shields.io/crates/v/irosh.svg)](https://crates.io/crates/irosh)
 [![Documentation](https://docs.rs/irosh/badge.svg)](https://docs.rs/irosh)
 [![License](https://img.shields.io/crates/l/irosh.svg)](#license)
 
-Irosh is a high-assurance remote access toolset built on the Iroh networking stack. It provides a robust library and a streamlined CLI for establishing secure shell sessions and high-speed data transfers over encrypted, hole-punched QUIC streams. 
-
-By leveraging Ed25519 identities, Irosh eliminates the need for public IP addresses, open ports, or complex VPN configurations, making it ideal for managing distributed infrastructure across restricted networks.
+Irosh lets you connect to any machine using just its name, even if it's behind a firewall. It handles all the networking for you using the Iroh P2P stack, so you never have to worry about IP addresses or port forwarding again.
 
 ---
 
-## Installation
+## ⚡ Quick Start
 
-### CLI Binary (Recommended)
-For standard interactive usage, install the pre-compiled binary via the unified installer:
+### 1. On the Host (Server)
+Start the background service and generate a 3-word pairing code:
+```bash
+irosh system install    # Install as background service
+irosh wormhole          # Get your pairing code (e.g. apple-pie-sunset)
+```
 
-**Linux / macOS / Android (Termux)**:
+### 2. On the Client
+Connect from anywhere using the code:
+```bash
+irosh apple-pie-sunset
+```
+*That's it. You're connected.*
+
+---
+
+## 🛠️ Why use Irosh?
+
+- **Zero-IP Connectivity**: Connect to your devices without needing a public IP or DNS.
+- **Native & Standalone**: Unlike other tools, Irosh is a full SSH server. It doesn't need OpenSSH installed.
+- **Human-Friendly**: Pair devices with simple words. Irosh automatically saves them with friendly names like `my-laptop`.
+- **Integrated File Transfer**: Move files instantly with built-in `put` and `get` commands.
+- **Global Roaming**: Stay connected even when switching between Wi-Fi and mobile data.
+
+---
+
+## ⌨️ Interactive Toolkit
+
+During an active session, type these commands at the start of a line (after pressing Enter):
+
+| Command | Description |
+| :--- | :--- |
+| `~.` | Disconnect immediately |
+| `~put <local> [remote]` | Upload a file or directory to the peer |
+| `~get <remote> [local]` | Download a file or directory from the peer |
+| `~C` | Open the **irosh command prompt** for session management |
+| `~?` | View help and all available escape sequences |
+
+---
+
+## 🚀 Installation
+
+<details>
+<summary><b>Linux / macOS / Android (Termux)</b></summary>
+
 ```bash
 curl -fsSL irosh.pages.dev/install | sh
 ```
+</details>
 
-**Windows (PowerShell)**:
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
+
 ```powershell
 iwr irosh.pages.dev/ps | iex
 ```
+</details>
 
-### From Source
-If you have the Rust toolchain installed:
+<details>
+<summary><b>Build from Source (Cargo)</b></summary>
+
 ```bash
 cargo install irosh-cli
 ```
+</details>
 
 ---
 
-## Core Architecture
+## 🤝 Collaboration
 
-Irosh is designed for professional environments where security and resilience are paramount.
-
-- **Identity-Based Routing**: Peer discovery and authentication are tied to a persistent Ed25519 secret key.
-- **NAT Traversal**: Automatic hole-punching and relaying via the Iroh stack ensures connectivity in complex network topologies.
-- **Ad-hoc Peer Discovery**: Secure, out-of-band trust establishment using short-lived pairing codes.
-- **Service-Oriented**: Native support for background execution via system services (systemd, launchd).
-- **Protocol Multiplexing**: Dedicated side-channels for metadata exchange and high-performance file synchronization.
+Irosh is a solo-driven effort with a big vision for the future of the P2P internet. If you are passionate about Rust, P2P networking, or high-assurance security, your contributions are more than welcome! Feel free to open an issue or reach out if you're interested in collaborating.
 
 ---
 
-## Quick Start
+## ⚠️ Important Disclaimer & Liability
 
-### 1. Host Initialization
-Install the background service on the host machine to enable persistent access:
-```bash
-irosh system install
-```
+Irosh is a powerful remote access tool. By using this software, you agree to the following:
 
-### 2. Peer Pairing
-Generate a temporary pairing code for initial discovery:
-```bash
-irosh wormhole <custom-code>
-```
-
-### 3. Establishing a Session
-Connect from a client machine using the pairing code or a previously saved ticket:
-```bash
-irosh <code-or-ticket>
-```
+1.  **"As-Is" Basis**: This software is provided "as is" without warranty of any kind, either express or implied. 
+2.  **User Responsibility**: You are solely responsible for your actions. This tool must only be used for authorized access to systems you own or have explicit permission to manage.
+3.  **Non-Liability**: The author(s) and contributors shall **not be held responsible** for any misuse, damage, data loss, or legal consequences resulting from the use of this software. 
+4.  **Experimental Nature**: This project is in early development and has not been formally audited. Security and stability are not guaranteed.
 
 ---
 
-## Interactive Escape Commands
-During an active session, use the `~` prefix at the start of a line for local control:
-- `~?` - View all available local commands.
-- `~put [-r] <local> [remote]` - Upload a file or directory.
-- `~get [-r] <remote> [local]` - Download a file or directory.
-- `~C` - Open the irosh local command prompt.
-- `~~` - Send a literal tilde character.
+## 🏗️ Architecture
+
+Irosh is built as a **"Fat Library"**. All the networking, security, and SSH logic lives in the `irosh` crate, while the CLI is a thin, high-performance UI layer.
+
+- [**Technical Manual (Library)**](src/README.md) - For developers building on Irosh.
+- [**Development Roadmap**](docs/ROADMAP.md) - Our path to v1.0 and beyond.
+- [**Changelog**](CHANGELOG.md) - What's new in v0.3.0.
 
 ---
 
-## Developer Integration (Library)
-
-The `irosh` crate provides a low-level API for embedding P2P SSH capabilities into custom Rust applications.
-
-### Add to project
-```bash
-cargo add irosh
-```
-
-### Implementation Example
-```rust,no_run
-use irosh::{Server, ServerOptions, StateConfig};
-
-#[tokio::main]
-async fn main() -> irosh::Result<()> {
-    let state = StateConfig::new("./state".into());
-    let options = ServerOptions::new(state);
-    
-    let (ready, server) = Server::bind(options).await?;
-    println!("Node initialized. Ticket: {}", ready.ticket);
-    
-    server.run().await
-}
-```
-
----
-
-## Protocol Comparison
-
-| Feature | OpenSSH | Irosh |
-| :--- | :--- | :--- |
-| **Addressing** | IP / Hostname | Cryptographic Node ID |
-| **Connectivity** | Static Ports (22) | NAT Hole-punching / QUIC |
-| **Identity** | External Key Management | Built-in Ed25519 Secrets |
-| **Trust Model** | Manual known_hosts | Trust On First Use (TOFU) |
-| **Relay Support** | Manual ProxyJump | Native Global Relay Network |
-
----
-
-## Documentation
-
-- [**Technical Manual (Library)**](src/README.md) — Architectural details, feature flags, and library integration.
-- [**API Reference**](https://docs.rs/irosh) — Full technical documentation for Rust developers.
-- [**Development Roadmap**](docs/ROADMAP.md) — Stability goals and the path to v1.0.
-
----
-
-## License
+## 📝 License
 
 Licensed under MIT or Apache-2.0.

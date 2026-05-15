@@ -143,7 +143,7 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
                 Value: [0, 0, 0, 0, 0, 5],
             };
 
-            AllocateAndInitializeSid(
+            let res_system = AllocateAndInitializeSid(
                 &system_authority,
                 1,
                 SECURITY_LOCAL_SYSTEM_RID,
@@ -156,7 +156,7 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
                 0,
                 &mut system_sid,
             );
-            AllocateAndInitializeSid(
+            let res_admin = AllocateAndInitializeSid(
                 &nt_authority,
                 2,
                 SECURITY_BUILTIN_DOMAIN_RID,
@@ -170,80 +170,103 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
                 &mut admin_sid,
             );
 
-            // Initialize a security descriptor
-            let mut sd: SECURITY_DESCRIPTOR = std::mem::zeroed();
-            if InitializeSecurityDescriptor(&mut sd as *mut _ as *mut _, 1) == 0 {
-                return Err(StorageError::FileWrite {
-                    path: path.to_path_buf(),
-                    source: io::Error::last_os_error(),
+            // Use a closure or a helper to handle cleanup and return errors
+            let result: Result<()> = (|| {
+                if res_system == 0 || res_admin == 0 {
+                    return Err(StorageError::FileWrite {
+                        path: path.to_path_buf(),
+                        source: io::Error::last_os_error(),
+                    }
+                    .into());
                 }
-                .into());
-            }
 
-            // Create a DACL that allows the user, SYSTEM, and Administrators.
-            let dacl_size = std::mem::size_of::<ACL>()
-                + (std::mem::size_of::<ACCESS_ALLOWED_ACE>() * 3)
-                + GetLengthSid(user_sid) as usize
-                + GetLengthSid(system_sid) as usize
-                + GetLengthSid(admin_sid) as usize;
-            let mut dacl_buf = vec![0u32; dacl_size.div_ceil(4)];
-            let dacl = dacl_buf.as_mut_ptr() as *mut ACL;
-
-            if InitializeAcl(dacl, (dacl_buf.len() * 4) as u32, ACL_REVISION) == 0 {
-                return Err(StorageError::FileWrite {
-                    path: path.to_path_buf(),
-                    source: io::Error::last_os_error(),
+                // Initialize a security descriptor
+                let mut sd: SECURITY_DESCRIPTOR = std::mem::zeroed();
+                if InitializeSecurityDescriptor(&mut sd as *mut _ as *mut _, 1) == 0 {
+                    return Err(StorageError::FileWrite {
+                        path: path.to_path_buf(),
+                        source: io::Error::last_os_error(),
+                    }
+                    .into());
                 }
-                .into());
-            }
 
-            // Add ACEs for User, SYSTEM, and Administrators
-            AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, user_sid);
-            if !system_sid.is_null() {
-                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, system_sid);
-            }
-            if !admin_sid.is_null() {
-                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, admin_sid);
-            }
+                // Create a DACL that allows the user, SYSTEM, and Administrators.
+                let mut dacl_size = std::mem::size_of::<ACL>()
+                    + (std::mem::size_of::<ACCESS_ALLOWED_ACE>() * 3)
+                    + GetLengthSid(user_sid) as usize;
 
-            // Set the DACL to the security descriptor.
-            if SetSecurityDescriptorDacl(&mut sd as *mut _ as *mut _, 1, dacl, 0) == 0 {
-                return Err(StorageError::FileWrite {
-                    path: path.to_path_buf(),
-                    source: io::Error::last_os_error(),
+                if !system_sid.is_null() {
+                    dacl_size += GetLengthSid(system_sid) as usize;
                 }
-                .into());
-            }
-
-            // Protect the DACL from inheritance (break inheritance).
-            let _ = SetSecurityDescriptorControl(&mut sd as *mut _ as *mut _, 0x1000, 0x1000);
-
-            // Apply the security descriptor to the path.
-            let path_u16: Vec<u16> = path
-                .as_os_str()
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect();
-
-            if SetFileSecurityW(
-                path_u16.as_ptr(),
-                DACL_SECURITY_INFORMATION,
-                &mut sd as *mut _ as *mut _,
-            ) == 0
-            {
-                return Err(StorageError::FileWrite {
-                    path: path.to_path_buf(),
-                    source: io::Error::last_os_error(),
+                if !admin_sid.is_null() {
+                    dacl_size += GetLengthSid(admin_sid) as usize;
                 }
-                .into());
-            }
 
+                let mut dacl_buf = vec![0u32; dacl_size.div_ceil(4)];
+                let dacl = dacl_buf.as_mut_ptr() as *mut ACL;
+
+                if InitializeAcl(dacl, (dacl_buf.len() * 4) as u32, ACL_REVISION) == 0 {
+                    return Err(StorageError::FileWrite {
+                        path: path.to_path_buf(),
+                        source: io::Error::last_os_error(),
+                    }
+                    .into());
+                }
+
+                // Add ACEs for User, SYSTEM, and Administrators
+                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, user_sid);
+                if !system_sid.is_null() {
+                    AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, system_sid);
+                }
+                if !admin_sid.is_null() {
+                    AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, admin_sid);
+                }
+
+                // Set the DACL to the security descriptor.
+                if SetSecurityDescriptorDacl(&mut sd as *mut _ as *mut _, 1, dacl, 0) == 0 {
+                    return Err(StorageError::FileWrite {
+                        path: path.to_path_buf(),
+                        source: io::Error::last_os_error(),
+                    }
+                    .into());
+                }
+
+                // Protect the DACL from inheritance (break inheritance).
+                // 0x1000 is SE_DACL_PROTECTED
+                let _ = SetSecurityDescriptorControl(&mut sd as *mut _ as *mut _, 0x1000, 0x1000);
+
+                // Apply the security descriptor to the path.
+                let path_u16: Vec<u16> = path
+                    .as_os_str()
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
+
+                if SetFileSecurityW(
+                    path_u16.as_ptr(),
+                    DACL_SECURITY_INFORMATION,
+                    &mut sd as *mut _ as *mut _,
+                ) == 0
+                {
+                    return Err(StorageError::FileWrite {
+                        path: path.to_path_buf(),
+                        source: io::Error::last_os_error(),
+                    }
+                    .into());
+                }
+
+                Ok(())
+            })();
+
+            // ALWAYS free SIDs, even if the closure returned an error
             if !system_sid.is_null() {
                 FreeSid(system_sid);
             }
             if !admin_sid.is_null() {
                 FreeSid(admin_sid);
             }
+
+            result?;
         }
     }
 

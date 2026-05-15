@@ -208,29 +208,45 @@ async fn exec_internal(
 
     Ui::success(&format!("Secure session established with {}", display_name));
 
-    // Auto-save logic: Offer to save the peer if it's not already in the address book
+    // Silent Auto-save logic: Automatically save the peer if it's new and doesn't conflict.
     let peers = irosh::storage::list_peers(&state)?;
     let is_already_saved = peers
         .iter()
         .any(|p| p.ticket.to_addr().id == ticket.to_addr().id);
 
-    if !is_already_saved
-        && Ui::soft_confirm(&format!(
-            "Save this peer to your address book as '{}'?",
-            display_name
-        ))
-    {
-        let profile = irosh::storage::PeerProfile {
-            name: display_name.clone(),
-            ticket: ticket.clone(),
-        };
-        if let Err(e) = irosh::storage::save_peer(&state, &profile) {
-            Ui::error(&format!("Failed to save peer: {}", e));
+    if !is_already_saved {
+        let name_exists = peers.iter().any(|p| p.name == display_name);
+
+        let final_name = if name_exists {
+            // CONFLICT: Name is taken, ask for a new one.
+            let fallback = format!("{}-{}", display_name, &ticket.to_addr().id.to_string()[..4]);
+            Ui::input(
+                &format!(
+                    "A peer named '{}' already exists. Enter a new alias",
+                    display_name
+                ),
+                Some(&fallback),
+            )
         } else {
-            Ui::success(&format!(
-                "Peer saved! You can now connect using: irosh connect {}",
-                display_name
-            ));
+            // NO CONFLICT: Silent save.
+            Some(display_name.clone())
+        };
+
+        if let Some(target_name) = final_name {
+            let profile = irosh::storage::PeerProfile {
+                name: target_name.clone(),
+                ticket: ticket.clone(),
+            };
+            if irosh::storage::save_peer(&state, &profile).is_ok() {
+                if name_exists {
+                    Ui::success(&format!("Peer alias updated to '{}'", target_name));
+                } else {
+                    Ui::success(&format!(
+                        "✨ Peer auto-saved as '{}'. Use 'irosh {}' next time.",
+                        target_name, target_name
+                    ));
+                }
+            }
         }
     }
 

@@ -123,7 +123,10 @@ impl IpcServer {
     }
 
     /// Starts the IPC listener loop.
-    pub async fn run(self) -> std::result::Result<(), IpcError> {
+    pub async fn run(
+        self,
+        mut shutdown_rx: tokio::sync::mpsc::Receiver<()>,
+    ) -> std::result::Result<(), IpcError> {
         let path = self.socket_path();
 
         #[cfg(unix)]
@@ -142,20 +145,31 @@ impl IpcServer {
             info!("IPC listener active at {}", path.display());
 
             loop {
-                match listener.accept().await {
-                    Ok((mut stream, _)) => {
-                        let tx = self.control_tx.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_ipc_connection(&mut stream, tx).await {
-                                debug!("IPC connection error: {}", e);
-                            }
-                        });
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        debug!("IPC server received shutdown signal, exiting.");
+                        break;
                     }
-                    Err(e) => {
-                        warn!("IPC accept error: {}", e);
+                    accepted = listener.accept() => {
+                        match accepted {
+                            Ok((mut stream, _)) => {
+                                let tx = self.control_tx.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = handle_ipc_connection(&mut stream, tx).await {
+                                        debug!("IPC connection error: {}", e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                warn!("IPC accept error: {}", e);
+                            }
+                        }
                     }
                 }
             }
+
+            let _ = std::fs::remove_file(&path);
+            Ok(())
         }
 
         #[cfg(windows)]
@@ -176,20 +190,31 @@ impl IpcServer {
             info!("IPC listener active on {}", local_addr);
 
             loop {
-                match listener.accept().await {
-                    Ok((mut stream, _)) => {
-                        let tx = self.control_tx.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_ipc_connection(&mut stream, tx).await {
-                                debug!("IPC connection error: {}", e);
-                            }
-                        });
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {
+                        debug!("IPC server received shutdown signal, exiting.");
+                        break;
                     }
-                    Err(e) => {
-                        warn!("IPC accept error: {}", e);
+                    accepted = listener.accept() => {
+                        match accepted {
+                            Ok((mut stream, _)) => {
+                                let tx = self.control_tx.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = handle_ipc_connection(&mut stream, tx).await {
+                                        debug!("IPC connection error: {}", e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                warn!("IPC accept error: {}", e);
+                            }
+                        }
                     }
                 }
             }
+
+            let _ = std::fs::remove_file(&path);
+            Ok(())
         }
     }
 }
