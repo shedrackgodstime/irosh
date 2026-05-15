@@ -116,8 +116,10 @@ pub enum Commands {
         action: ConfigAction,
     },
 
-    /// Run diagnostics
+    /// Run diagnostics and check system health
     Check,
+    /// Alias for 'check'
+    Status,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +183,7 @@ impl CommandExec for Commands {
             Commands::Passwd { action } => passwd::exec(action.clone(), ctx).await,
             Commands::Identity { action } => identity::exec(action.clone(), ctx).await,
             Commands::Config { action } => config::exec(action.clone(), ctx).await,
-            Commands::Check => check::exec(ctx).await,
+            Commands::Check | Commands::Status => check::exec(ctx).await,
         }
     }
 }
@@ -205,12 +207,13 @@ pub enum SystemAction {
 pub enum PeerAction {
     /// List all saved peers in the address book
     List,
-    /// Add a new peer using a wormhole ticket
+    /// Add a new peer to the address book.
+    /// If arguments are omitted, interactive prompts will be shown.
     Add {
-        /// A friendly alias for this peer
-        name: String,
-        /// The wormhole connection ticket
-        ticket: String,
+        /// A friendly alias for this peer (optional — interactive prompt if omitted)
+        name: Option<String>,
+        /// The connection ticket (optional — interactive prompt if omitted)
+        ticket: Option<String>,
     },
     /// Remove a peer from the address book.
     /// If name is omitted, an interactive selection prompt will be shown.
@@ -218,10 +221,11 @@ pub enum PeerAction {
         /// The alias of the peer to remove
         name: Option<String>,
     },
-    /// View detailed information about a saved peer
+    /// View detailed information about a saved peer.
+    /// If name is omitted, an interactive selection prompt will be shown.
     Info {
-        /// The alias of the peer
-        name: String,
+        /// The alias of the peer (optional — interactive prompt if omitted)
+        name: Option<String>,
     },
     /// Rename (or re-alias) a saved peer.
     /// If names are omitted, an interactive selection and input prompt will be shown.

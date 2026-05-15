@@ -169,7 +169,7 @@ impl Client {
         )
         .await
         .map_err(|_| crate::error::IroshError::InvalidTarget {
-            raw: code.to_string(),
+            raw: format!("{} (Wormhole not found or discovery timed out)", code),
         })??;
 
         endpoint.close().await;

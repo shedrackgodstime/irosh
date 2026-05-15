@@ -95,93 +95,95 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
         return Ok(());
     }
 
-    println!("\n  Irosh Diagnostics");
-    println!("  ----------------------------------------------------");
+    Ui::header("Irosh Diagnostics");
 
     // Security
-    println!("  Security & Storage");
+    Ui::info("Security & Storage");
 
     if security.root_exists {
         if security.root_loose {
-            println!(
-                "  [!] State Directory: Loose permissions ({:04o})",
-                security.root_mode.unwrap_or(0)
-            );
-            println!(
-                "      Tip: Run 'chmod 700 {}'",
-                security.root_path.display()
+            Ui::warn(
+                "Loose Permissions",
+                &format!(
+                    "State directory is world-readable ({:04o}).\n      Tip: Run 'chmod 700 {}'",
+                    security.root_mode.unwrap_or(0),
+                    security.root_path.display()
+                ),
             );
         } else {
-            println!(
-                "  [*] State Directory: Protected ({:04o})",
+            Ui::success(&format!(
+                "State Directory: Protected ({:04o})",
                 security.root_mode.unwrap_or(0)
-            );
+            ));
         }
     }
 
     if security.key_exists {
         if security.key_unsafe {
-            println!(
-                "  [x] Identity Key:    UNSAFE ({:04o})",
-                security.key_mode.unwrap_or(0)
-            );
-            println!("      Tip: Run 'chmod 600 {}'", security.key_path.display());
+            Ui::error(&format!(
+                "Identity Key: UNSAFE ({:04o})\n      Tip: Run 'chmod 600 {}'",
+                security.key_mode.unwrap_or(0),
+                security.key_path.display()
+            ));
         } else {
-            println!(
-                "  [*] Identity Key:    Protected ({:04o})",
+            Ui::success(&format!(
+                "Identity Key: Protected ({:04o})",
                 security.key_mode.unwrap_or(0)
-            );
+            ));
         }
     }
 
     // System
-    println!("\n  System Environment");
+    println!();
+    Ui::info("System Environment");
 
     if let Some(v) = system.ssh_version {
-        println!("  [*] SSH Binary:      Found ({})", v);
+        Ui::success(&format!("SSH Binary: Found ({})", v));
     } else {
-        println!("  [x] SSH Binary:      NOT FOUND");
-        println!("      'connect' requires an OpenSSH client.");
+        Ui::error("SSH Binary: NOT FOUND\n      'connect' requires an OpenSSH client.");
     }
 
     if system.udp_available {
-        println!("  [*] UDP Socket:      Available");
+        Ui::success("UDP Socket: Available");
     } else {
-        println!("  [x] UDP Socket:      BLOCKED or UNAVAILABLE");
-        println!("      Irosh requires UDP for P2P transport.");
+        Ui::error(
+            "UDP Socket: BLOCKED or UNAVAILABLE\n      Irosh requires UDP for P2P transport.",
+        );
     }
 
     // Network
-    println!("\n  P2P Network Health");
+    println!();
+    Ui::info("P2P Network Health");
 
-    println!("  Stealth Mode:    {}", stealth_status);
-    println!("  Relay Service:   {}", relay_info);
+    Ui::status("Stealth Mode", stealth_status, None);
+    Ui::status("Relay Service", &relay_info, None);
 
     let pb = Ui::spinner("Probing transport layer...");
 
     match diagnostic::probe_network(state).await {
         Ok(probe) => {
             pb.finish_with_message("Done");
-            println!("  [*] P2P Endpoint:    Online");
-            println!("  [*] NAT Type:        {}", probe.nat_description());
+            Ui::success("P2P Endpoint: Online");
+            Ui::status("NAT Type", probe.nat_description(), None);
 
             if probe.has_relay_connectivity() {
                 for relay in &probe.relay_urls {
-                    println!("  [*] Relay Link:      Connected ({})", relay);
+                    Ui::success(&format!("Relay Link: Connected ({})", relay));
                 }
             } else {
-                println!("  [x] Relay Link:      DISCONNECTED");
+                Ui::error("Relay Link: DISCONNECTED");
             }
         }
         Err(e) => {
             pb.finish_with_message("Done");
-            println!("  [x] P2P Endpoint:    OFFLINE");
-            println!("      Error: {:#}", e);
+            Ui::error("P2P Endpoint: OFFLINE");
+            Ui::info(&format!("Error: {:#}", e));
         }
     }
 
     println!("  ----------------------------------------------------");
-    println!("  Run 'irosh system status' for active session details.\n");
+    Ui::info("Run 'irosh system status' for active session details.");
+    println!();
 
     Ok(())
 }

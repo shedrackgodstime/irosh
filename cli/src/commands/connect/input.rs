@@ -372,11 +372,13 @@ impl InputEngine {
         }
     }
 
-    fn exit_local_prompt(&mut self, _to_remote: &mut Vec<u8>) {
+    fn exit_local_prompt(&mut self, to_remote: &mut Vec<u8>) {
         self.mode = InputMode::Remote;
         self.at_start_of_line = true;
         self.local_line_len = 0;
         self.active_line = None;
+        // "Wake Up" sequence: prompt the remote shell to reprint its prompt.
+        to_remote.push(b'\r');
     }
 
     /// Attempts to complete the current active line.
@@ -612,7 +614,7 @@ mod tests {
     fn setup_engine() -> (InputEngine, tempfile::TempDir) {
         let dir = tempdir().unwrap();
         let state = StateConfig::new(dir.path().to_path_buf());
-        (InputEngine::new(&state), dir)
+        (InputEngine::new(&state, false), dir)
     }
 
     #[test]
@@ -635,8 +637,8 @@ mod tests {
 
         let (remote, local, actions) = engine.process_local(b"\r");
         assert_eq!(
-            remote, b"\x0C\r",
-            "Must send Ctrl+L + CR to remote to resync ConPTY"
+            remote, b"\r",
+            "Must send CR to remote to trigger prompt reprint"
         );
         assert!(local.contains(&b'\r'));
         assert!(local.contains(&b'\n'));
@@ -660,7 +662,7 @@ mod tests {
 
         let (remote, local, _) = engine.process_local(&[127]);
         assert_eq!(engine.mode, InputMode::Remote, "escape cancelled");
-        assert_eq!(remote, b"\x0C\r", "Must send Ctrl+L + CR even on cancel");
+        assert_eq!(remote, b"\r", "Must send CR even on cancel");
         // Should erase with backspace-space-backspace sequence (portable, works on ConPTY)
         assert!(local.contains(&b'\x08'));
         assert!(local.contains(&b' '));
@@ -677,10 +679,7 @@ mod tests {
             actions[0],
             EscapeAction::RunLocal(LocalCommand::Unknown(ref cmd)) if cmd == "x"
         ));
-        assert_eq!(
-            remote, b"\x0C\r",
-            "Unknown command should trigger Ctrl+L + CR refresh"
-        );
+        assert_eq!(remote, b"\r", "Unknown command should trigger CR refresh");
     }
 
     #[test]
@@ -777,7 +776,7 @@ mod fuzz {
     fn make_engine() -> (InputEngine, tempfile::TempDir) {
         let dir = tempdir().expect("tempdir creation must succeed in test environment");
         let state = StateConfig::new(dir.path().to_path_buf());
-        (InputEngine::new(&state), dir)
+        (InputEngine::new(&state, false), dir)
     }
 
     /// Verifies that `engine.mode` is always one of the two valid variants.

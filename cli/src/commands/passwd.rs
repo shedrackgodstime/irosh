@@ -45,16 +45,17 @@ pub async fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
                 return Ok(());
             }
 
-            println!("\n  Node Password Status");
-            println!("  ----------------------------------------------------");
+            Ui::header("Node Password Status");
             if is_set {
-                println!("  Status:    ACTIVE");
-                println!("  Security:  Argon2id Hashed");
+                Ui::status("Status", "ACTIVE", Some("Argon2id Hashed"));
             } else {
-                println!("  Status:    NOT SET");
-                println!("  Warning:   Node is currently in TOFU or Invite-only mode.");
+                Ui::status("Status", "NOT SET", None);
+                Ui::warn(
+                    "Security Notice",
+                    "Node is currently in TOFU or Invite-only mode.",
+                );
             }
-            println!("  ----------------------------------------------------\n");
+            println!();
         }
     }
     Ok(())

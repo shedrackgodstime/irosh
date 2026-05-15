@@ -54,17 +54,58 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             println!("  ----------------------------------------------------\n");
         }
         PeerAction::Add { name, ticket } => {
-            let ticket_parsed = ticket.parse()?;
+            let target_ticket = match ticket {
+                Some(t) => t,
+                None => match Ui::input("Enter the peer connection ticket", None) {
+                    Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+                    _ => {
+                        Ui::info("Cancelled.");
+                        return Ok(());
+                    }
+                },
+            };
+
+            // Validate ticket early
+            let ticket_parsed = target_ticket
+                .parse::<irosh::transport::ticket::Ticket>()
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Invalid ticket format: {}. Make sure you copied the full ticket string.",
+                        e
+                    )
+                })?;
+
+            let target_name = match name {
+                Some(n) => n,
+                None => {
+                    let default_name =
+                        format!("peer-{}", &ticket_parsed.to_addr().id.to_string()[..8]);
+                    match Ui::input("Enter a friendly alias for this peer", Some(&default_name)) {
+                        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+                        _ => {
+                            Ui::info("Cancelled.");
+                            return Ok(());
+                        }
+                    }
+                }
+            };
+
+            // Check for duplicate name
+            if storage::load_peer(state, &target_name)?.is_some() {
+                Ui::error(&format!("A peer named '{}' already exists.", target_name));
+                return Ok(());
+            }
+
             storage::save_peer(
                 state,
                 &storage::PeerProfile {
-                    name: name.clone(),
+                    name: target_name.clone(),
                     ticket: ticket_parsed,
                 },
             )?;
             Ui::success(&format!(
                 "Peer '{}' has been added to your address book.",
-                name
+                target_name
             ));
         }
         PeerAction::Remove { name } => {
@@ -92,7 +133,26 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             }
         }
         PeerAction::Info { name } => {
-            if let Some(p) = storage::load_peer(state, &name)? {
+            let target_name = match name {
+                Some(n) => n,
+                None => {
+                    let peers = storage::list_peers(state)?;
+                    if peers.is_empty() {
+                        Ui::info("Your address book is empty.");
+                        return Ok(());
+                    }
+                    let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
+                    match Ui::select("Select a peer to inspect", &items) {
+                        Some(idx) => peers[idx].name.clone(),
+                        None => {
+                            Ui::info("Cancelled.");
+                            return Ok(());
+                        }
+                    }
+                }
+            };
+
+            if let Some(p) = storage::load_peer(state, &target_name)? {
                 let addr = p.ticket.to_addr();
                 let relay = addr.relay_urls().next().map(|r| r.to_string());
 
@@ -105,7 +165,7 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                         relay: Option<String>,
                     }
                     crate::output::print_success(PeerDetailResponse {
-                        name: name.clone(),
+                        name: target_name.clone(),
                         node_id: addr.id.to_string(),
                         ticket: p.ticket.to_string(),
                         relay: relay.clone(),
@@ -113,9 +173,9 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     return Ok(());
                 }
 
-                println!("\n  Peer Detail: {}", name);
+                println!("\n  Peer Detail: {}", target_name);
                 println!("  ----------------------------------------------------");
-                println!("  Alias:     {}", name);
+                println!("  Alias:     {}", target_name);
                 println!("  Node ID:   {}", addr.id);
                 println!("  Ticket:    {}", p.ticket);
 
@@ -125,12 +185,19 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 println!("  ----------------------------------------------------\n");
             } else {
                 if ctx.args.json {
-                    crate::output::print_error(&format!("Peer '{}' not found", name), "not_found");
+                    crate::output::print_error(
+                        &format!("Peer '{}' not found", target_name),
+                        "not_found",
+                    );
                     return Ok(());
                 }
-                Ui::error(&format!("Peer '{}' not found in address book.", name));
+                Ui::error(&format!(
+                    "Peer '{}' not found in address book.",
+                    target_name
+                ));
             }
         }
+
         PeerAction::Rename { old_name, new_name } => {
             let target_old = match old_name {
                 Some(n) => n,

@@ -458,7 +458,9 @@ impl UnifiedAuthenticator {
         Ok(())
     }
 
-    fn check_password_match(&self, password: &str) -> Result<bool> {
+    /// Returns `Ok(Some(is_wormhole))` if the password matches.
+    /// `is_wormhole` is true if the temp (pairing) password was used, false if the node password was used.
+    fn check_password_match(&self, password: &str) -> Result<Option<bool>> {
         let argon2 = Argon2::default();
 
         // 1. Check Node Password (Permanent)
@@ -470,7 +472,7 @@ impl UnifiedAuthenticator {
                     .verify_password(password.as_bytes(), &parsed_hash)
                     .is_ok()
                 {
-                    return Ok(true);
+                    return Ok(Some(false));
                 }
             } else {
                 warn!("Invalid shadow file hash format.");
@@ -484,14 +486,14 @@ impl UnifiedAuthenticator {
                     .verify_password(password.as_bytes(), &parsed_hash)
                     .is_ok()
                 {
-                    return Ok(true);
+                    return Ok(Some(true));
                 }
             } else {
                 warn!("Invalid temp password hash format.");
             }
         }
 
-        Ok(false)
+        Ok(None)
     }
 
     fn notify_success(&self) {
@@ -580,22 +582,27 @@ impl Authenticator for UnifiedAuthenticator {
             return Ok(false);
         }
 
-        if self.check_password_match(password)? {
-            // Password accepted! Now we must authorize the key that was cached during the publickey step.
-            if let Ok(cache) = self.cached_key.lock() {
-                if let Some(key) = &*cache {
-                    let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
-                    let mut authorized = self.lock_keys();
-                    if !authorized.contains(key) {
-                        info!(%fingerprint, "Password accepted: Adding new client to vault.");
-                        let _event = write_authorized_client(&self.state, &fingerprint, key)?;
-                        authorized.push(key.clone());
-                        self.success_flag.store(true, Ordering::Relaxed);
-                        self.notify_success();
+        if let Some(is_wormhole) = self.check_password_match(password)? {
+            // Password accepted!
+            if is_wormhole {
+                // Wormhole code used: we must authorize the key that was cached during the publickey step.
+                if let Ok(cache) = self.cached_key.lock() {
+                    if let Some(key) = &*cache {
+                        let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+                        let mut authorized = self.lock_keys();
+                        if !authorized.contains(key) {
+                            info!(%fingerprint, "Wormhole code accepted: Adding new client to vault.");
+                            let _event = write_authorized_client(&self.state, &fingerprint, key)?;
+                            authorized.push(key.clone());
+                            self.success_flag.store(true, Ordering::Relaxed);
+                            self.notify_success();
+                        }
                     }
-                    return Ok(true);
                 }
+            } else {
+                info!("Node password accepted: Access granted for this session only.");
             }
+            return Ok(true);
         }
 
         let fails = self.failed_attempts.fetch_add(1, Ordering::Relaxed) + 1;
