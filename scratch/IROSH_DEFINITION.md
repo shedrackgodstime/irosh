@@ -4,7 +4,7 @@ Irosh is a high-assurance, peer-to-peer secure shell (SSH) and data transfer pro
 
 ---
 
-## 🔬 Core Identity: "Native P2P"
+##  Core Identity: "Native P2P"
 
 The fundamental difference between Irosh and other P2P-SSH attempts is its **Native Autonomy**. 
 
@@ -14,7 +14,7 @@ The fundamental difference between Irosh and other P2P-SSH attempts is its **Nat
 
 ---
 
-## ✨ Key Differentiators
+##  Key Differentiators
 
 ### 1. Wormhole Discovery (Human-Centric)
 Instead of forcing users to copy-paste 64-character cryptographic hex strings, Irosh uses **Wormholes**. 
@@ -32,7 +32,7 @@ Irosh is designed to be a permanent part of your OS.
 
 ---
 
-## 🛡️ Security Model
+##  Security Model
 
 Irosh implements a "Unified Authenticator" that provides multiple layers of defense:
 *   **TOFU (Trust On First Use)**: Standard SSH-style key pinning.
@@ -41,7 +41,7 @@ Irosh implements a "Unified Authenticator" that provides multiple layers of defe
 
 ---
 
-## 🌍 Platform Support Matrix
+##  Platform Support Matrix
 
 | Platform | Terminal Engine | Service Manager | PTY Support |
 | :--- | :--- | :--- | :--- |
@@ -52,7 +52,7 @@ Irosh implements a "Unified Authenticator" that provides multiple layers of defe
 
 ---
 
-## 🚀 The Vision: Beyond the Shell
+##  The Vision: Beyond the Shell
 
 Irosh is not just a tool for today; it is the foundation for a **Parallel P2P Infrastructure**.
 *   **V1.0 Goal**: 100% parity with OpenSSH features (Port Forwarding, Agent Forwarding).

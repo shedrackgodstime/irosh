@@ -291,7 +291,7 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             match storage::rename_peer(state, &target_old, &target_new)? {
                 true => {
                     Ui::success(&format!(
-                        "Peer renamed: '{}' → '{}'",
+                        "Peer renamed: '{}' -> '{}'",
                         target_old, target_new
                     ));
                     Ui::info(&format!("Connect with: irosh connect {}", target_new));

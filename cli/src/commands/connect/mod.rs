@@ -242,7 +242,7 @@ async fn exec_internal(
                     Ui::success(&format!("Peer alias updated to '{}'", target_name));
                 } else {
                     Ui::success(&format!(
-                        "✨ Peer auto-saved as '{}'. Use 'irosh {}' next time.",
+                        "Peer auto-saved as '{}'. Use 'irosh {}' next time.",
                         target_name, target_name
                     ));
                 }

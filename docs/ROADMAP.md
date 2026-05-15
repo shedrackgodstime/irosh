@@ -4,17 +4,17 @@ The primary goal of the v0.3.0 series is to achieve **Production Stability** and
 
 ## Phase 1: Feature Parity (v0.2.x) - [COMPLETE]
 Restored professional-grade CLI features and unified the library architecture.
-*   **[✓] Authentication Parity**: Unified authenticator with multi-mode support.
-*   **[✓] Terminal Fidelity**: RAII-based `TerminalGuard` and robust Windows ConPTY handling.
-*   **[✓] Interactive Escapes**: Full `~` command mode with history and completion.
-*   **[✓] Wormhole Hardening**: Pkarr-based rendezvous and rate-limiting.
+*   *** Authentication Parity**: Unified authenticator with multi-mode support.
+*   *** Terminal Fidelity**: RAII-based `TerminalGuard` and robust Windows ConPTY handling.
+*   *** Interactive Escapes**: Full `~` command mode with history and completion.
+*   *** Wormhole Hardening**: Pkarr-based rendezvous and rate-limiting.
 
 ## Phase 2: OS Integration (v0.3.0) - [COMPLETE]
 Expanding the "Service-Oriented" nature of Irosh across all major platforms.
-*   **[✓] Native Service Managers**: Cross-platform installers for systemd, launchd, and Windows Task Scheduler.
-*   **[✓] Service Diagnostics**: Unified `system status` command with real-time daemon health.
-*   **[✓] Storage Hardening**: High-assurance Windows ACLs and atomic secure writes.
-*   **[✓] IPC Lifecycle**: Synchronized shutdown of control listeners and session tasks.
+*   *** Native Service Managers**: Cross-platform installers for systemd, launchd, and Windows Task Scheduler.
+*   *** Service Diagnostics**: Unified `system status` command with real-time daemon health.
+*   *** Storage Hardening**: High-assurance Windows ACLs and atomic secure writes.
+*   *** IPC Lifecycle**: Synchronized shutdown of control listeners and session tasks.
 
 ## Phase 3: Stabilization & Polish (v0.3.x) - [CURRENT]
 Focusing on developer experience, documentation, and performance edge cases.

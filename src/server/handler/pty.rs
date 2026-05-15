@@ -480,7 +480,7 @@ impl ServerHandler {
                 );
 
                 // Previously this used an intermediate mpsc channel:
-                //   blocking reader → channel → async forwarder → SSH
+                //   blocking reader -> channel -> async forwarder -> SSH
                 // Every 8 KiB chunk passed through two async hops. For large
                 // transfers (e.g. 200 MB) that added ~25 000 unnecessary
                 // round-trips through the channel.

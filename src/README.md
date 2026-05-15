@@ -49,7 +49,7 @@ async fn main() -> irosh::Result<()> {
 - `storage`: Enables persistent storage for identities and trust records.
 - `transport`: Enables the underlying Iroh and Pkarr stacks.
 
-## ⚠️ Important Disclaimer & Liability
+## Important Disclaimer & Liability
 
 Irosh is a high-assurance tool, but it is currently in active, early-stage development. By using this library, you agree to the following:
 

@@ -28,7 +28,7 @@ pub async fn exec(
     // Check if vault is empty to show security notice
     let vault = irosh::storage::load_all_authorized_clients(&state)?;
     let password_set = irosh::storage::load_shadow_file(&state)?.is_some();
-    
+
     if vault.is_empty() && !password_set && !simple && !ctx.args.json {
         Ui::warn(
             "Vault is empty",

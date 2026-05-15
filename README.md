@@ -10,7 +10,21 @@ Irosh lets you connect to any machine using just its name, even if it's behind a
 
 ---
 
-## ⚡ Quick Start
+## Installation
+
+### Linux / macOS / Android (Termux)
+```bash
+curl -fsSL irosh.pages.dev/install | sh
+```
+
+### Windows (PowerShell)
+```powershell
+iwr irosh.pages.dev/ps | iex
+```
+
+---
+
+## Quick Start
 
 ### 1. On the Host (Server)
 Start the background service and generate a 3-word pairing code:
@@ -28,7 +42,7 @@ irosh apple-pie-sunset
 
 ---
 
-## 🛠️ Why use Irosh?
+## Why use Irosh?
 
 - **Zero-IP Connectivity**: Connect to your devices without needing a public IP or DNS.
 - **Native & Standalone**: Unlike other tools, Irosh is a full SSH server. It doesn't need OpenSSH installed.
@@ -38,7 +52,7 @@ irosh apple-pie-sunset
 
 ---
 
-## ⌨️ Interactive Toolkit
+## Interactive Toolkit
 
 During an active session, type these commands at the start of a line (after pressing Enter):
 
@@ -52,41 +66,20 @@ During an active session, type these commands at the start of a line (after pres
 
 ---
 
-## 🚀 Installation
+## Build from Source (Cargo)
 
-<details>
-<summary><b>Linux / macOS / Android (Termux)</b></summary>
-
-```bash
-curl -fsSL irosh.pages.dev/install | sh
-```
-</details>
-
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-iwr irosh.pages.dev/ps | iex
-```
-</details>
-
-<details>
-<summary><b>Build from Source (Cargo)</b></summary>
-
+If you have the Rust toolchain installed:
 ```bash
 cargo install irosh-cli
 ```
-</details>
 
 ---
-
-## 🤝 Collaboration
 
 Irosh is a solo-driven effort with a big vision for the future of the P2P internet. If you are passionate about Rust, P2P networking, or high-assurance security, your contributions are more than welcome! Feel free to open an issue or reach out if you're interested in collaborating.
 
 ---
 
-## ⚠️ Important Disclaimer & Liability
+## Important Disclaimer & Liability
 
 Irosh is a powerful remote access tool. By using this software, you agree to the following:
 
@@ -97,7 +90,7 @@ Irosh is a powerful remote access tool. By using this software, you agree to the
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 Irosh is built as a **"Fat Library"**. All the networking, security, and SSH logic lives in the `irosh` crate, while the CLI is a thin, high-performance UI layer.
 
@@ -107,6 +100,6 @@ Irosh is built as a **"Fat Library"**. All the networking, security, and SSH log
 
 ---
 
-## 📝 License
+## License
 
 Licensed under MIT or Apache-2.0.

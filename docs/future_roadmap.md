@@ -1,6 +1,6 @@
 # Irosh Future Roadmap: The "Impossible" Dreams
 
-This document outlines the strategic aspirations for Irosh. While our immediate goal is feature parity with OpenSSH, many of the sections below represent the "Outer Limits" of P2P engineering—features that might seem impossible today, but that we hope to explore for the sheer challenge and fun of building a truly decentralized world.
+This document outlines the strategic aspirations for Irosh. While our immediate goal is feature parity with OpenSSH, many of the sections below represent the "Outer Limits" of P2P engineering--features that might seem impossible today, but that we hope to explore for the sheer challenge and fun of building a truly decentralized world.
 
 ## 1. OpenSSH Escape Sequence Parity
 To provide a familiar environment for sysadmins, Irosh will implement the standard SSH escape character logic (triggered by `~` after a newline).

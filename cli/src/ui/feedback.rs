@@ -1,5 +1,5 @@
 use crate::output::JSON_MODE;
-use console::{Emoji, style};
+use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -32,7 +32,7 @@ pub fn spinner(message: &str) -> ProgressBar {
 /// [C9] Success / Failure Banner.
 pub fn success(msg: &str) {
     if !JSON_MODE.load(Ordering::SeqCst) {
-        eprintln!("{} {}", style(Emoji("✔", "v")).green().bold(), msg);
+        eprintln!("{} {}", style("v").green().bold(), msg);
     }
 }
 
@@ -42,19 +42,19 @@ pub fn error(msg: &str) {
 
 pub fn info(msg: &str) {
     if !JSON_MODE.load(Ordering::SeqCst) {
-        eprintln!("{} {}", style(Emoji("ℹ", "i")).blue().bold(), msg);
+        eprintln!("{} {}", style("i").blue().bold(), msg);
     }
 }
 
 pub fn security(msg: &str) {
     if !JSON_MODE.load(Ordering::SeqCst) {
-        eprintln!("{} {}", style(Emoji("🔒", "*")).magenta().bold(), msg);
+        eprintln!("{} {}", style("*").magenta().bold(), msg);
     }
 }
 
 pub fn p2p(msg: &str) {
     if !JSON_MODE.load(Ordering::SeqCst) {
-        eprintln!("{} {}", style(Emoji("📡", ">")).cyan().bold(), msg);
+        eprintln!("{} {}", style(">").cyan().bold(), msg);
     }
 }
 

@@ -50,8 +50,8 @@ pub enum ControlSequenceState {
 /// as typed characters.
 ///
 /// Sequence types handled:
-///   - **CSI** `\x1b[` + parameter bytes (0x30–0x3F) + intermediate bytes
-///     (0x20–0x2F) + final byte (0x40–0x7E)
+///   - **CSI** `\x1b[` + parameter bytes (0x30-0x3F) + intermediate bytes
+///     (0x20-0x2F) + final byte (0x40-0x7E)
 ///   - **OSC** `\x1b]` + arbitrary bytes + BEL (`\x07`) or ST (`\x1b\\`)
 ///   - **Single-char escape** `\x1b` + any other byte (e.g. `\x1bM`)
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -60,7 +60,7 @@ enum RemoteAnsiState {
     None,
     /// Saw `\x1b`; waiting for the sequence introducer.
     AfterEsc,
-    /// Inside a CSI sequence (`\x1b[`); consuming until a final byte (0x40–0x7E).
+    /// Inside a CSI sequence (`\x1b[`); consuming until a final byte (0x40-0x7E).
     InCsi,
     /// Inside an OSC sequence (`\x1b]`); consuming until BEL or ST.
     InOsc,
@@ -462,15 +462,15 @@ impl InputEngine {
                 self.remote_ansi = match byte {
                     b'[' => RemoteAnsiState::InCsi,
                     b']' => RemoteAnsiState::InOsc,
-                    // Single-char escape (ESC M, ESC =, ESC >, …): one introducer byte, done.
+                    // Single-char escape (ESC M, ESC =, ESC >, ...): one introducer byte, done.
                     _ => RemoteAnsiState::None,
                 };
             }
             RemoteAnsiState::InCsi => {
-                // Parameter bytes: 0x30–0x3F  (digits, `;`, `:`, `<`, `=`, `>`, `?`)
-                // Intermediate bytes: 0x20–0x2F (space, `!`, `"`, …)
-                // Together they occupy 0x20–0x3F. Any byte outside this range
-                // (i.e. 0x40–0x7E final byte, or a stray control char) ends the sequence.
+                // Parameter bytes: 0x30-0x3F  (digits, `;`, `:`, `<`, `=`, `>`, `?`)
+                // Intermediate bytes: 0x20-0x2F (space, `!`, `"`, ...)
+                // Together they occupy 0x20-0x3F. Any byte outside this range
+                // (i.e. 0x40-0x7E final byte, or a stray control char) ends the sequence.
                 if !(0x20..=0x3F).contains(&byte) {
                     self.remote_ansi = RemoteAnsiState::None;
                 }
@@ -746,7 +746,7 @@ mod tests {
 // Invariants enforced across all fuzz targets:
 //   1. No panic on any input - crash safety.
 //   2. `engine.mode` is always one of the two valid variants.
-//   3. When `active_line` is Some, its editor cursor ≤ line length.
+//   3. When `active_line` is Some, its editor cursor <= line length.
 //   4. `to_remote` and `to_local` vectors are structurally sound (no OOB).
 //
 // These tests intentionally have no `assert` on the *values* of output - only
@@ -784,7 +784,7 @@ mod fuzz {
         /// FUZZ-01: Arbitrary byte sequences must never panic the input engine.
         ///
         /// Covers: crash safety, mode invariant.
-        /// Strategy: random byte slices of length 0–512, fed one call at a time
+        /// Strategy: random byte slices of length 0-512, fed one call at a time
         /// (matching how `drive_session` calls it in production - one stdin read
         /// at a time, not individual bytes).
         #[test]
