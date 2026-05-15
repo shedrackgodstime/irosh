@@ -12,9 +12,15 @@ description = "Secure P2P SSH and data transfer protocol. Connect to any machine
 readme = "src/README.md"
 repository = "https://github.com/shedrackgodstime/irosh"
 license = "MIT OR Apache-2.0"
-keywords = ["ssh", "p2p", "iroh", "nat-traversal", "secure-shell", "quic"]
+keywords = ["ssh", "p2p", "iroh", "nat-traversal", "quic"]
 categories = ["network-programming", "asynchronous"]
-exclude = ["cli/"]
+exclude = [
+    "cli/",
+    "scratch/",
+    "public/",
+    ".github/",
+    "docs/",
+]
 
 # Feature flags let downstream consumers compile only what they need.
 # See docs/architecture.md "Feature Flags and Binary Size" for full rationale.
@@ -113,6 +119,3 @@ lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce number of codegen units to increase optimizations
 panic = "abort"     # Abort on panic for smaller binaries
 strip = true        # Strip symbols from binary
-
-[patch.crates-io]
-netwatch = { path = "./vendor/netwatch" }
