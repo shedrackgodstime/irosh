@@ -2,7 +2,12 @@ use tokio::io::AsyncWriteExt;
 
 use crate::client::{Session, TransferProgress};
 use crate::error::{ClientError, Result, TransportError};
-use crate::transport::transfer::{TransferFrame, read_next_frame, write_get_request};
+use crate::transport::transfer::{
+    BlobGetRequest, TransferFrame, read_next_frame, write_blob_get_request, write_get_request,
+};
+use iroh_blobs::{BlobFormat, Hash};
+use n0_future::StreamExt;
+use std::str::FromStr;
 
 use crate::client::transfer::store::{persist_temp_file, temp_transfer_path};
 
@@ -65,6 +70,131 @@ impl Session {
             self.download_file_with_progress(remote, local, on_progress)
                 .await
         }
+    }
+
+    /// Downloads a remote file using content-addressed blobs.
+    pub async fn download_blob<F>(
+        &mut self,
+        remote: impl AsRef<std::path::Path>,
+        local: impl AsRef<std::path::Path>,
+        mut on_progress: F,
+    ) -> Result<iroh_blobs::Hash>
+    where
+        F: FnMut(TransferProgress) + Clone + Send + 'static,
+    {
+        let remote = remote.as_ref();
+        let local = local.as_ref();
+
+        // 1. Send BlobGetRequest to server to resolve path to hash
+        let mut stream = self
+            .open_transfer_stream("blob download unavailable")
+            .await?;
+        write_blob_get_request(
+            &mut stream,
+            &BlobGetRequest {
+                path: remote.display().to_string(),
+            },
+        )
+        .await
+        .map_err(TransportError::from)?;
+
+        // 2. Expect BlobGetReady with the hash
+        let (hash_str, format_str, expected_size) = match read_next_frame(&mut stream)
+            .await
+            .map_err(TransportError::from)?
+        {
+            TransferFrame::BlobGetReady(ready) => (ready.hash, ready.format, ready.size),
+            TransferFrame::Error(failure) => {
+                return Err(ClientError::TransferRejected { failure }.into());
+            }
+            other => {
+                return Err(ClientError::DownloadFailed {
+                    details: format!("unexpected preflight frame: {other:?}"),
+                }
+                .into());
+            }
+        };
+
+        let hash = Hash::from_str(&hash_str).map_err(|e| ClientError::DownloadFailed {
+            details: format!("invalid hash from server: {e}"),
+        })?;
+
+        let format = if format_str == "hashseq" {
+            BlobFormat::HashSeq
+        } else {
+            BlobFormat::Raw
+        };
+
+        // 3. Download via iroh-blobs
+        let conn = self
+            .connection
+            .clone()
+            .ok_or_else(|| ClientError::DownloadFailed {
+                details: "not connected to any peer".to_string(),
+            })?;
+
+        let mut fetch_stream = self.blobs.remote().fetch(conn, hash).stream();
+
+        while let Some(item) = fetch_stream.next().await {
+            match item {
+                iroh_blobs::api::remote::GetProgressItem::Progress(bytes) => {
+                    // Note: fetch Progress item is cumulative payload bytes
+                    on_progress(TransferProgress::new(bytes, expected_size));
+                }
+                iroh_blobs::api::remote::GetProgressItem::Error(e) => {
+                    return Err(ClientError::DownloadFailed {
+                        details: format!("blob download failed: {e}"),
+                    }
+                    .into());
+                }
+                _ => {}
+            }
+        }
+
+        // 4. Export from blobs store to local path
+        if format == BlobFormat::HashSeq {
+            // Recreate directory
+            tokio::fs::create_dir_all(local).await?;
+
+            // Load collection
+            let collection = iroh_blobs::format::collection::Collection::load(hash, &*self.blobs)
+                .await
+                .map_err(|e| ClientError::DownloadFailed {
+                    details: format!("failed to parse collection {}: {}", hash, e),
+                })?;
+
+            for (name, item_hash) in collection.iter() {
+                let item_path = local.join(name);
+                if let Some(parent) = item_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+
+                if let Err(e) = self
+                    .blobs
+                    .blobs()
+                    .export(*item_hash, item_path.clone())
+                    .await
+                {
+                    return Err(ClientError::FileIo {
+                        operation: "export collection item",
+                        path: item_path.clone(),
+                        source: std::io::Error::other(e.to_string()),
+                    }
+                    .into());
+                }
+            }
+        } else {
+            if let Err(e) = self.blobs.blobs().export(hash, local).await {
+                return Err(ClientError::FileIo {
+                    operation: "export blob to local file",
+                    path: local.to_path_buf(),
+                    source: std::io::Error::other(e.to_string()),
+                }
+                .into());
+            }
+        }
+
+        Ok(hash)
     }
 
     /// Downloads one remote file to a local path on a separate authenticated stream.

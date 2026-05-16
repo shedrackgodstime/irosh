@@ -82,6 +82,7 @@ pub struct Session {
     endpoint: Option<iroh::Endpoint>,
     remote_metadata: Option<crate::transport::metadata::PeerMetadata>,
     state: SessionState,
+    pub(crate) blobs: iroh_blobs::store::fs::FsStore,
 }
 
 impl fmt::Debug for Session {

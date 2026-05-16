@@ -53,6 +53,8 @@ pub async fn exec(
         options = options.relay_mode(mode, Some(relay_url.clone()));
     }
 
+    let stealth_mode = options.secret_value().is_some();
+
     let (ready, server) = tokio::select! {
         res = Server::bind(options) => match res {
             Ok(res) => res,
@@ -69,11 +71,8 @@ pub async fn exec(
                         return Ok(());
                     }
                     Ui::error(
-                        "Failed to start: The Irosh daemon is already running in the background.",
-                    );
-                    Ui::info("Use 'irosh system status' or 'irosh system logs' to view activity.");
-                    Ui::info(
-                        "Tip: You can use 'irosh wormhole' to pair new devices without stopping the daemon.",
+                        "failed to start: the irosh daemon is already running in the background",
+                        Some("run 'irosh system status' to inspect it, or 'irosh wormhole' to pair without stopping the daemon"),
                     );
                     anyhow::bail!("Identity conflict.");
                 } else {
@@ -101,11 +100,13 @@ pub async fn exec(
             endpoint_id: String,
             fingerprint: String,
             ticket: String,
+            stealth_mode: bool,
         }
         crate::output::print_success(HostIdentityJson {
             endpoint_id: ready.endpoint_id().to_string(),
             fingerprint: fingerprint.to_string(),
             ticket: ready.ticket.to_string(),
+            stealth_mode,
         });
     } else if !simple {
         Ui::p2p("Server is starting...");
@@ -115,10 +116,18 @@ pub async fn exec(
             &ready.ticket.to_string(),
             "Hosting",
         );
+        if stealth_mode {
+            Ui::success(
+                "Stealth mode ACTIVE — only clients with the correct shared secret can connect. Wormhole pairing is disabled.",
+            );
+        }
         Ui::info("Press Ctrl+C to stop the server.");
     } else {
         println!("ID: {}", ready.endpoint_id());
         println!("TICKET: {}", ready.ticket);
+        if stealth_mode {
+            println!("STEALTH: active");
+        }
     }
 
     let shutdown = server.shutdown_handle();

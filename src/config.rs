@@ -41,6 +41,11 @@ impl StateConfig {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    /// Returns the directory where iroh blobs are stored.
+    pub fn blobs_path(&self) -> PathBuf {
+        self.root.join("blobs")
+    }
 }
 
 /// Defines the policy for handling remote host keys.

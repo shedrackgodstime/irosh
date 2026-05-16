@@ -113,10 +113,10 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
                     user: "irosh".to_string(),
                     password: "wrong-password".to_string(),
                 });
-        let (conn, endpoint) = Client::dial_p2p(&client_options, ready.ticket().clone(), true)
+        let connection_info = Client::dial_p2p(&client_options, ready.ticket().clone(), true)
             .await
             .unwrap();
-        let result = Client::establish_session(&client_options, (conn, endpoint)).await;
+        let result = Client::establish_session(&client_options, connection_info).await;
 
         assert!(
             result.is_err(),

@@ -49,6 +49,19 @@ pub enum InternalCommand {
     },
 }
 
+/// Detailed information about an active peer session.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionStatus {
+    /// The remote peer's unique node ID.
+    pub peer_id: String,
+    /// When the session started (RFC3339).
+    pub started_at: String,
+    /// Total bytes sent to this peer.
+    pub bytes_sent: u64,
+    /// Total bytes received from this peer.
+    pub bytes_received: u64,
+}
+
 /// Detailed daemon status information.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DaemonStatus {
@@ -62,6 +75,8 @@ pub struct DaemonStatus {
     pub wormhole_code: Option<String>,
     /// Number of active SSH sessions.
     pub active_sessions: usize,
+    /// Rich information about each active session.
+    pub sessions: Vec<SessionStatus>,
 }
 
 /// Responses sent by the irosh daemon back to the IPC client.

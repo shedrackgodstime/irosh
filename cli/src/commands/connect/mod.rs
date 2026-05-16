@@ -4,7 +4,7 @@ use crate::ui::Ui;
 use anyhow::Result;
 use irosh::sys::current_terminal_size;
 use irosh::{Client, ClientOptions, PtyOptions};
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 
 mod completion;
 mod editor;
@@ -34,7 +34,7 @@ use crate::context::CliContext;
 
 /// Entry point for the shortcut 'irosh <target>'
 pub async fn exec_shortcut(target: &str, ctx: &CliContext) -> Result<()> {
-    exec_internal(Some(target.to_string()), None, None, None, None, ctx).await
+    exec_internal(Some(target.to_string()), None, None, None, None, None, ctx).await
 }
 
 /// Entry point for 'irosh connect <target>'
@@ -44,9 +44,10 @@ pub async fn exec(
     ticket: Option<String>,
     forward: Option<String>,
     secret: Option<String>,
+    exec_cmd: Option<String>,
     ctx: &CliContext,
 ) -> Result<()> {
-    exec_internal(target, code, ticket, forward, secret, ctx).await
+    exec_internal(target, code, ticket, forward, secret, exec_cmd, ctx).await
 }
 
 async fn exec_internal(
@@ -55,6 +56,7 @@ async fn exec_internal(
     ticket_str: Option<String>,
     forward_str: Option<String>,
     secret_str: Option<String>,
+    exec_cmd: Option<String>,
     ctx: &CliContext,
 ) -> Result<()> {
     let state = ctx.state.clone();
@@ -152,7 +154,7 @@ async fn exec_internal(
         }
     };
 
-    let connection = tokio::select! {
+    let connection_info = tokio::select! {
         res = Client::dial_p2p(&options, ticket.clone(), is_pairing) => {
             match res {
                 Ok(c) => c,
@@ -174,9 +176,9 @@ async fn exec_internal(
         }
     };
 
-    pb.set_message("Performing SSH handshake...");
+    pb.set_message("Authenticating...");
     let mut session = tokio::select! {
-        res = Client::establish_session(&options, connection) => {
+        res = Client::establish_session(&options, connection_info) => {
             match res {
                 Ok(s) => s,
                 Err(e) => {
@@ -198,6 +200,17 @@ async fn exec_internal(
     };
 
     pb.finish_with_message("Done");
+
+    // NON-INTERACTIVE EXEC MODE
+    if let Some(cmd) = exec_cmd {
+        let output = session.capture_exec(&cmd).await?;
+        std::io::stdout().write_all(&output.stdout)?;
+        std::io::stderr().write_all(&output.stderr)?;
+        if output.exit_status != 0 {
+            std::process::exit(output.exit_status as i32);
+        }
+        return Ok(());
+    }
 
     let metadata = session.remote_metadata();
     let display_name = if let Some(meta) = metadata {

@@ -457,7 +457,21 @@ pub enum IroshError {
     /// The requested connection target is invalid or unparseable.
     #[error("invalid connection target: {raw}")]
     InvalidTarget { raw: String },
+    /// RPC errors from iroh-blobs.
+    #[error("rpc error: {0}")]
+    Rpc(String),
 }
 
 /// A specialized `Result` type for irosh library operations.
 pub type Result<T> = std::result::Result<T, IroshError>;
+impl From<crate::transport::transfer::TransferError> for IroshError {
+    fn from(e: crate::transport::transfer::TransferError) -> Self {
+        Self::Transport(TransportError::Transfer(e))
+    }
+}
+
+impl From<irpc::Error> for IroshError {
+    fn from(e: irpc::Error) -> Self {
+        Self::Rpc(e.to_string())
+    }
+}

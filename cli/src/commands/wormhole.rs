@@ -80,10 +80,8 @@ pub async fn exec(
     } else {
         // Rule 2: Vault NOT empty and no password set -> BLOCKED.
         Ui::error(
-            "Wormhole is blocked: Your server has trusted devices but no Node Password is set.",
-        );
-        Ui::info(
-            "Tip: Set a Node Password ('irosh passwd set') or use '--passwd' to issue a one-time invite.",
+            "wormhole blocked: trusted devices exist but no Node Password is set",
+            Some("run 'irosh passwd set' or use '--passwd' to issue a one-time invite"),
         );
         anyhow::bail!("Security initiation block.");
     }
@@ -94,17 +92,14 @@ pub async fn exec(
     let is_password_protected = passwd || has_node_password;
     if let Some(ref custom_code) = code {
         if !is_password_protected && custom_code.len() < 8 {
-            Ui::error(&format!(
-                "Custom wormhole code '{}' is too short ({} chars).",
-                custom_code,
-                custom_code.len()
-            ));
-            Ui::info(
-                "Requirement: codes must be at least 8 characters when no session password is set.",
+            Ui::error(
+                &format!(
+                    "wormhole code '{}' is too short ({} chars) — minimum 8 chars when no session password is set",
+                    custom_code,
+                    custom_code.len()
+                ),
+                Some("use a longer code, or add a password with --passwd"),
             );
-            Ui::info("Options:");
-            Ui::info("  1. Use a longer code:   irosh wormhole my-longer-code");
-            Ui::info("  2. Add a password:      irosh wormhole --passwd my-code");
             anyhow::bail!("Wormhole code too short.");
         }
     }
@@ -184,7 +179,7 @@ async fn handle_disable(client: &IpcClient) -> Result<()> {
                 crate::output::print_error(&e, "disable_failed");
                 return Ok(());
             }
-            Ui::error(&format!("Failed to disable: {}", e));
+            Ui::error(&format!("failed to disable wormhole: {}", e), None);
         }
         _ => anyhow::bail!("Unexpected response from daemon"),
     }
@@ -237,7 +232,10 @@ async fn handle_enable_daemon(
                 crate::output::print_error(&e, "daemon_error");
                 return Ok(());
             }
-            Ui::error(&format!("Daemon rejected: {}", e));
+            Ui::error(
+                &format!("daemon rejected wormhole request: {}", e),
+                Some("run 'irosh system status' for daemon health details"),
+            );
         }
         _ => anyhow::bail!("Unexpected response from daemon"),
     }

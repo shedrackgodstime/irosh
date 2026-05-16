@@ -18,7 +18,7 @@ pub async fn setup_forwarding(session: &mut Session, forward_str: Option<String>
                     "Forwarding {} -> {}:{}",
                     bound, remote_host, remote_port
                 )),
-                Err(e) => Ui::error(&format!("Forwarding failed: {}", e)),
+                Err(e) => Ui::error(&format!("port forwarding failed: {}", e), None),
             }
         }
     }

@@ -1,38 +1,19 @@
-# Irosh Post-Migration Roadmap
+# Irosh v0.4.0 Roadmap
 
-This document tracks the development phases for Irosh v0.3.0 and beyond, now that the Iroh 1.0 migration is complete.
+This roadmap focuses on production hardening, security persistence, and cross-platform refinement.
 
-## Phase 1: High-Performance File Transfers (`iroh-blobs`)
-*Goal: Replace manual stream-based file transfers with the native Iroh blobs protocol.*
+## Active Development
+- [ ] **Automatic Session Timeout** — implement idle-timeout logic to close inactive SSH channels and release P2P resources.
+- [ ] **Authenticator Persistence** — harden `UnifiedAuthenticator` to survive daemon restarts by persisting session trust tokens and rate-limit states.
+- [ ] **Android Client Polish** — refine terminal resizing and input handling for Termux and other mobile SSH environments.
+- [ ] **Performance Benchmarking** — conduct transfer speed tests over high-latency and lossy P2P links to optimize `iroh-blobs` windowing.
 
-- [ ] Implement `iroh-blobs` provider in the server.
-- [ ] Add `iroh-blobs` client logic to the CLI.
-- [ ] Implement BLAKE3 integrity checking for all transfers.
-- [ ] Add transfer resume support (native to blobs).
-- [ ] Benchmark transfer speeds over high-latency connections.
-
-## Phase 2: Stealth Mode & Protocol Hardening
-*Goal: Make Irosh nodes invisible to unauthorized scanners.*
-
-- [ ] Implement **Challenge-Response ALPN** negotiation.
-- [ ] Add server-side "Stealth Mode" toggle to ignore unknown ALPNs.
-- [ ] Harden the `UnifiedAuthenticator` session persistence.
-- [ ] Implement automatic session timeout for idle connections.
-
-## Phase 3: UI/UX Polish (TUI Dashboard)
-*Goal: Create a professional terminal interface for managing a fleet of nodes.*
-
-- [ ] Design a `ratatui` based dashboard for the CLI.
-- [ ] Implement real-time connection monitoring.
-- [ ] Add a "File Browser" UI for `iroh-blobs` interactions.
-- [ ] Add interactive "Device Pairing" flow with better visual feedback.
-
-## Phase 4: Mobile & Cross-Platform Refinement
-*Goal: Ensure a premium experience on Android and other unix-like systems.*
-
-- [ ] Optimize the `musl` build for smaller binary size (LTO + Strip).
-- [ ] Refine terminal resize handling on Android/Termux.
-- [ ] Implement background keep-alive for the Android server.
+## Completed (v0.3.x Cycle)
+- [x] Native `iroh-blobs` integration (verified BLAKE3 transfers). ✅
+- [x] Stealth Mode (ALPN-locked private discovery). ✅
+- [x] Rich System Status (telemetry table). ✅
+- [x] Headless Execution (`iroh connect --exec`). ✅
+- [x] "Fat Library" architecture (Thin CLI). ✅
 
 ---
-*Note: Provisioning suite is intentionally excluded from this immediate roadmap as per USER request.*
+*Status: v0.3.0 is stable. v0.4.0 development is focused on reliability and edge-case hardening.*

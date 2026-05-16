@@ -127,7 +127,10 @@ async fn main() {
                 crate::output::print_error(&format!("Initialization failed: {}", e), "init_failed");
             } else {
                 use crate::ui::Ui;
-                Ui::error(&format!("Initialization failed: {}", e));
+                Ui::error(
+                    &format!("initialization failed: {}", e),
+                    Some("check that ~/.irosh exists and is readable, or re-run with --verbose"),
+                );
             }
             std::process::exit(1);
         }
@@ -153,13 +156,42 @@ async fn main() {
         if ctx.args.json {
             crate::output::print_error(&format!("{:#}", e), "command_failed");
         } else {
-            if ctx.args.verbose {
-                Ui::error(&format!("{:#}", e));
+            let msg = if ctx.args.verbose {
+                format!("{:#}", e)
             } else {
-                Ui::error(&format!("{}", e));
-                eprintln!("  Tip: Run with --verbose for full diagnostic details.");
-            }
+                format!("{}", e)
+            };
+            let tip = classify_error(&e);
+            Ui::error(&msg, tip);
         }
         std::process::exit(1);
+    }
+}
+
+/// Maps a known error to a context-specific tip the user can act on.
+///
+/// Returns `None` for errors that are self-explanatory or already contain
+/// enough context. The fallback `"--verbose"` tip is added in the caller only
+/// when no specific tip is available.
+fn classify_error(e: &anyhow::Error) -> Option<&'static str> {
+    let s = format!("{:#}", e).to_lowercase();
+
+    if s.contains("connection refused") || s.contains("connect failed") || s.contains("timed out") {
+        Some("check that the remote server is running with 'irosh host'")
+    } else if s.contains("wormhole") && (s.contains("not found") || s.contains("no peer")) {
+        Some("wormhole codes expire after 60s — ask the remote side to re-run 'irosh wormhole'")
+    } else if s.contains("auth") && s.contains("failed") {
+        Some("run 'irosh peer list' to see trusted keys, or re-pair with 'irosh wormhole'")
+    } else if s.contains("blobs") || s.contains("store") {
+        Some("check permissions on ~/.irosh/client/blobs, or re-run with --verbose")
+    } else if s.contains("identity conflict") || s.contains("already running") {
+        Some("use 'irosh system status' to inspect the running daemon")
+    } else if s.contains("permission denied") {
+        Some("check file permissions, or run 'irosh check' for a full diagnostic")
+    } else if s.contains("no such file") || s.contains("not found") {
+        Some("verify the path exists and is accessible from the current directory")
+    } else {
+        // Generic fallback only shown when no specific tip matches
+        Some("run with --verbose for full diagnostic details")
     }
 }

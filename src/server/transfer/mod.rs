@@ -14,6 +14,7 @@ pub(crate) use state::ConnectionShellState;
 pub(super) use state::ShellContext;
 
 pub(crate) async fn handle_transfer_stream(
+    connection: iroh::endpoint::Connection,
     mut stream: IrohDuplex,
     shell_state: ConnectionShellState,
 ) -> Result<()> {
@@ -25,6 +26,38 @@ pub(crate) async fn handle_transfer_stream(
                 files::handle_put_request(&mut stream, request, context, &shell_state).await
             {
                 warn!("Put transfer handler failed: {}", err);
+                let failure = extract_transfer_failure(&err);
+                let _ = write_transfer_error(&mut stream, &failure).await;
+            }
+            Ok(())
+        }
+        Ok(TransferFrame::BlobPutRequest(request)) => {
+            if let Err(err) = files::handle_blob_put_request(
+                &mut stream,
+                connection,
+                request,
+                context,
+                &shell_state,
+            )
+            .await
+            {
+                warn!("Blob Put transfer handler failed: {}", err);
+                let failure = extract_transfer_failure(&err);
+                let _ = write_transfer_error(&mut stream, &failure).await;
+            }
+            Ok(())
+        }
+        Ok(TransferFrame::BlobGetRequest(request)) => {
+            if let Err(err) = files::handle_blob_get_request(
+                &mut stream,
+                connection,
+                request,
+                context,
+                &shell_state,
+            )
+            .await
+            {
+                warn!("Blob Get transfer handler failed: {}", err);
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
             }

@@ -80,7 +80,10 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                         crate::output::print_error(&format!("Unknown key: {}", key), "invalid_key");
                         return Ok(());
                     }
-                    Ui::error(&format!("Unknown configuration key: {}", key));
+                    Ui::error(
+                        &format!("unknown configuration key: {}", key),
+                        Some("run 'irosh config list' to see all valid keys"),
+                    );
                     anyhow::bail!("Invalid key.");
                 }
             };
@@ -126,7 +129,10 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     config.default_user = if value.is_empty() { None } else { Some(value) }
                 }
                 _ => {
-                    Ui::error(&format!("Unknown configuration key: {}", key));
+                    Ui::error(
+                        &format!("unknown configuration key: {}", key),
+                        Some("run 'irosh config list' to see all valid keys"),
+                    );
                     anyhow::bail!("Invalid key.");
                 }
             }

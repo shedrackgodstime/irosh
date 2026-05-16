@@ -23,9 +23,11 @@ pub(crate) mod startup;
 pub(crate) mod transfer;
 
 use russh::server;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize};
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::auth::Authenticator;
@@ -155,7 +157,7 @@ impl ServerOptions {
         self.security
     }
 
-    pub(crate) fn secret_value(&self) -> Option<&str> {
+    pub fn secret_value(&self) -> Option<&str> {
         self.secret.as_deref()
     }
 }
@@ -178,6 +180,62 @@ pub struct ServerReady {
     pub direct_addresses: Vec<String>,
     /// The OpenSSH formatted host public key.
     pub host_key_openssh: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ActiveSession {
+    pub(crate) peer_id: String,
+    pub(crate) started_at: chrono::DateTime<chrono::Utc>,
+    pub(crate) bytes_sent: Arc<AtomicU64>,
+    pub(crate) bytes_received: Arc<AtomicU64>,
+}
+
+#[derive(Default, Clone)]
+pub(crate) struct SessionTracker {
+    pub(crate) sessions: Arc<Mutex<HashMap<usize, ActiveSession>>>,
+    pub(crate) next_id: Arc<AtomicUsize>,
+}
+
+impl SessionTracker {
+    fn new() -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    async fn register(&self, peer_id: String) -> (usize, Arc<AtomicU64>, Arc<AtomicU64>) {
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let sent = Arc::new(AtomicU64::new(0));
+        let received = Arc::new(AtomicU64::new(0));
+        let session = ActiveSession {
+            peer_id,
+            started_at: chrono::Utc::now(),
+            bytes_sent: sent.clone(),
+            bytes_received: received.clone(),
+        };
+        self.sessions.lock().await.insert(id, session);
+        (id, sent, received)
+    }
+
+    async fn unregister(&self, id: usize) {
+        self.sessions.lock().await.remove(&id);
+    }
+
+    async fn snapshot(&self) -> Vec<ipc::SessionStatus> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .values()
+            .map(|s| ipc::SessionStatus {
+                peer_id: s.peer_id.clone(),
+                started_at: s.started_at.to_rfc3339(),
+                bytes_sent: s.bytes_sent.load(std::sync::atomic::Ordering::Relaxed),
+                bytes_received: s.bytes_received.load(std::sync::atomic::Ordering::Relaxed),
+            })
+            .collect()
+    }
 }
 
 impl ServerReady {
@@ -225,7 +283,9 @@ pub struct Server {
     control_rx: tokio::sync::mpsc::Receiver<ipc::InternalCommand>,
     ticket: crate::transport::ticket::Ticket,
     gossip: iroh_gossip::net::Gossip,
+    blobs: iroh_blobs::store::fs::FsStore,
     shutdown_on_wormhole_success: bool,
+    session_tracker: SessionTracker,
 }
 
 impl fmt::Debug for Server {
@@ -295,6 +355,8 @@ struct SshProtocol {
     success_tx: tokio::sync::mpsc::Sender<()>,
     failure_tx: tokio::sync::mpsc::Sender<()>,
     active_sessions: Arc<std::sync::atomic::AtomicUsize>,
+    blobs: iroh_blobs::store::fs::FsStore,
+    session_tracker: Arc<SessionTracker>,
 }
 
 impl std::fmt::Debug for SshProtocol {
@@ -310,13 +372,32 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
     ) -> std::result::Result<(), iroh::protocol::AcceptError> {
         self.active_sessions
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        struct SessionGuard(Arc<std::sync::atomic::AtomicUsize>);
+        struct SessionGuard(
+            Arc<std::sync::atomic::AtomicUsize>,
+            usize,
+            Arc<SessionTracker>,
+        );
         impl Drop for SessionGuard {
             fn drop(&mut self) {
                 self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                let id = self.1;
+                let tracker = self.2.clone();
+                tokio::spawn(async move {
+                    tracker.unregister(id).await;
+                });
             }
         }
-        let _guard = SessionGuard(self.active_sessions.clone());
+
+        let (session_id, bytes_sent, bytes_received) = self
+            .session_tracker
+            .register(connection.remote_id().to_string())
+            .await;
+
+        let _guard = SessionGuard(
+            self.active_sessions.clone(),
+            session_id,
+            self.session_tracker.clone(),
+        );
 
         tracing::debug!("P2P connection established: {:?}", connection.remote_id());
 
@@ -330,10 +411,11 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
 
         info!("Established bi-directional SSH stream over Irosh");
 
-        let shell_state = ConnectionShellState::new(self.state.root().to_path_buf());
+        let shell_state =
+            ConnectionShellState::new(self.state.root().to_path_buf(), self.blobs.clone());
         spawn_side_stream_listener(connection, shell_state.clone());
 
-        let stream = IrohDuplex::new(send, recv);
+        let stream = IrohDuplex::with_stats(send, recv, bytes_sent, bytes_received);
         let mut session_authenticator = self.authenticator.clone();
         let mut session_config = self.config.clone();
 
@@ -491,16 +573,29 @@ impl Server {
             success_tx: success_tx.clone(),
             failure_tx: failure_tx.clone(),
             active_sessions: active_sessions.clone(),
+            blobs: self.blobs.clone(),
+            session_tracker: Arc::new(SessionTracker::new()),
         };
 
         let mut pairing_protocol = base_protocol.clone();
         pairing_protocol.is_pairing = true;
 
-        let router = iroh::protocol::Router::builder(self.endpoint.clone())
+        let blobs_protocol = iroh_blobs::BlobsProtocol::new(&self.blobs, None);
+
+        let stealth_mode = self.secret.is_some();
+
+        let mut builder = iroh::protocol::Router::builder(self.endpoint.clone())
             .accept(primary_alpn, base_protocol)
-            .accept(pairing_alpn, pairing_protocol)
             .accept(iroh_gossip::ALPN, GossipProtocol(self.gossip.clone()))
-            .spawn();
+            .accept(iroh_blobs::ALPN, blobs_protocol);
+
+        // In stealth mode the pairing ALPN was never bound on the endpoint,
+        // so there is no point registering a handler for it.
+        if !stealth_mode {
+            builder = builder.accept(pairing_alpn, pairing_protocol);
+        }
+
+        let router = builder.spawn();
 
         let mut shutdown_requested = false;
 
@@ -592,12 +687,14 @@ impl Server {
                             }
                             ipc::InternalCommand::GetStatus { tx } => {
                                 let wh_lock = wormhole.lock().await;
+                                let sessions = self.session_tracker.snapshot().await;
                                 let _ = tx.send(ipc::IpcResponse::Status(ipc::DaemonStatus {
                                     endpoint_id: self.endpoint.id().to_string(),
                                     ticket: self.ticket.to_string(),
                                     wormhole_active: wh_lock.is_some(),
                                     wormhole_code: wh_lock.as_ref().map(|w| w.code.clone()),
                                     active_sessions: active_sessions.load(std::sync::atomic::Ordering::Relaxed),
+                                    sessions,
                                 }));
                             }
                             ipc::InternalCommand::Shutdown { tx } => {

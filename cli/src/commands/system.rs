@@ -106,6 +106,10 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                             } else {
                                 Ui::status("Wormhole", "DISABLED", None);
                             }
+
+                            if !info.sessions.is_empty() {
+                                Ui::session_table(&info.sessions);
+                            }
                         } else {
                             Ui::warn(
                                 "IPC Connectivity",

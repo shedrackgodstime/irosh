@@ -8,20 +8,22 @@ use tracing::warn;
 use crate::error::{Result, ServerError};
 use crate::server::shell_access::{configure_live_shell_context, resolve_process_cwd};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct ConnectionShellState {
     shell_pid: Arc<StdMutex<Option<u32>>>,
     cached_cwd: Arc<StdMutex<Option<(std::path::PathBuf, std::time::Instant)>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) state_root: PathBuf,
+    pub(crate) blobs: iroh_blobs::store::fs::FsStore,
 }
 
 impl ConnectionShellState {
-    pub(crate) fn new(state_root: PathBuf) -> Self {
+    pub(crate) fn new(state_root: PathBuf, blobs: iroh_blobs::store::fs::FsStore) -> Self {
         Self {
             shell_pid: Arc::new(StdMutex::new(None)),
             cached_cwd: Arc::new(StdMutex::new(None)),
             state_root,
+            blobs,
         }
     }
 

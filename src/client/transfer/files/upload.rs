@@ -3,9 +3,11 @@ use tokio::io::AsyncReadExt;
 use crate::client::{Session, TransferProgress};
 use crate::error::{ClientError, Result, TransportError};
 use crate::transport::transfer::{
-    MAX_CHUNK_BYTES, TransferFrame, TransferReady, read_next_frame, write_put_chunk,
-    write_put_complete, write_put_request,
+    BlobPutRequest, MAX_CHUNK_BYTES, TransferFrame, TransferReady, read_next_frame,
+    write_blob_put_request, write_put_chunk, write_put_complete, write_put_request,
 };
+use iroh_blobs::BlobFormat;
+use n0_future::StreamExt;
 
 impl Session {
     /// Uploads one local file or directory to the remote peer.
@@ -61,6 +63,103 @@ impl Session {
         } else {
             self.upload_file_with_progress(local, remote, on_progress)
                 .await
+        }
+    }
+
+    /// Uploads a file using content-addressed blobs with progress reporting.
+    pub async fn upload_blob<F>(
+        &mut self,
+        local: impl AsRef<std::path::Path>,
+        remote: impl AsRef<std::path::Path>,
+        mut on_progress: F,
+    ) -> Result<iroh_blobs::Hash>
+    where
+        F: FnMut(TransferProgress) + Clone + Send + 'static,
+    {
+        let local = local.as_ref();
+        let remote = remote.as_ref();
+        // 1. Detect if it's a directory to choose correct format
+        let is_dir = tokio::fs::metadata(local)
+            .await
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        let target_format = if is_dir {
+            BlobFormat::HashSeq
+        } else {
+            BlobFormat::Raw
+        };
+
+        let mut add_stream = self
+            .blobs
+            .blobs()
+            .add_path_with_opts(iroh_blobs::api::blobs::AddPathOptions {
+                path: local.to_path_buf(),
+                format: target_format,
+                mode: iroh_blobs::api::blobs::ImportMode::Copy,
+            })
+            .stream()
+            .await;
+
+        let mut hash = None;
+        let mut format = target_format;
+        let mut current_total = 0u64;
+
+        while let Some(item) = add_stream.next().await {
+            match item {
+                iroh_blobs::api::blobs::AddProgressItem::Done(tag) => {
+                    hash = Some(tag.hash());
+                    format = tag.format();
+                }
+                iroh_blobs::api::blobs::AddProgressItem::Size(size) => {
+                    current_total = size;
+                }
+                iroh_blobs::api::blobs::AddProgressItem::OutboardProgress(offset) => {
+                    // Using offset as a proxy for progress
+                    on_progress(TransferProgress::new(offset, current_total));
+                }
+                iroh_blobs::api::blobs::AddProgressItem::Error(e) => {
+                    return Err(ClientError::UploadFailed {
+                        details: format!("failed to add file to blobs store: {}", e),
+                    }
+                    .into());
+                }
+                _ => {}
+            }
+        }
+
+        let hash = hash.ok_or_else(|| ClientError::UploadFailed {
+            details: "add_path finished without hash".to_string(),
+        })?;
+
+        // 2. Open transfer stream and send BlobPutRequest
+        let mut stream = self.open_transfer_stream("blob upload unavailable").await?;
+
+        write_blob_put_request(
+            &mut stream,
+            &BlobPutRequest {
+                path: remote.display().to_string(),
+                hash: hash.to_string(),
+                format: if format == BlobFormat::HashSeq {
+                    "hashseq".to_string()
+                } else {
+                    "raw".to_string()
+                },
+            },
+        )
+        .await
+        .map_err(TransportError::from)?;
+
+        // 3. Wait for completion
+        match read_next_frame(&mut stream)
+            .await
+            .map_err(TransportError::from)?
+        {
+            TransferFrame::PutComplete(_) => Ok(hash),
+            TransferFrame::Error(failure) => Err(ClientError::TransferRejected { failure }.into()),
+            other => Err(ClientError::UploadFailed {
+                details: format!("unexpected preflight frame: {other:?}"),
+            }
+            .into()),
         }
     }
 

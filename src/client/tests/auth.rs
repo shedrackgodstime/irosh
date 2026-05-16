@@ -22,9 +22,15 @@ async fn publickey_auth_round_trip_succeeds_over_duplex_stream() {
             Vec::new(),
             server_state.clone(),
         ));
+    let server_blobs = iroh_blobs::store::fs::FsStore::load(server_state.blobs_path())
+        .await
+        .unwrap();
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(server_state.root().to_path_buf()),
+        crate::server::transfer::ConnectionShellState::new(
+            server_state.root().to_path_buf(),
+            server_blobs,
+        ),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
@@ -84,9 +90,15 @@ async fn publickey_auth_is_rejected_for_untrusted_client_key() {
             vec![authorized_identity.ssh_key.public_key().clone()],
             server_state.clone(),
         ));
+    let server_blobs = iroh_blobs::store::fs::FsStore::load(server_state.blobs_path())
+        .await
+        .unwrap();
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(server_state.root().to_path_buf()),
+        crate::server::transfer::ConnectionShellState::new(
+            server_state.root().to_path_buf(),
+            server_blobs,
+        ),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
@@ -155,9 +167,15 @@ async fn connect_stream_fails_on_server_key_mismatch() {
             Vec::new(),
             server_state.clone(),
         ));
+    let server_blobs = iroh_blobs::store::fs::FsStore::load(server_state.blobs_path())
+        .await
+        .unwrap();
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(std::path::PathBuf::from(".")),
+        crate::server::transfer::ConnectionShellState::new(
+            std::path::PathBuf::from("."),
+            server_blobs,
+        ),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await

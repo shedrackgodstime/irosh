@@ -25,6 +25,28 @@ pub struct GetRequest {
     pub recursive: bool,
 }
 
+/// A request to push a content-addressed blob.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlobPutRequest {
+    pub path: String,
+    pub hash: String,
+    pub format: String,
+}
+
+/// A request to pull a content-addressed blob.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlobGetRequest {
+    pub path: String,
+}
+
+/// A response indicating the blob is ready to be downloaded via iroh-blobs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlobGetReady {
+    pub hash: String,
+    pub format: String,
+    pub size: u64,
+}
+
 /// A ready response that includes the expected file size.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransferReady {
@@ -178,6 +200,9 @@ pub enum TransferFrame {
     ExistsResponse(ExistsResponse),
     CompletionRequest(CompletionRequest),
     CompletionResponse(CompletionResponse),
+    BlobPutRequest(BlobPutRequest),
+    BlobGetRequest(BlobGetRequest),
+    BlobGetReady(BlobGetReady),
     NewEntry(EntryHeader),
     EntryComplete(EntryComplete),
     Error(TransferFailure),

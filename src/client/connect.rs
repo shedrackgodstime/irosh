@@ -142,8 +142,9 @@ impl Client {
                 (Self::connect_wormhole(options, &code).await?, true)
             }
         };
-        let (connection, endpoint) = Self::dial_p2p(options, ticket, is_pairing).await?;
-        Self::establish_session(options, (connection, endpoint)).await
+
+        let connection_info = Self::dial_p2p(options, ticket, is_pairing).await?;
+        Self::establish_session(options, connection_info).await
     }
 
     /// Performs a wormhole rendezvous to discover a peer's connection ticket.
@@ -182,7 +183,16 @@ impl Client {
         options: &ClientOptions,
         ticket: Ticket,
         is_pairing: bool,
-    ) -> Result<(iroh::endpoint::Connection, iroh::Endpoint)> {
+    ) -> Result<(
+        iroh::endpoint::Connection,
+        iroh::Endpoint,
+        iroh_blobs::store::fs::FsStore,
+    )> {
+        let blobs = iroh_blobs::store::fs::FsStore::load(options.state().blobs_path())
+            .await
+            .map_err(|e| ClientError::MetadataFailed {
+                detail: format!("failed to load blobs store: {}", e),
+            })?;
         let target_addr = ticket.to_addr();
         let identity = load_or_generate_identity(options.state()).await?;
         let alpn = if is_pairing {
@@ -192,10 +202,17 @@ impl Client {
         };
         let endpoint = bind_client_endpoint(
             identity.secret_key,
-            vec![alpn.clone()],
+            vec![alpn.clone(), iroh_blobs::ALPN.to_vec()],
             options.relay_mode.clone(),
         )
         .await?;
+
+        let _router = iroh::protocol::Router::builder(endpoint.clone())
+            .accept(
+                iroh_blobs::ALPN,
+                iroh_blobs::BlobsProtocol::new(&blobs, None),
+            )
+            .spawn();
 
         let mut last_err = None;
         for attempt in 1..=3 {
@@ -210,7 +227,7 @@ impl Client {
             )
             .await
             {
-                Ok(Ok(connection)) => return Ok((connection, endpoint)),
+                Ok(Ok(connection)) => return Ok((connection, endpoint, blobs)),
                 Ok(Err(err)) => {
                     last_err = Some(ClientError::ConnectFailed { source: err });
                 }
@@ -235,7 +252,11 @@ impl Client {
     /// Performs the SSH handshake and metadata exchange over an existing P2P connection.
     pub async fn establish_session(
         options: &ClientOptions,
-        (connection, endpoint): (iroh::endpoint::Connection, iroh::Endpoint),
+        (connection, endpoint, blobs): (
+            iroh::endpoint::Connection,
+            iroh::Endpoint,
+            iroh_blobs::store::fs::FsStore,
+        ),
     ) -> Result<Session> {
         let endpoint_id = connection.remote_id().to_string();
         let identity = load_or_generate_identity(options.state()).await?;
@@ -381,6 +402,7 @@ impl Client {
                     endpoint: Some(endpoint),
                     remote_metadata,
                     state,
+                    blobs,
                 })
             }
             Err(e) => {

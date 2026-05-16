@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::types::{
-    CwdRequest, CwdResponse, ExistsRequest, ExistsResponse, GetRequest, MAX_CHUNK_BYTES,
-    MAX_CONTROL_BYTES, PutRequest, TransferComplete, TransferError, TransferFailure, TransferFrame,
-    TransferReady,
+    BlobGetReady, BlobGetRequest, BlobPutRequest, CwdRequest, CwdResponse, ExistsRequest,
+    ExistsResponse, GetRequest, MAX_CHUNK_BYTES, MAX_CONTROL_BYTES, PutRequest, TransferComplete,
+    TransferError, TransferFailure, TransferFrame, TransferReady,
 };
 
 /// Magic header for transfer frames.
@@ -32,6 +32,9 @@ const KIND_NEW_ENTRY: u8 = 14;
 const KIND_ENTRY_COMPLETE: u8 = 15;
 const KIND_COMPLETION_REQUEST: u8 = 16;
 const KIND_COMPLETION_RESPONSE: u8 = 17;
+const KIND_BLOB_PUT_REQUEST: u8 = 18;
+const KIND_BLOB_GET_REQUEST: u8 = 19;
+const KIND_BLOB_GET_READY: u8 = 20;
 
 fn validate_payload_limit(kind: u8, payload_len: usize) -> Result<(), TransferError> {
     let max_len = match kind {
@@ -93,6 +96,8 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
             | KIND_ENTRY_COMPLETE
             | KIND_COMPLETION_REQUEST
             | KIND_COMPLETION_RESPONSE
+            | KIND_BLOB_PUT_REQUEST
+            | KIND_BLOB_GET_REQUEST
     ) {
         return Err(TransferError::UnsupportedKind(kind));
     }
@@ -327,6 +332,27 @@ pub async fn write_completion_response<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_COMPLETION_RESPONSE, res).await
 }
 
+pub async fn write_blob_put_request<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    req: &BlobPutRequest,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_BLOB_PUT_REQUEST, req).await
+}
+
+pub async fn write_blob_get_request<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    req: &BlobGetRequest,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_BLOB_GET_REQUEST, req).await
+}
+
+pub async fn write_blob_get_ready<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    ready: &BlobGetReady,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_BLOB_GET_READY, ready).await
+}
+
 /// Reads and decodes the next transfer frame from the stream.
 pub async fn read_next_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -359,6 +385,15 @@ pub async fn read_next_frame<R: AsyncRead + Unpin>(
             &payload,
         )?)),
         KIND_COMPLETION_RESPONSE => Ok(TransferFrame::CompletionResponse(serde_json::from_slice(
+            &payload,
+        )?)),
+        KIND_BLOB_PUT_REQUEST => Ok(TransferFrame::BlobPutRequest(serde_json::from_slice(
+            &payload,
+        )?)),
+        KIND_BLOB_GET_REQUEST => Ok(TransferFrame::BlobGetRequest(serde_json::from_slice(
+            &payload,
+        )?)),
+        KIND_BLOB_GET_READY => Ok(TransferFrame::BlobGetReady(serde_json::from_slice(
             &payload,
         )?)),
         KIND_NEW_ENTRY => Ok(TransferFrame::NewEntry(serde_json::from_slice(&payload)?)),

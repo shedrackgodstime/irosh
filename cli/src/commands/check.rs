@@ -11,9 +11,9 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     let config = irosh::storage::load_config(state)?;
 
     let stealth_status = if config.stealth_secret.is_some() {
-        "Enabled"
+        "Active (ALPN locked — wormhole pairing disabled)"
     } else {
-        "Disabled"
+        "Disabled (open ALPN — any irosh client can probe)"
     };
 
     let relay_info = if let Some(url) = &config.relay_url {
@@ -120,11 +120,14 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
 
     if security.key_exists {
         if security.key_unsafe {
-            Ui::error(&format!(
-                "Identity Key: UNSAFE ({:04o})\n      Tip: Run 'chmod 600 {}'",
-                security.key_mode.unwrap_or(0),
-                security.key_path.display()
-            ));
+            Ui::error(
+                &format!(
+                    "Identity Key: UNSAFE ({:04o}) — run 'chmod 600 {}'",
+                    security.key_mode.unwrap_or(0),
+                    security.key_path.display()
+                ),
+                None,
+            );
         } else {
             Ui::success(&format!(
                 "Identity Key: Protected ({:04o})",
@@ -140,14 +143,18 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     if let Some(v) = system.ssh_version {
         Ui::success(&format!("SSH Binary: Found ({})", v));
     } else {
-        Ui::error("SSH Binary: NOT FOUND\n      'connect' requires an OpenSSH client.");
+        Ui::error(
+            "SSH Binary: not found",
+            Some("install openssh-client, then re-run 'irosh check'"),
+        );
     }
 
     if system.udp_available {
         Ui::success("UDP Socket: Available");
     } else {
         Ui::error(
-            "UDP Socket: BLOCKED or UNAVAILABLE\n      Irosh requires UDP for P2P transport.",
+            "UDP Socket: blocked or unavailable",
+            Some("irosh requires UDP for P2P transport — check your firewall settings"),
         );
     }
 
@@ -171,12 +178,12 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
                     Ui::success(&format!("Relay Link: Connected ({})", relay));
                 }
             } else {
-                Ui::error("Relay Link: DISCONNECTED");
+                Ui::error("Relay Link: DISCONNECTED", None);
             }
         }
         Err(e) => {
             pb.finish_with_message("Done");
-            Ui::error("P2P Endpoint: OFFLINE");
+            Ui::error("P2P Endpoint: OFFLINE", None);
             Ui::info(&format!("Error: {:#}", e));
         }
     }

@@ -41,6 +41,9 @@ pub enum Commands {
         /// Secret for stealth mode
         #[arg(long, short = 's')]
         secret: Option<String>,
+        /// Run a single remote command and exit
+        #[arg(long, short = 'e')]
+        exec: Option<String>,
     },
 
     /// Run the server in the foreground
@@ -155,6 +158,7 @@ impl CommandExec for Commands {
                 ticket,
                 forward,
                 secret,
+                exec,
             } => {
                 connect::exec(
                     target.clone(),
@@ -162,6 +166,7 @@ impl CommandExec for Commands {
                     ticket.clone(),
                     forward.clone(),
                     secret.clone(),
+                    exec.clone(),
                     ctx,
                 )
                 .await

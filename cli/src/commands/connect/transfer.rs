@@ -250,9 +250,8 @@ pub async fn handle_put_command(
     };
 
     let pb_clone = pb.clone();
-
     let transfer_res = tokio::select! {
-        res = session.upload_with_progress(&local_path, &remote_path, recursive, move |progress| {
+        res = session.upload_blob(&local_path, &remote_path, move |progress| {
             if let Some(pb) = &pb_clone {
                 if progress.total > 0 {
                     pb.set_length(progress.total);
@@ -284,12 +283,15 @@ pub async fn handle_put_command(
     };
 
     match transfer_res {
-        Ok(_) => {
+        Ok(hash) => {
             if let Some(pb) = pb {
                 pb.finish_with_message("Done");
             }
             stdout
                 .write_all(format!("Uploaded {}\r\n", local_name).as_bytes())
+                .await?;
+            stdout
+                .write_all(format!("BLAKE3:  {}\r\n", hash).as_bytes())
                 .await?;
         }
         Err(err) => {
@@ -404,9 +406,8 @@ pub async fn handle_get_command(
     };
 
     let pb_clone = pb.clone();
-
     let transfer_res = tokio::select! {
-        res = session.download_with_progress(&remote_path, &local_path, recursive, move |progress| {
+        res = session.download_blob(&remote_path, &local_path, move |progress| {
             if let Some(pb) = &pb_clone {
                 if progress.total > 0 {
                     pb.set_length(progress.total);
@@ -438,12 +439,15 @@ pub async fn handle_get_command(
     };
 
     match transfer_res {
-        Ok(_) => {
+        Ok(hash) => {
             if let Some(pb) = pb {
                 pb.finish_with_message("Done");
             }
             stdout
                 .write_all(format!("Downloaded {}\r\n", remote_name).as_bytes())
+                .await?;
+            stdout
+                .write_all(format!("BLAKE3:    {}\r\n", hash).as_bytes())
                 .await?;
         }
         Err(err) => {

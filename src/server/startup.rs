@@ -125,12 +125,30 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     let supported = authenticator.supported_methods();
     let method_set = build_method_set(&supported);
 
+    let stealth_mode = options.secret_value().is_some();
     let primary_alpn = crate::transport::iroh::derive_alpn(options.secret_value());
-    let alpns = vec![
-        primary_alpn,
-        iroh_gossip::ALPN.to_vec(),
-        crate::transport::wormhole::PAIRING_ALPN.to_vec(),
-    ];
+
+    // In stealth mode the server registers ONLY the secret-derived ALPN.
+    // Any probe against the base "irosh/1" or the pairing ALPN will receive
+    // no response at the Iroh layer — the connection is silently dropped
+    // before it ever reaches the SSH handshake.
+    //
+    // In open mode both the primary ALPN and the wormhole pairing ALPN are
+    // registered so that device-pairing flows work normally.
+    let alpns = if stealth_mode {
+        tracing::info!(
+            "Stealth mode ACTIVE — server only accepts ALPN derived from shared secret. \
+             Wormhole pairing is disabled while stealth mode is on."
+        );
+        vec![primary_alpn, iroh_gossip::ALPN.to_vec()]
+    } else {
+        vec![
+            primary_alpn,
+            iroh_gossip::ALPN.to_vec(),
+            crate::transport::wormhole::PAIRING_ALPN.to_vec(),
+        ]
+    };
+
     let transport =
         bind_server_endpoint(identity.secret_key, alpns, options.relay_mode.clone()).await?;
 
@@ -175,6 +193,11 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
         startup,
         Server {
             gossip: iroh_gossip::net::Gossip::builder().spawn(transport.endpoint.clone()),
+            blobs: iroh_blobs::store::fs::FsStore::load(options.state().blobs_path())
+                .await
+                .map_err(|e| ServerError::AuthConfiguration {
+                    reason: format!("Failed to load blobs store: {}", e),
+                })?,
             endpoint: transport.endpoint,
             ipc_enabled: options.ipc_enabled,
             config,
@@ -188,6 +211,7 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
             control_rx,
             ticket,
             shutdown_on_wormhole_success: options.shutdown_on_wormhole_success,
+            session_tracker: crate::server::SessionTracker::new(),
         },
     ))
 }

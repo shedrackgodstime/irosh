@@ -114,7 +114,12 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     );
                     return Ok(());
                 }
-                Ui::error(&format!("A peer named '{}' already exists.", target_name));
+                Ui::error(
+                    &format!("a peer named '{}' already exists", target_name),
+                    Some(
+                        "use a different alias, or remove the existing one with 'irosh peer remove'",
+                    ),
+                );
                 return Ok(());
             }
 
@@ -241,10 +246,10 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     );
                     return Ok(());
                 }
-                Ui::error(&format!(
-                    "Peer '{}' not found in address book.",
-                    target_name
-                ));
+                Ui::error(
+                    &format!("peer '{}' not found in address book", target_name),
+                    Some("run 'irosh peer list' to see known peers"),
+                );
             }
         }
 
@@ -281,10 +286,10 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
 
             // Validate target_new doesn't conflict with an existing peer (unless it's the same)
             if target_old != target_new && storage::load_peer(state, &target_new)?.is_some() {
-                Ui::error(&format!(
-                    "A peer named '{}' already exists. Remove it first.",
-                    target_new
-                ));
+                Ui::error(
+                    &format!("a peer named '{}' already exists", target_new),
+                    Some("remove the existing peer first with 'irosh peer remove'"),
+                );
                 return Ok(());
             }
 
@@ -297,7 +302,10 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     Ui::info(&format!("Connect with: irosh connect {}", target_new));
                 }
                 false => {
-                    Ui::error(&format!("Peer '{}' not found in address book.", target_old));
+                    Ui::error(
+                        &format!("peer '{}' not found in address book", target_old),
+                        None,
+                    );
                 }
             }
         }

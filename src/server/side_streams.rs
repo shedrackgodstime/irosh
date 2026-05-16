@@ -23,8 +23,9 @@ pub(crate) fn spawn_side_stream_listener(
                     match res {
                         Ok((send, recv)) => {
                             let shell_state = shell_state.clone();
+                            let conn = connection.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = handle_side_stream_dispatch(send, recv, shell_state).await {
+                                if let Err(err) = handle_side_stream_dispatch(conn, send, recv, shell_state).await {
                                     warn!("Side-stream handler failed: {}", err);
                                 }
                             });
@@ -42,6 +43,7 @@ pub(crate) fn spawn_side_stream_listener(
 }
 
 async fn handle_side_stream_dispatch(
+    connection: iroh::endpoint::Connection,
     send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
     shell_state: ConnectionShellState,
@@ -62,7 +64,7 @@ async fn handle_side_stream_dispatch(
         tracing::debug!("Metadata exchange complete");
     } else if magic == crate::transport::transfer::codec::MAGIC {
         let stream = IrohDuplex::with_prefix(send, recv, magic.to_vec());
-        handle_transfer_stream(stream, shell_state).await?;
+        handle_transfer_stream(connection, stream, shell_state).await?;
     } else {
         warn!("Unknown side-stream magic: {:?}", magic);
     }

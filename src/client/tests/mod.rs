@@ -52,9 +52,15 @@ async fn connect_test_session(
             Vec::new(),
             server_state.clone(),
         ));
+    let server_blobs = iroh_blobs::store::fs::FsStore::load(server_state.blobs_path())
+        .await
+        .unwrap();
     let server_handler = ServerHandler::new(
         authenticator,
-        crate::server::transfer::ConnectionShellState::new(server_state.root().to_path_buf()),
+        crate::server::transfer::ConnectionShellState::new(
+            server_state.root().to_path_buf(),
+            server_blobs,
+        ),
     );
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
@@ -86,6 +92,10 @@ async fn connect_test_session(
     assert!(matches!(auth, client::AuthResult::Success));
     let channel = handle.channel_open_session().await.unwrap();
 
+    let client_blobs = iroh_blobs::store::fs::FsStore::load(client_state.blobs_path())
+        .await
+        .unwrap();
+
     (
         Session {
             handle: Arc::new(tokio::sync::RwLock::new(handle)),
@@ -95,6 +105,7 @@ async fn connect_test_session(
             endpoint: None,
             remote_metadata: None,
             state: SessionState::Authenticated,
+            blobs: client_blobs,
         },
         server_task,
     )

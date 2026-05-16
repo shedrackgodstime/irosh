@@ -11,8 +11,8 @@ impl Ui {
     pub fn success(msg: &str) {
         feedback::success(msg);
     }
-    pub fn error(msg: &str) {
-        feedback::error(msg);
+    pub fn error(msg: &str, tip: Option<&str>) {
+        feedback::error(msg, tip);
     }
     pub fn info(msg: &str) {
         feedback::info(msg);
@@ -67,5 +67,65 @@ impl Ui {
 
     pub fn status(label: &str, value: &str, subtext: Option<&str>) {
         feedback::status(label, value, subtext);
+    }
+
+    pub fn session_table(sessions: &[irosh::server::ipc::SessionStatus]) {
+        use console::style;
+        if sessions.is_empty() {
+            return;
+        }
+
+        eprintln!("\n  Active Sessions");
+        eprintln!(
+            "  {:<20} {:<12} {:<12} {:<12}",
+            "Peer ID", "Duration", "Received", "Sent"
+        );
+        eprintln!("  {}", "-".repeat(60));
+
+        for session in sessions {
+            let peer = if session.peer_id.len() > 18 {
+                format!("{}...", &session.peer_id[..15])
+            } else {
+                session.peer_id.clone()
+            };
+
+            let duration =
+                if let Ok(start) = chrono::DateTime::parse_from_rfc3339(&session.started_at) {
+                    let now = chrono::Utc::now();
+                    let diff = now.signed_duration_since(start.with_timezone(&chrono::Utc));
+                    if diff.num_hours() > 0 {
+                        format!("{}h{}m", diff.num_hours(), diff.num_minutes() % 60)
+                    } else {
+                        format!("{}m{}s", diff.num_minutes(), diff.num_seconds() % 60)
+                    }
+                } else {
+                    "unknown".to_string()
+                };
+
+            eprintln!(
+                "  {:<20} {:<12} {:<12} {:<12}",
+                style(peer).dim(),
+                duration,
+                Self::format_bytes(session.bytes_received),
+                Self::format_bytes(session.bytes_sent)
+            );
+        }
+        eprintln!();
+    }
+
+    fn format_bytes(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * 1024;
+        const GB: u64 = MB * 1024;
+
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.2} MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.2} KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{} B", bytes)
+        }
     }
 }
