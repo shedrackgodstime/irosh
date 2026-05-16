@@ -5,8 +5,8 @@ use crate::error::{ClientError, Result, TransportError};
 use crate::transport::transfer::{
     BlobGetRequest, TransferFrame, read_next_frame, write_blob_get_request, write_get_request,
 };
+use futures_util::StreamExt;
 use iroh_blobs::{BlobFormat, Hash};
-use n0_future::StreamExt;
 use std::str::FromStr;
 
 use crate::client::transfer::store::{persist_temp_file, temp_transfer_path};

@@ -735,6 +735,14 @@ impl ServerHandler {
                             );
                             let _ = pty_tx.send(vec![0x03]);
                         }
+                    } else if matches!(signal, russh::Sig::QUIT | russh::Sig::ABRT) {
+                        if let Some(pty_tx) = process.pty_tx.as_ref() {
+                            debug!(
+                                "Injecting CTRL+BREAK byte (\\x1c) into PTY input stream for channel {:?}",
+                                channel
+                            );
+                            let _ = pty_tx.send(vec![0x1c]);
+                        }
                     }
                 }
             }

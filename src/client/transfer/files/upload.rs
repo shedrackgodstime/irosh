@@ -6,8 +6,8 @@ use crate::transport::transfer::{
     BlobPutRequest, MAX_CHUNK_BYTES, TransferFrame, TransferReady, read_next_frame,
     write_blob_put_request, write_put_chunk, write_put_complete, write_put_request,
 };
+use futures_util::StreamExt;
 use iroh_blobs::BlobFormat;
-use n0_future::StreamExt;
 
 impl Session {
     /// Uploads one local file or directory to the remote peer.

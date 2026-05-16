@@ -469,9 +469,3 @@ impl From<crate::transport::transfer::TransferError> for IroshError {
         Self::Transport(TransportError::Transfer(e))
     }
 }
-
-impl From<irpc::Error> for IroshError {
-    fn from(e: irpc::Error) -> Self {
-        Self::Rpc(e.to_string())
-    }
-}
