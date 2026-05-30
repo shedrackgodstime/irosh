@@ -12,6 +12,9 @@ pub async fn exec(
 ) -> Result<()> {
     let state = ctx.server_state()?;
 
+    #[cfg(windows)]
+    let _ = irosh::sys::windows::job::assign_current_process_to_job();
+
     if let Some(auth_path) = authorize {
         let key = irosh::russh::keys::ssh_key::PublicKey::read_openssh_file(&auth_path)?;
         let fingerprint = key

@@ -145,7 +145,7 @@ pub async fn handle_blob_get_request(
     }
 
     // 1. Add file or directory to server's local blobs store so it can be served
-    use n0_future::StreamExt;
+    use futures_util::StreamExt;
     let is_dir = context.is_dir(&request.path).await.unwrap_or(false);
     let format = if is_dir {
         BlobFormat::HashSeq

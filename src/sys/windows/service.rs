@@ -288,6 +288,9 @@ fn irosh_service_main(arguments: Vec<OsString>) {
 }
 
 fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
+    // Ensure all children (PTYs) are cleaned up if we exit unexpectedly
+    let _ = crate::sys::windows::job::assign_current_process_to_job();
+
     let (tx, rx) = std::sync::mpsc::channel();
 
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
