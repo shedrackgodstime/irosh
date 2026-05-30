@@ -66,7 +66,7 @@ pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Re
 }
 
 async fn install_service(state: Option<PathBuf>) -> Result<()> {
-    let _exe = std::env::current_exe().map_err(|e| ServerError::ServiceManagement {
+    let exe_path = std::env::current_exe().map_err(|e| ServerError::ServiceManagement {
         details: format!("failed to get current executable path: {}", e),
     })?;
 
@@ -91,8 +91,6 @@ async fn install_service(state: Option<PathBuf>) -> Result<()> {
                 .map(|h| h.join(".irosh").join("server"))
                 .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
         });
-
-        let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("irosh.exe"));
 
         let service_info = windows_service::service::ServiceInfo {
             name: SERVICE_NAME.to_string().into(),

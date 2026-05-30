@@ -226,7 +226,11 @@ impl AsyncStdin {
     }
 }
 
-/// Dummy signal mapping for Windows compatibility.
+/// Maps SSH signals to Windows term signals.
+///
+/// Windows does not have a native POSIX signal model, so SSH signals
+/// (e.g., SIGINT, SIGTERM) are ignored here. The remote peer will not
+/// receive process-level signals through the SSH channel on Windows hosts.
 pub fn map_sig(_signal: russh::Sig) -> Option<i32> {
     None
 }

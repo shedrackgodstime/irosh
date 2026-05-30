@@ -46,14 +46,12 @@ if (Test-Path $Irosh) {
         & $Irosh system stop | Out-Null
         & $Irosh system uninstall | Out-Null
     } catch {
-        # Fallback to direct cleanup if binary fails
-        schtasks /delete /tn irosh /f 2>$null
+        # Fallback to direct SCM cleanup if binary fails
         sc.exe stop irosh 2>$null
         sc.exe delete irosh 2>$null
     }
 } else {
-    # If binary is gone, try direct cleanup anyway
-    schtasks /delete /tn irosh /f 2>$null
+    # If binary is gone, try direct SCM cleanup anyway
     sc.exe stop irosh 2>$null
     sc.exe delete irosh 2>$null
 }

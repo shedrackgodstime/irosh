@@ -70,13 +70,55 @@ tar -xzf $ZipPath -C $TmpDir
 
 # --- 4. Smart Installation ---
 $InstallDir = Join-Path $env:LOCALAPPDATA "irosh\bin"
+$IroshExe = Join-Path $InstallDir "irosh.exe"
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir | Out-Null
 }
 
-# Install the unified binary
-Copy-Item (Join-Path $TmpDir "irosh.exe") $InstallDir -Force
+# --- 4a. Check if irosh is currently running or installed as a service ---
+$ServiceWasRunning = $false
+$ServiceWasInstalled = $false
+
+$svc = sc.exe query "irosh" 2>$null
+if ($LASTEXITCODE -eq 0) {
+    $ServiceWasInstalled = $true
+    if ($svc -match "STATE\s*:\s*4\s+RUNNING") {
+        $ServiceWasRunning = $true
+        Write-Host "[*] irosh service is currently running — will restart after update..." -ForegroundColor Yellow
+        sc.exe stop "irosh" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "[-] Failed to stop irosh service. Trying force-stop..."
+            taskkill /IM irosh.exe /F 2>$null
+            Start-Sleep -Seconds 1
+        } else {
+            Write-Host "[+] Service stopped." -ForegroundColor Green
+        }
+    }
+} else {
+    # Check if any interactive irosh process is running
+    $running = Get-Process "irosh" -ErrorAction SilentlyContinue
+    if ($running) {
+        Write-Host "[!] irosh.exe is currently running (interactive mode)." -ForegroundColor Yellow
+        Write-Host "    Continuing will overwrite the binary. Existing SSH sessions will be disconnected." -ForegroundColor Yellow
+    }
+}
+
+# --- 4b. Install the new binary ---
+$NewExe = Join-Path $TmpDir "irosh.exe"
+Copy-Item $NewExe $InstallDir -Force
 Write-Host "[+] Installed irosh to $InstallDir" -ForegroundColor Green
+
+# --- 4c. Restart service if it was running ---
+if ($ServiceWasRunning) {
+    Write-Host "[*] Restarting irosh service with updated binary..." -ForegroundColor Yellow
+    sc.exe start "irosh" | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[+] Service restarted successfully." -ForegroundColor Green
+    } else {
+        Write-Warning "[-] Failed to restart service automatically."
+        Write-Host "    Run 'irosh system start' manually as Administrator." -ForegroundColor Yellow
+    }
+}
 
 # Add to User PATH if not already there
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -105,7 +147,7 @@ if ($isAdmin) {
 }
 
 # --- 7. Optional Service Setup ---
-if ($Service) {
+if ($Service -and -not $ServiceWasInstalled) {
     Write-Host "[*] Setting up background server service..." -ForegroundColor Yellow
     Start-Process (Join-Path $InstallDir "irosh.exe") -ArgumentList "system", "install" -Wait -NoNewWindow
 }

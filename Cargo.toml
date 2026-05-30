@@ -23,7 +23,7 @@ exclude = [
 ]
 
 # Feature flags let downstream consumers compile only what they need.
-# See docs/architecture.md "Feature Flags and Binary Size" for full rationale.
+# See docs/ROADMAP.md "Fat Library" architecture notes for rationale.
 [features]
 default   = ["server", "client"]
 server    = ["transport", "storage", "dep:russh", "dep:portable-pty"]
