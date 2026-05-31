@@ -166,3 +166,107 @@ pub fn save_secret_key(state: &StateConfig, key: &SecretKey) -> Result<()> {
         .collect::<String>();
     crate::storage::utils::atomic_write_secure(&path, hex.as_bytes())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_state(label: &str) -> StateConfig {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "irosh-keys-test-{}-{}",
+            label,
+            rand::random::<u32>()
+        ));
+        StateConfig::new(path)
+    }
+
+    #[test]
+    fn save_and_load_secret_key_round_trip() {
+        let state = temp_state("roundtrip");
+        let key = SecretKey::generate();
+        save_secret_key(&state, &key).unwrap();
+        let loaded = load_secret_key(&state).unwrap();
+        assert_eq!(key.to_bytes(), loaded.to_bytes());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn load_secret_key_errors_when_missing() {
+        let state = temp_state("missing");
+        let result = load_secret_key(&state);
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn delete_secret_key_returns_true_when_exists() {
+        let state = temp_state("delete-exists");
+        let key = SecretKey::generate();
+        save_secret_key(&state, &key).unwrap();
+        assert!(delete_secret_key(&state).unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn delete_secret_key_returns_false_when_missing() {
+        let state = temp_state("delete-missing");
+        assert!(!delete_secret_key(&state).unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[tokio::test]
+    async fn load_or_generate_identity_generates_new_key() {
+        let state = temp_state("generate");
+        let identity = load_or_generate_identity(&state).await.unwrap();
+        assert!(!identity.endpoint_id().is_empty());
+        // Second call should load the same identity
+        let identity2 = load_or_generate_identity(&state).await.unwrap();
+        assert_eq!(identity.endpoint_id(), identity2.endpoint_id());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[tokio::test]
+    async fn load_or_generate_identity_uses_existing_key() {
+        let state = temp_state("reuse");
+        let key = SecretKey::generate();
+        save_secret_key(&state, &key).unwrap();
+
+        let identity = load_or_generate_identity(&state).await.unwrap();
+        assert_eq!(identity.secret_key.to_bytes(), key.to_bytes());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn endpoint_identity_redacts_keys_in_debug() {
+        let state = temp_state("debug-redact");
+        let key = SecretKey::generate();
+        let seed = key.to_bytes();
+        let keypair = Ed25519Keypair::from_seed(&seed);
+        let ssh_key = PrivateKey::from(keypair);
+        let identity = EndpointIdentity {
+            secret_key: key,
+            ssh_key,
+        };
+        let debug = format!("{:?}", identity);
+        assert!(debug.contains("<redacted>"));
+        assert!(debug.contains("secret_key: \"<redacted>\""));
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn endpoint_identity_endpoint_id_matches_public_key() {
+        let state = temp_state("endpoint-id");
+        let key = SecretKey::generate();
+        let expected_id = key.public().to_string();
+        let seed = key.to_bytes();
+        let keypair = Ed25519Keypair::from_seed(&seed);
+        let ssh_key = PrivateKey::from(keypair);
+        let identity = EndpointIdentity {
+            secret_key: key,
+            ssh_key,
+        };
+        assert_eq!(identity.endpoint_id(), expected_id);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+}

@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-#[allow(unused_imports)]
 use tracing::{debug, info, warn};
 
 /// Commands that can be sent to the irosh daemon via IPC.

@@ -46,7 +46,6 @@ impl Ui {
     pub fn select<T: std::fmt::Display>(prompt: &str, items: &[T]) -> Option<usize> {
         prompts::select(prompt, items)
     }
-    #[allow(dead_code)]
     pub fn input(prompt: &str, default: Option<&str>) -> Option<String> {
         prompts::input(prompt, default)
     }

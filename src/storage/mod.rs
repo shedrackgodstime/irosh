@@ -45,3 +45,56 @@ pub async fn rotate_identity(
     keys::delete_secret_key(state)?;
     keys::load_or_generate_identity(state).await
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::config::StateConfig;
+
+    fn temp_state(label: &str) -> StateConfig {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "irosh-storage-mod-test-{}-{}",
+            label,
+            rand::random::<u32>()
+        ));
+        StateConfig::new(path)
+    }
+
+    #[test]
+    fn reset_vault_cleans_trust_and_shadow() {
+        let state = temp_state("vault-reset");
+        // Create some trust data
+        let trust_dir = state.root().join("trust");
+        std::fs::create_dir_all(&trust_dir).unwrap();
+        std::fs::write(trust_dir.join("known_server.pub"), b"ssh-ed25519 AAA").unwrap();
+        // Create shadow file
+        super::shadow::write_shadow_file(&state, "hash").unwrap();
+
+        super::reset_vault(&state).unwrap();
+        assert!(!trust_dir.exists());
+        assert!(super::shadow::load_shadow_file(&state).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn reset_vault_succeeds_on_clean_state() {
+        let state = temp_state("vault-clean");
+        // No trust data, no shadow — should not error
+        super::reset_vault(&state).unwrap();
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[tokio::test]
+    async fn rotate_identity_generates_new_key() {
+        let state = temp_state("rotate");
+        // First create an identity
+        let first = super::rotate_identity(&state).await.unwrap();
+        let first_id = first.endpoint_id();
+        // Rotate to a new one
+        let second = super::rotate_identity(&state).await.unwrap();
+        let second_id = second.endpoint_id();
+        // The new identity should differ from the old one
+        assert_ne!(first_id, second_id);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+}

@@ -73,6 +73,7 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
     use crate::client::ipc::IpcClient;
     use crate::client::{Client, ClientOptions};
     use crate::server::ipc::{IpcCommand, IpcResponse};
+    use secrecy::SecretString;
 
     let state = temp_state_dir("server-rate-limit");
     let options = ServerOptions::new(state.clone());
@@ -111,7 +112,7 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
                 })
                 .credentials(Credentials {
                     user: "irosh".to_string(),
-                    password: "wrong-password".to_string(),
+                    password: SecretString::new("wrong-password".to_string()),
                 });
         let connection_info = Client::dial_p2p(&client_options, ready.ticket().clone(), true)
             .await

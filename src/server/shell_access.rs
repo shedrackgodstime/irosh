@@ -34,6 +34,9 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 InheritedFromUniqueProcessId: usize,
             }
 
+            // SAFETY: FFI declaration for the Windows ntdll API. This function
+            // is available on all Windows targets and follows the standard
+            // system calling convention.
             unsafe extern "system" {
                 fn NtQueryInformationProcess(
                     ProcessHandle: HANDLE,

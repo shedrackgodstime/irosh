@@ -21,26 +21,6 @@ impl TerminalGuard {
         Ok(Self { is_raw: true })
     }
 
-    /// Explicitly leave raw mode.
-    #[allow(dead_code)]
-    pub fn leave_raw_mode(&mut self) -> Result<()> {
-        if self.is_raw {
-            disable_raw_mode()?;
-            self.is_raw = false;
-        }
-        Ok(())
-    }
-
-    /// Re-enter raw mode.
-    #[allow(dead_code)]
-    pub fn enter_raw_mode(&mut self) -> Result<()> {
-        if !self.is_raw {
-            enable_raw_mode()?;
-            self.is_raw = true;
-        }
-        Ok(())
-    }
-
     /// Reset the terminal to a clean state: reset colors, show cursor, and clear line.
     /// This is the "Nuclear Cleanup" defined in the permanent terminal solution.
     pub fn nuclear_cleanup(&self) -> Result<()> {

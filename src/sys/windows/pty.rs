@@ -21,7 +21,9 @@ impl fmt::Debug for RawTerminal {
     }
 }
 
-// Windows HANDLEs are pointers, but standard stream handles are safe to send across threads.
+// SAFETY: `RawTerminal` wraps standard console handles (`GetStdHandle`) which are
+// documented to be safe to use from any thread. The handles are only read/written
+// through synchronized Win32 console API calls.
 unsafe impl Send for RawTerminal {}
 unsafe impl Sync for RawTerminal {}
 
@@ -233,4 +235,17 @@ impl AsyncStdin {
 /// receive process-level signals through the SSH channel on Windows hosts.
 pub fn map_sig(_signal: russh::Sig) -> Option<i32> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_sig_always_returns_none() {
+        assert_eq!(map_sig(russh::Sig::INT), None);
+        assert_eq!(map_sig(russh::Sig::TERM), None);
+        assert_eq!(map_sig(russh::Sig::KILL), None);
+        assert_eq!(map_sig(russh::Sig::Custom("test".into())), None);
+    }
 }

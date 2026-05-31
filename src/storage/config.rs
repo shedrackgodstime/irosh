@@ -34,3 +34,61 @@ pub fn save_config(state: &StateConfig, config: &AppConfig) -> Result<()> {
 
     atomic_write_secure(&path, &data)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_state(label: &str) -> StateConfig {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "irosh-config-test-{}-{}",
+            label,
+            rand::random::<u32>()
+        ));
+        StateConfig::new(path)
+    }
+
+    #[test]
+    fn load_config_returns_default_when_missing() {
+        let state = temp_state("missing");
+        let config = load_config(&state).unwrap();
+        assert_eq!(config, AppConfig::default());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn save_and_load_config_round_trip() {
+        let state = temp_state("roundtrip");
+        let config = AppConfig {
+            stealth_secret: Some("my-secret".into()),
+            relay_url: Some("https://relay.example.com".into()),
+            log_level: "debug".into(),
+            wormhole_timeout: 7200,
+            default_user: Some("admin".into()),
+        };
+        save_config(&state, &config).unwrap();
+        let loaded = load_config(&state).unwrap();
+        assert_eq!(loaded, config);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn save_and_load_config_default_values() {
+        let state = temp_state("defaults");
+        let config = AppConfig::default();
+        save_config(&state, &config).unwrap();
+        let loaded = load_config(&state).unwrap();
+        assert_eq!(loaded, config);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn load_config_returns_default_on_empty_directory() {
+        let state = temp_state("empty");
+        // No file written — load should return default
+        let config = load_config(&state).unwrap();
+        assert_eq!(config, AppConfig::default());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+}

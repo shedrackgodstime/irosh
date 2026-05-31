@@ -61,8 +61,10 @@ pub async fn wait_for_shutdown_signal() {
         // If set() fails the slot was already filled (shouldn't happen in practice).
         let _ = NOTIFIER.set(notify.clone());
 
-        // Win32 console control handler - runs on a dedicated system thread,
-        // so we use only atomics and Notify (both are Send + Sync).
+        // SAFETY: This is a Win32 console control handler callback registered
+        // with `SetConsoleCtrlHandler`. It runs on a dedicated system thread and
+        // must follow the standard calling convention. The handler only touches
+        // atomics and a `Notify` (both `Send + Sync`), which is safe from any thread.
         unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> i32 {
             match ctrl_type {
                 CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT => {

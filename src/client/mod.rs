@@ -77,7 +77,7 @@ impl TransferProgress {
 pub struct Session {
     pub(crate) handle: Arc<tokio::sync::RwLock<client::Handle<handler::ClientHandler>>>,
     pub(super) handler: handler::ClientHandler,
-    channel: Option<russh::Channel<russh::client::Msg>>,
+    channel: tokio::sync::Mutex<Option<russh::Channel<russh::client::Msg>>>,
     connection: Option<iroh::endpoint::Connection>,
     endpoint: Option<iroh::Endpoint>,
     remote_metadata: Option<crate::transport::metadata::PeerMetadata>,
@@ -124,9 +124,14 @@ impl Session {
     ///
     /// Returns an error if the request cannot be sent or the remote SSH server rejects
     /// the PTY request.
-    pub async fn request_pty(&mut self, options: PtyOptions) -> Result<()> {
+    pub async fn request_pty(&self, options: PtyOptions) -> Result<()> {
         let size = options.size();
-        let channel = self.ensure_channel().await?;
+        let mut guard = self.ensure_channel().await?;
+        let channel = guard
+            .as_mut()
+            .ok_or_else(|| ClientError::ChannelOpenFailed {
+                source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
+            })?;
         channel
             .request_pty(
                 true,
@@ -149,11 +154,20 @@ impl Session {
     /// Returns an error if the shell request cannot be sent or is rejected by
     /// the remote peer.
     pub async fn start_shell(&mut self) -> Result<()> {
-        let channel = self.ensure_channel().await?;
-        channel
-            .request_shell(true)
-            .await
-            .map_err(|e| ClientError::ShellRequestFailed { source: e })?;
+        {
+            let mut guard = self.ensure_channel().await?;
+            let channel = guard
+                .as_mut()
+                .ok_or_else(|| ClientError::ChannelOpenFailed {
+                    source: russh::Error::ChannelOpenFailure(
+                        russh::ChannelOpenFailure::ConnectFailed,
+                    ),
+                })?;
+            channel
+                .request_shell(true)
+                .await
+                .map_err(|e| ClientError::ShellRequestFailed { source: e })?;
+        }
         self.state = SessionState::ShellReady;
         Ok(())
     }
@@ -165,33 +179,49 @@ impl Session {
     /// Returns an error if the command request cannot be sent or is rejected by
     /// the remote side.
     pub async fn exec(&mut self, command: &str) -> Result<()> {
-        let channel = self.ensure_channel().await?;
-        channel
-            .exec(true, command)
-            .await
-            .map_err(|e| ClientError::ExecFailed { source: e })?;
+        {
+            let mut guard = self.ensure_channel().await?;
+            let channel = guard
+                .as_mut()
+                .ok_or_else(|| ClientError::ChannelOpenFailed {
+                    source: russh::Error::ChannelOpenFailure(
+                        russh::ChannelOpenFailure::ConnectFailed,
+                    ),
+                })?;
+            channel
+                .exec(true, command)
+                .await
+                .map_err(|e| ClientError::ExecFailed { source: e })?;
+        }
         self.state = SessionState::ShellReady;
         Ok(())
     }
 
     /// Ensures that the primary session channel is open, opening it if necessary.
+    ///
+    /// Uses double-checked locking so that the lock is not held during the
+    /// network round-trip of opening a new channel.
     pub(crate) async fn ensure_channel(
-        &mut self,
-    ) -> Result<&mut russh::Channel<russh::client::Msg>> {
-        if self.channel.is_none() {
-            let handle = self.handle.read().await;
-            let channel = handle
-                .channel_open_session()
-                .await
-                .map_err(|e| ClientError::ChannelOpenFailed { source: e })?;
-            self.channel = Some(channel);
-        }
-        self.channel.as_mut().ok_or_else(|| {
-            ClientError::ChannelOpenFailed {
-                source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
+        &self,
+    ) -> Result<tokio::sync::MutexGuard<'_, Option<russh::Channel<russh::client::Msg>>>> {
+        // Fast path: channel already exists.
+        {
+            let guard = self.channel.lock().await;
+            if guard.is_some() {
+                return Ok(guard);
             }
-            .into()
-        })
+        }
+
+        // Slow path: open a new channel (lock is released during the network call).
+        let handle = self.handle.read().await;
+        let channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| ClientError::ChannelOpenFailed { source: e })?;
+
+        let mut guard = self.channel.lock().await;
+        *guard = Some(channel);
+        Ok(guard)
     }
 
     /// Requests execution of a single remote command and captures its output.
@@ -320,8 +350,11 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the SSH channel is closed or cannot accept more data.
-    pub async fn send(&mut self, data: &[u8]) -> Result<()> {
-        let channel = self.ensure_channel().await?;
+    pub async fn send(&self, data: &[u8]) -> Result<()> {
+        let mut guard = self.ensure_channel().await?;
+        let channel = guard.as_mut().ok_or_else(|| ClientError::DataSendFailed {
+            source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
+        })?;
         channel
             .data(data)
             .await
@@ -333,8 +366,11 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the EOF signal cannot be sent on the current session channel.
-    pub async fn eof(&mut self) -> Result<()> {
-        let channel = self.ensure_channel().await?;
+    pub async fn eof(&self) -> Result<()> {
+        let mut guard = self.ensure_channel().await?;
+        let channel = guard.as_mut().ok_or_else(|| ClientError::EofSendFailed {
+            source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
+        })?;
         channel
             .eof()
             .await
@@ -347,8 +383,13 @@ impl Session {
     ///
     /// Returns an error if the resize request cannot be sent or the remote side
     /// no longer accepts PTY changes.
-    pub async fn resize(&mut self, size: PtySize) -> Result<()> {
-        let channel = self.ensure_channel().await?;
+    pub async fn resize(&self, size: PtySize) -> Result<()> {
+        let mut guard = self.ensure_channel().await?;
+        let channel = guard
+            .as_mut()
+            .ok_or_else(|| ClientError::WindowChangeFailed {
+                source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
+            })?;
         channel
             .window_change(
                 size.cols as u32,
@@ -368,7 +409,8 @@ impl Session {
     ///
     /// Returns an error if the underlying transport or SSH channel fails.
     pub async fn next_event(&mut self) -> Result<Option<SessionEvent>> {
-        let Some(channel) = self.channel.as_mut() else {
+        let mut guard = self.channel.lock().await;
+        let Some(channel) = guard.as_mut() else {
             return Ok(None);
         };
         match channel.wait().await {
@@ -390,7 +432,7 @@ impl Session {
     ///
     /// Returns an error if the disconnect signal cannot be sent.
     pub async fn disconnect(&mut self) -> Result<()> {
-        if let Some(channel) = self.channel.take() {
+        if let Some(channel) = self.channel.lock().await.take() {
             let _ = channel.close().await;
         }
         let handle = self.handle.read().await;

@@ -47,3 +47,64 @@ pub fn delete_shadow_file(state: &StateConfig) -> Result<bool> {
 
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::StateConfig;
+
+    fn temp_state(label: &str) -> StateConfig {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "irosh-shadow-test-{}-{}",
+            label,
+            rand::random::<u32>()
+        ));
+        StateConfig::new(path)
+    }
+
+    #[test]
+    fn load_shadow_file_returns_none_when_missing() {
+        let state = temp_state("missing");
+        assert!(load_shadow_file(&state).unwrap().is_none());
+    }
+
+    #[test]
+    fn write_and_load_shadow_file_round_trip() {
+        let state = temp_state("roundtrip");
+        write_shadow_file(&state, "my-hashed-password").unwrap();
+        let loaded = load_shadow_file(&state).unwrap().unwrap();
+        assert_eq!(loaded, "my-hashed-password");
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn delete_shadow_file_returns_true_when_exists() {
+        let state = temp_state("delete-exists");
+        write_shadow_file(&state, "delete-me").unwrap();
+        assert!(delete_shadow_file(&state).unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn delete_shadow_file_returns_false_when_missing() {
+        let state = temp_state("delete-missing");
+        assert!(!delete_shadow_file(&state).unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn write_shadow_file_trims_whitespace_on_load() {
+        let state = temp_state("trim");
+        write_shadow_file(&state, "  spaced-hash  ").unwrap();
+        let loaded = load_shadow_file(&state).unwrap().unwrap();
+        assert_eq!(loaded, "spaced-hash");
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn shadow_file_path_ends_with_shadow() {
+        let state = StateConfig::new("/tmp/test-shadow".into());
+        assert!(shadow_file_path(&state).ends_with("shadow"));
+    }
+}

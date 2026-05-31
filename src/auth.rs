@@ -26,6 +26,8 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use russh::keys::ssh_key::{HashAlg, PublicKey};
 use tracing::{info, warn};
 
+use secrecy::SecretString;
+
 use crate::error::AuthError;
 
 use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
@@ -316,20 +318,26 @@ impl Authenticator for CombinedAuth {
 ///
 /// When provided to [`ClientOptions`](crate::ClientOptions), the client will
 /// attempt password authentication if public key authentication is rejected.
+///
+/// The password is stored in a zeroizing wrapper ([`SecretString`]) so that the
+/// plaintext is overwritten in memory when the value is dropped.
 #[derive(Debug, Clone)]
 pub struct Credentials {
     /// The username to authenticate as.
     pub user: String,
-    /// The password.
-    pub password: String,
+    /// The password (zeroized on drop).
+    pub password: SecretString,
 }
 
 impl Credentials {
     /// Creates a new credentials pair.
+    ///
+    /// The password is immediately converted into a [`SecretString`] and will
+    /// be zeroed when the credentials are dropped.
     pub fn new(user: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             user: user.into(),
-            password: password.into(),
+            password: SecretString::new(password.into()),
         }
     }
 }
@@ -443,6 +451,18 @@ impl UnifiedAuthenticator {
         self.failed_attempts.load(Ordering::Relaxed)
     }
 
+    /// Records a failed authentication attempt and notifies the wormhole if the
+    /// rate limit (3 failures) has been reached.
+    fn record_failure(&self) {
+        let fails = self.failed_attempts.fetch_add(1, Ordering::Relaxed) + 1;
+        if fails >= 3 {
+            warn!("Authentication rate limit reached (3 failures). Burning wormhole.");
+            if let Some(tx) = &self.failure_tx {
+                let _ = tx.try_send(());
+            }
+        }
+    }
+
     fn lock_keys(&self) -> std::sync::MutexGuard<'_, Vec<PublicKey>> {
         match self.authorized_keys.lock() {
             Ok(guard) => guard,
@@ -546,6 +566,7 @@ impl Authenticator for UnifiedAuthenticator {
         // 2. If node is under Strict policy and not empty, reject strangers early.
         if self.policy == HostKeyPolicy::Strict && !authorized.is_empty() {
             warn!(%fingerprint, "Strict policy: unknown key rejected.");
+            self.record_failure();
             return Ok(false);
         }
 
@@ -573,6 +594,7 @@ impl Authenticator for UnifiedAuthenticator {
 
         // 5. Default: Reject (Vault not empty, no password set).
         warn!(%fingerprint, "Vault is claimed and no password is set. Unknown key rejected.");
+        self.record_failure();
         Ok(false)
     }
 
@@ -605,13 +627,7 @@ impl Authenticator for UnifiedAuthenticator {
             return Ok(true);
         }
 
-        let fails = self.failed_attempts.fetch_add(1, Ordering::Relaxed) + 1;
-        if fails >= 3 {
-            warn!("Wormhole rate limit reached (3 failures).");
-            if let Some(tx) = &self.failure_tx {
-                let _ = tx.try_send(());
-            }
-        }
+        self.record_failure();
         Ok(false)
     }
 }
@@ -620,6 +636,7 @@ impl Authenticator for UnifiedAuthenticator {
 mod tests {
     use super::*;
     use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
+    use secrecy::ExposeSecret;
 
     fn temp_state(name: &str) -> StateConfig {
         let mut path = std::env::temp_dir();
@@ -709,7 +726,7 @@ mod tests {
     fn credentials_construction() {
         let creds = Credentials::new("admin", "pass123");
         assert_eq!(creds.user, "admin");
-        assert_eq!(creds.password, "pass123");
+        assert_eq!(creds.password.expose_secret(), "pass123");
     }
 
     // -----------------------------------------------------------------------

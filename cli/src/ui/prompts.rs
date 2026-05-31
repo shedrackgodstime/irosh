@@ -103,7 +103,6 @@ pub fn select<T: std::fmt::Display>(prompt: &str, items: &[T]) -> Option<usize> 
 }
 
 /// [C6] Text Input Prompt (visible).
-#[allow(dead_code)]
 pub fn input(prompt: &str, default: Option<&str>) -> Option<String> {
     if !std::io::stdin().is_terminal() {
         return default.map(|s| s.to_string());

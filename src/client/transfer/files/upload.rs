@@ -68,7 +68,7 @@ impl Session {
 
     /// Uploads a file using content-addressed blobs with progress reporting.
     pub async fn upload_blob<F>(
-        &mut self,
+        &self,
         local: impl AsRef<std::path::Path>,
         remote: impl AsRef<std::path::Path>,
         mut on_progress: F,

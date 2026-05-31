@@ -65,6 +65,11 @@ pub fn ensure_dir_secure(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Applies strict file-system permissions to the given path.
+///
+/// On Unix, files are set to `0o600` and directories to `0o700`.
+/// On Windows, an ACL is applied that grants access only to the current user,
+/// the SYSTEM account, and the Administrators group.
 fn apply_secure_permissions(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -271,4 +276,91 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "irosh-utils-test-{}-{}",
+            label,
+            rand::random::<u32>()
+        ));
+        path
+    }
+
+    #[test]
+    fn atomic_write_secure_creates_file_with_content() {
+        let dir = temp_dir("write-file");
+        let file_path = dir.join("test.txt");
+        atomic_write_secure(&file_path, b"hello world").unwrap();
+        assert!(file_path.exists());
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "hello world");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_secure_overwrites_existing_file() {
+        let dir = temp_dir("overwrite");
+        let file_path = dir.join("test.txt");
+        atomic_write_secure(&file_path, b"first").unwrap();
+        atomic_write_secure(&file_path, b"second").unwrap();
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "second");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_secure_cleans_up_temp_file() {
+        let dir = temp_dir("cleanup");
+        let file_path = dir.join("test.txt");
+        atomic_write_secure(&file_path, b"data").unwrap();
+        // The .tmp file should have been renamed away
+        let tmp_path = file_path.with_extension("tmp");
+        assert!(!tmp_path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_secure_errors_on_path_without_parent() {
+        let result = atomic_write_secure(Path::new(""), b"data");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ensure_dir_secure_creates_directory() {
+        let dir = temp_dir("ensure-dir");
+        let sub = dir.join("sub").join("nested");
+        assert!(!sub.exists());
+        ensure_dir_secure(&sub).unwrap();
+        assert!(sub.exists());
+        assert!(sub.is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ensure_dir_secure_succeeds_on_existing_directory() {
+        let dir = temp_dir("ensure-existing");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Should not error on existing dir
+        ensure_dir_secure(&dir).unwrap();
+        assert!(dir.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_secure_writes_multiple_times() {
+        let dir = temp_dir("multi-write");
+        let file_path = dir.join("multi.txt");
+        atomic_write_secure(&file_path, b"a").unwrap();
+        atomic_write_secure(&file_path, b"b").unwrap();
+        atomic_write_secure(&file_path, b"c").unwrap();
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "c");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

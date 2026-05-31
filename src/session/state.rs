@@ -30,3 +30,61 @@ impl SessionState {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dialing_is_not_terminal() {
+        assert!(!SessionState::Dialing.is_terminal());
+    }
+
+    #[test]
+    fn transport_connected_is_not_terminal() {
+        assert!(!SessionState::TransportConnected.is_terminal());
+    }
+
+    #[test]
+    fn ssh_handshaking_is_not_terminal() {
+        assert!(!SessionState::SshHandshaking.is_terminal());
+    }
+
+    #[test]
+    fn authenticated_is_not_terminal() {
+        assert!(!SessionState::Authenticated.is_terminal());
+    }
+
+    #[test]
+    fn shell_ready_is_not_terminal() {
+        assert!(!SessionState::ShellReady.is_terminal());
+    }
+
+    #[test]
+    fn auth_rejected_is_terminal() {
+        assert!(SessionState::AuthRejected.is_terminal());
+    }
+
+    #[test]
+    fn trust_mismatch_is_terminal() {
+        assert!(SessionState::TrustMismatch.is_terminal());
+    }
+
+    #[test]
+    fn closed_is_terminal() {
+        assert!(SessionState::Closed.is_terminal());
+    }
+
+    #[test]
+    fn session_state_copy_semantics() {
+        let state = SessionState::Dialing;
+        let copied = state;
+        assert_eq!(state, copied);
+    }
+
+    #[test]
+    fn session_state_debug_output() {
+        let debug = format!("{:?}", SessionState::ShellReady);
+        assert_eq!(debug, "ShellReady");
+    }
+}

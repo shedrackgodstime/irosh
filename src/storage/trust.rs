@@ -366,3 +366,147 @@ fn inspect_public_key_record(path: PathBuf) -> Result<TrustRecord> {
         ),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_state(label: &str) -> StateConfig {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "irosh-trust-test-{}-{}",
+            label,
+            rand::random::<u32>()
+        ));
+        StateConfig::new(path)
+    }
+
+    fn make_key(seed_byte: u8) -> PublicKey {
+        use russh::keys::ssh_key::PrivateKey;
+        use russh::keys::ssh_key::private::Ed25519Keypair;
+        let mut seed = [0u8; 32];
+        seed[0] = seed_byte;
+        PrivateKey::from(Ed25519Keypair::from_seed(&seed))
+            .public_key()
+            .clone()
+    }
+
+    #[test]
+    fn load_known_server_returns_none_when_missing() {
+        let state = temp_state("known-missing");
+        let result = load_known_server(&state, "node-1").unwrap();
+        assert!(result.is_none());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn write_and_load_known_server_round_trip() {
+        let state = temp_state("known-rtt");
+        let key = make_key(1);
+        let event = write_known_server(&state, "node-1", &key).unwrap();
+        assert_eq!(event.kind, TrustEventKind::ServerKeyLearned);
+
+        let loaded = load_known_server(&state, "node-1").unwrap().unwrap();
+        assert_eq!(loaded.to_openssh().unwrap(), key.to_openssh().unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn write_and_load_authorized_client_round_trip() {
+        let state = temp_state("client-rtt");
+        let key = make_key(2);
+        let event = write_authorized_client(&state, "client-1", &key).unwrap();
+        assert_eq!(event.kind, TrustEventKind::ClientKeyAuthorized);
+
+        let loaded = load_authorized_client(&state, "client-1").unwrap().unwrap();
+        assert_eq!(loaded.to_openssh().unwrap(), key.to_openssh().unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn reset_known_server_removes_record() {
+        let state = temp_state("known-reset");
+        let key = make_key(3);
+        write_known_server(&state, "node-rm", &key).unwrap();
+        assert!(reset_known_server(&state, "node-rm").unwrap());
+        assert!(load_known_server(&state, "node-rm").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn reset_known_server_returns_false_when_missing() {
+        let state = temp_state("known-reset-missing");
+        assert!(!reset_known_server(&state, "ghost").unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn reset_authorized_client_returns_false_when_missing() {
+        let state = temp_state("client-reset-missing");
+        assert!(!reset_authorized_client(&state, "ghost").unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn load_all_authorized_clients_returns_all() {
+        let state = temp_state("all-clients");
+        let key_a = make_key(10);
+        let key_b = make_key(11);
+        write_authorized_client(&state, "user-a", &key_a).unwrap();
+        write_authorized_client(&state, "user-b", &key_b).unwrap();
+
+        let clients = load_all_authorized_clients(&state).unwrap();
+        assert_eq!(clients.len(), 2);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn load_all_authorized_clients_returns_empty_when_none() {
+        let state = temp_state("no-clients");
+        let clients = load_all_authorized_clients(&state).unwrap();
+        assert!(clients.is_empty());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn inspect_trust_returns_summary() {
+        let state = temp_state("inspect");
+        let key = make_key(5);
+        write_known_server(&state, "server-1", &key).unwrap();
+        write_authorized_client(&state, "client-1", &key).unwrap();
+
+        let summary = inspect_trust(&state).unwrap();
+        assert_eq!(summary.known_servers.len(), 1);
+        assert_eq!(summary.authorized_clients.len(), 1);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn inspect_trust_returns_empty_when_no_trust_data() {
+        let state = temp_state("inspect-empty");
+        let summary = inspect_trust(&state).unwrap();
+        assert!(summary.known_servers.is_empty());
+        assert!(summary.authorized_clients.is_empty());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn trust_event_kind_variants_distinct() {
+        assert_ne!(
+            TrustEventKind::ServerKeyLearned,
+            TrustEventKind::ClientKeyAuthorized
+        );
+    }
+
+    #[test]
+    fn trust_record_serde_round_trip() {
+        let record = TrustRecord {
+            exists: true,
+            path: "/tmp/key.pub".into(),
+            public_key_openssh: Some("ssh-ed25519 AAA...".into()),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let deserialized: TrustRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, deserialized);
+    }
+}

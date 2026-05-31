@@ -69,9 +69,12 @@ pub(super) fn atomic_rename_failure(path: &str) -> TransferFailure {
     TransferFailure::new(TransferFailureCode::AtomicRenameFailed, path.to_string())
 }
 
+/// A destination for upload data that can be either a helper process or a file.
 pub(super) enum UploadSink {
+    /// Data is piped to a spawned helper process.
     #[allow(dead_code)]
     Process(tokio::process::Child),
+    /// Data is written directly to a local file.
     File(tokio::fs::File),
 }
 
@@ -258,9 +261,12 @@ pub(super) async fn probe_download_size(
     Ok(Ok(metadata.len()))
 }
 
+/// A source for download data that can be either a helper process or a file.
 pub(super) enum DownloadSource {
+    /// Data is read from a spawned helper process.
     #[allow(dead_code)]
     Process(tokio::process::Child),
+    /// Data is read directly from a local file.
     File(tokio::fs::File),
 }
 

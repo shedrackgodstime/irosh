@@ -172,3 +172,193 @@ pub fn rename_peer(state: &StateConfig, old_name: &str, new_name: &str) -> Resul
     delete_peer(state, old_name)?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_state(label: &str) -> StateConfig {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "irosh-peers-test-{}-{}",
+            label,
+            rand::random::<u32>()
+        ));
+        StateConfig::new(path)
+    }
+
+    fn make_ticket() -> Ticket {
+        let pubkey = iroh::SecretKey::generate().public();
+        Ticket::new(iroh::EndpointAddr::new(pubkey))
+    }
+
+    #[test]
+    fn save_and_load_peer_round_trip() {
+        let state = temp_state("roundtrip");
+        let ticket = make_ticket();
+        let profile = PeerProfile {
+            name: "my-server".into(),
+            ticket: ticket.clone(),
+        };
+        save_peer(&state, &profile).unwrap();
+        let loaded = load_peer(&state, "my-server").unwrap().unwrap();
+        assert_eq!(loaded.name, "my-server");
+        assert_eq!(loaded.ticket, ticket);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn load_peer_returns_none_when_missing() {
+        let state = temp_state("missing");
+        assert!(load_peer(&state, "nonexistent").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn list_peers_returns_saved_profiles() {
+        let state = temp_state("list");
+        let ticket = make_ticket();
+        save_peer(
+            &state,
+            &PeerProfile {
+                name: "alpha".into(),
+                ticket: ticket.clone(),
+            },
+        )
+        .unwrap();
+        save_peer(
+            &state,
+            &PeerProfile {
+                name: "beta".into(),
+                ticket,
+            },
+        )
+        .unwrap();
+        let peers = list_peers(&state).unwrap();
+        assert_eq!(peers.len(), 2);
+        let names: Vec<&str> = peers.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn delete_peer_removes_profile() {
+        let state = temp_state("delete");
+        let ticket = make_ticket();
+        save_peer(
+            &state,
+            &PeerProfile {
+                name: "to-delete".into(),
+                ticket,
+            },
+        )
+        .unwrap();
+        assert!(delete_peer(&state, "to-delete").unwrap());
+        assert!(load_peer(&state, "to-delete").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn delete_peer_returns_false_when_missing() {
+        let state = temp_state("delete-missing");
+        assert!(!delete_peer(&state, "ghost").unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn rename_peer_changes_name() {
+        let state = temp_state("rename");
+        let ticket = make_ticket();
+        save_peer(
+            &state,
+            &PeerProfile {
+                name: "old-name".into(),
+                ticket: ticket.clone(),
+            },
+        )
+        .unwrap();
+        assert!(rename_peer(&state, "old-name", "new-name").unwrap());
+        assert!(load_peer(&state, "old-name").unwrap().is_none());
+        let loaded = load_peer(&state, "new-name").unwrap().unwrap();
+        assert_eq!(loaded.ticket, ticket);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn rename_peer_returns_false_when_old_missing() {
+        let state = temp_state("rename-missing");
+        assert!(!rename_peer(&state, "ghost", "new-name").unwrap());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn save_peer_rejects_path_traversal_name() {
+        let state = temp_state("traversal");
+        let ticket = make_ticket();
+        let result = save_peer(
+            &state,
+            &PeerProfile {
+                name: "../evil".into(),
+                ticket,
+            },
+        );
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn save_peer_rejects_name_with_slash() {
+        let state = temp_state("slash");
+        let ticket = make_ticket();
+        let result = save_peer(
+            &state,
+            &PeerProfile {
+                name: "a/b".into(),
+                ticket,
+            },
+        );
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn save_peer_rejects_name_with_backslash() {
+        let state = temp_state("backslash");
+        let ticket = make_ticket();
+        let result = save_peer(
+            &state,
+            &PeerProfile {
+                name: "a\\b".into(),
+                ticket,
+            },
+        );
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn list_peers_skips_corrupt_files() {
+        let state = temp_state("corrupt");
+        // Manually write an unparseable JSON file
+        let dir = state.root().join("peers");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bad.json"), "not valid json").unwrap();
+
+        // Also write a valid profile
+        let ticket = make_ticket();
+        save_peer(
+            &state,
+            &PeerProfile {
+                name: "good".into(),
+                ticket,
+            },
+        )
+        .unwrap();
+
+        let peers = list_peers(&state).unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].name, "good");
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+}

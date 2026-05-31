@@ -113,3 +113,72 @@ impl Default for AppConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_config_new_sets_root() {
+        let state = StateConfig::new("/tmp/test-irosh".into());
+        assert!(state.root().ends_with("test-irosh"));
+    }
+
+    #[test]
+    fn state_config_blobs_path_appends_blobs() {
+        let state = StateConfig::new("/tmp/test-irosh".into());
+        assert!(state.blobs_path().ends_with("blobs"));
+        assert_eq!(state.blobs_path(), state.root().join("blobs"));
+    }
+
+    #[test]
+    fn state_config_equality() {
+        let a = StateConfig::new("/tmp/a".into());
+        let b = StateConfig::new("/tmp/a".into());
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn state_config_clone_roundtrip() {
+        let a = StateConfig::new("/tmp/clone-test".into());
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn host_key_policy_variants_distinct() {
+        assert_ne!(HostKeyPolicy::Strict, HostKeyPolicy::Tofu);
+        assert_ne!(HostKeyPolicy::Tofu, HostKeyPolicy::AcceptAll);
+        assert_ne!(HostKeyPolicy::AcceptAll, HostKeyPolicy::Strict);
+    }
+
+    #[test]
+    fn host_key_policy_copy_semantics() {
+        let policy = HostKeyPolicy::Strict;
+        let copied = policy;
+        assert_eq!(policy, copied);
+    }
+
+    #[test]
+    fn security_config_default_is_tofu() {
+        let config = SecurityConfig::default();
+        assert_eq!(config.host_key_policy, HostKeyPolicy::Tofu);
+    }
+
+    #[test]
+    fn app_config_default_values() {
+        let config = AppConfig::default();
+        assert!(config.stealth_secret.is_none());
+        assert!(config.relay_url.is_none());
+        assert_eq!(config.log_level, "info");
+        assert_eq!(config.wormhole_timeout, 3600);
+        assert!(config.default_user.is_none());
+    }
+
+    #[test]
+    fn app_config_equality() {
+        let a = AppConfig::default();
+        let b = AppConfig::default();
+        assert_eq!(a, b);
+    }
+}

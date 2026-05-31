@@ -250,35 +250,35 @@ pub async fn handle_put_command(
     };
 
     let pb_clone = pb.clone();
-    let transfer_res = tokio::select! {
-        res = session.upload_blob(&local_path, &remote_path, move |progress| {
-            if let Some(pb) = &pb_clone {
-                if progress.total > 0 {
-                    pb.set_length(progress.total);
-                }
-                pb.set_position(progress.transferred);
+    let upload = session.upload_blob(&local_path, &remote_path, move |progress| {
+        if let Some(pb) = &pb_clone {
+            if progress.total > 0 {
+                pb.set_length(progress.total);
             }
-        }) => res,
-        _ = async {
-            // Poll stdin to watch for Ctrl+C cancellation or Resizes
-            loop {
-                match stdin.next_event().await {
+            pb.set_position(progress.transferred);
+        }
+    });
+    tokio::pin!(upload);
+
+    let transfer_res = loop {
+        tokio::select! {
+            res = &mut upload => break res.map_err(Into::into),
+            event = stdin.next_event() => {
+                match event {
                     Some(TerminalEvent::Data(data)) => {
                         if data.contains(&0x03) {
-                            return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
+                            return Err(anyhow::anyhow!("transfer cancelled by user (ctrl+c)"));
                         }
                     }
-                    Some(TerminalEvent::Resize(_size)) => {
-                        // TODO: Handle concurrent resize via session handle
+                    Some(TerminalEvent::Resize(size)) => {
+                        let _ = session.resize(size).await;
                         if let Some(pb) = &pb {
                             pb.tick();
                         }
                     }
-                    None => break Ok(()),
+                    None => break Err(anyhow::anyhow!("transfer interrupted")),
                 }
             }
-        } => {
-            return Err(anyhow::anyhow!("Transfer interrupted"));
         }
     };
 
@@ -302,7 +302,7 @@ pub async fn handle_put_command(
             use irosh::error::{ClientError, IroshError};
             let mut handled = false;
 
-            if let IroshError::Client(client_err) = &err {
+            if let Some(IroshError::Client(client_err)) = err.downcast_ref::<IroshError>() {
                 match client_err {
                     ClientError::TransferTargetInvalid { reason }
                         if reason.contains("recursive flag not set") =>
@@ -406,35 +406,35 @@ pub async fn handle_get_command(
     };
 
     let pb_clone = pb.clone();
-    let transfer_res = tokio::select! {
-        res = session.download_blob(&remote_path, &local_path, move |progress| {
-            if let Some(pb) = &pb_clone {
-                if progress.total > 0 {
-                    pb.set_length(progress.total);
-                }
-                pb.set_position(progress.transferred);
+    let download = session.download_blob(&remote_path, &local_path, move |progress| {
+        if let Some(pb) = &pb_clone {
+            if progress.total > 0 {
+                pb.set_length(progress.total);
             }
-        }) => res,
-        _ = async {
-            // Poll stdin to watch for Ctrl+C cancellation or Resizes
-            loop {
-                match stdin.next_event().await {
+            pb.set_position(progress.transferred);
+        }
+    });
+    tokio::pin!(download);
+
+    let transfer_res = loop {
+        tokio::select! {
+            res = &mut download => break res.map_err(Into::into),
+            event = stdin.next_event() => {
+                match event {
                     Some(TerminalEvent::Data(data)) => {
                         if data.contains(&0x03) {
-                            return Err(anyhow::anyhow!("Transfer cancelled by user (Ctrl+C)"));
+                            return Err(anyhow::anyhow!("transfer cancelled by user (ctrl+c)"));
                         }
                     }
-                    Some(TerminalEvent::Resize(_size)) => {
-                        // TODO: Handle concurrent resize via session handle
+                    Some(TerminalEvent::Resize(size)) => {
+                        let _ = session.resize(size).await;
                         if let Some(pb) = &pb {
                             pb.tick();
                         }
                     }
-                    None => break Ok(()),
+                    None => break Err(anyhow::anyhow!("transfer interrupted")),
                 }
             }
-        } => {
-            return Err(anyhow::anyhow!("Transfer interrupted"));
         }
     };
 
@@ -458,7 +458,7 @@ pub async fn handle_get_command(
             use irosh::error::{ClientError, IroshError};
             let mut handled = false;
 
-            if let IroshError::Client(client_err) = &err {
+            if let Some(IroshError::Client(client_err)) = err.downcast_ref::<IroshError>() {
                 match client_err {
                     ClientError::TransferTargetInvalid { reason }
                         if reason.contains("recursive flag not set") =>

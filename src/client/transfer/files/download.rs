@@ -1,4 +1,5 @@
 use tokio::io::AsyncWriteExt;
+use tracing::warn;
 
 use crate::client::{Session, TransferProgress};
 use crate::error::{ClientError, Result, TransportError};
@@ -74,7 +75,7 @@ impl Session {
 
     /// Downloads a remote file using content-addressed blobs.
     pub async fn download_blob<F>(
-        &mut self,
+        &self,
         remote: impl AsRef<std::path::Path>,
         local: impl AsRef<std::path::Path>,
         mut on_progress: F,
@@ -450,7 +451,9 @@ impl Session {
                                 }
                             }
                         }
-                        dest.flush().await.ok();
+                        dest.flush().await.unwrap_or_else(|e| {
+                            warn!("Failed to flush temp file {:?}: {e}", temp_path);
+                        });
                         drop(dest);
                         persist_temp_file(&temp_path, &local_path).await?;
 

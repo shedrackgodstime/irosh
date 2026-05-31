@@ -10,9 +10,14 @@ pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 /// An upload request from client to server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PutRequest {
+    /// The destination path on the remote filesystem.
     pub path: String,
+    /// The total size of the upload in bytes.
     pub size: u64,
+    /// Optional file permissions (Unix mode bits).
     pub mode: Option<u32>,
+    /// If `true`, upload the directory tree rooted at [`path`](Self::path)
+    /// instead of a single file.
     #[serde(default)]
     pub recursive: bool,
 }
@@ -186,25 +191,45 @@ pub struct CompletionResponse {
 /// A decoded transfer frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransferFrame {
+    /// The client wishes to upload a file.
     PutRequest(PutRequest),
+    /// The server is ready to accept upload data.
     PutReady(TransferReady),
+    /// A chunk of upload payload data.
     PutChunk(Vec<u8>),
+    /// The upload is complete.
     PutComplete(TransferComplete),
+    /// The client wishes to download a file.
     GetRequest(GetRequest),
+    /// The server is ready to begin sending download data.
     GetReady(TransferReady),
+    /// A chunk of download payload data.
     GetChunk(Vec<u8>),
+    /// The download is complete.
     GetComplete(TransferComplete),
+    /// Query the remote shell's current working directory.
     CwdRequest(CwdRequest),
+    /// Response containing the remote shell's current working directory.
     CwdResponse(CwdResponse),
+    /// Check whether a path exists on the remote filesystem.
     ExistsRequest(ExistsRequest),
+    /// Response indicating whether a remote path exists.
     ExistsResponse(ExistsResponse),
+    /// Request tab-completion suggestions from the remote server.
     CompletionRequest(CompletionRequest),
+    /// Response containing tab-completion matches.
     CompletionResponse(CompletionResponse),
+    /// Request to upload a content-addressed blob.
     BlobPutRequest(BlobPutRequest),
+    /// Request to download a content-addressed blob.
     BlobGetRequest(BlobGetRequest),
+    /// Notification that a blob is ready for download via iroh-blobs.
     BlobGetReady(BlobGetReady),
+    /// Header for a new entry in a recursive transfer.
     NewEntry(EntryHeader),
+    /// Marker that an entry's data is complete (recursive transfer).
     EntryComplete(EntryComplete),
+    /// A terminal transfer error.
     Error(TransferFailure),
 }
 

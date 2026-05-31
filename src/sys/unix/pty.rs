@@ -215,3 +215,73 @@ pub fn map_sig(signal: russh::Sig) -> Option<libc::c_int> {
         russh::Sig::Custom(_) => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_sig_abrt() {
+        assert_eq!(map_sig(russh::Sig::ABRT), Some(libc::SIGABRT));
+    }
+
+    #[test]
+    fn map_sig_alrm() {
+        assert_eq!(map_sig(russh::Sig::ALRM), Some(libc::SIGALRM));
+    }
+
+    #[test]
+    fn map_sig_fpe() {
+        assert_eq!(map_sig(russh::Sig::FPE), Some(libc::SIGFPE));
+    }
+
+    #[test]
+    fn map_sig_hup() {
+        assert_eq!(map_sig(russh::Sig::HUP), Some(libc::SIGHUP));
+    }
+
+    #[test]
+    fn map_sig_ill() {
+        assert_eq!(map_sig(russh::Sig::ILL), Some(libc::SIGILL));
+    }
+
+    #[test]
+    fn map_sig_int() {
+        assert_eq!(map_sig(russh::Sig::INT), Some(libc::SIGINT));
+    }
+
+    #[test]
+    fn map_sig_kill() {
+        assert_eq!(map_sig(russh::Sig::KILL), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn map_sig_pipe() {
+        assert_eq!(map_sig(russh::Sig::PIPE), Some(libc::SIGPIPE));
+    }
+
+    #[test]
+    fn map_sig_quit() {
+        assert_eq!(map_sig(russh::Sig::QUIT), Some(libc::SIGQUIT));
+    }
+
+    #[test]
+    fn map_sig_segv() {
+        assert_eq!(map_sig(russh::Sig::SEGV), Some(libc::SIGSEGV));
+    }
+
+    #[test]
+    fn map_sig_term() {
+        assert_eq!(map_sig(russh::Sig::TERM), Some(libc::SIGTERM));
+    }
+
+    #[test]
+    fn map_sig_usr1() {
+        assert_eq!(map_sig(russh::Sig::USR1), Some(libc::SIGUSR1));
+    }
+
+    #[test]
+    fn map_sig_custom_returns_none() {
+        assert_eq!(map_sig(russh::Sig::Custom("test".into())), None);
+    }
+}

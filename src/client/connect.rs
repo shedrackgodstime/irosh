@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use russh::client;
 
+use secrecy::ExposeSecret;
+
 use crate::auth::Credentials;
 use crate::client::ResolvedTarget;
 use crate::client::{Session, handler::ClientHandler};
@@ -15,7 +17,7 @@ use crate::transport::iroh::{bind_client_endpoint, derive_alpn};
 use crate::transport::metadata::{read_metadata, write_metadata_request};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::ticket::Ticket;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Configuration options for the irosh client.
 #[derive(Clone, Debug)]
@@ -323,14 +325,16 @@ impl Client {
             if !matches!(auth_res, client::AuthResult::Success) {
                 // Public key auth failed. Try password if credentials are provided or prompter is set.
                 let (user, password) = if let Some(ref creds) = credentials {
-                    (creds.user.clone(), creds.password.clone())
+                    (creds.user.clone(), creds.password.expose_secret().clone())
                 } else if let Some(ref p) = prompter {
                     let p_clone = p.clone();
                     let u = Self::DEFAULT_USER.to_string();
                     let pw = tokio::task::spawn_blocking(move || p_clone.prompt_password(&u))
                         .await
-                        .ok()
-                        .flatten();
+                        .unwrap_or_else(|e| {
+                            warn!("Password prompter task failed: {e}");
+                            None
+                        });
                     match pw {
                         Some(pw) => (Self::DEFAULT_USER.to_string(), pw),
                         None => return Err(IroshError::AuthenticationFailed),
@@ -397,7 +401,7 @@ impl Client {
                 Ok(Session {
                     handle,
                     handler,
-                    channel: None,
+                    channel: tokio::sync::Mutex::new(None),
                     connection: Some(connection),
                     endpoint: Some(endpoint),
                     remote_metadata,

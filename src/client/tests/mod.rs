@@ -100,7 +100,7 @@ async fn connect_test_session(
         Session {
             handle: Arc::new(tokio::sync::RwLock::new(handle)),
             handler: client_handler_clone,
-            channel: Some(channel),
+            channel: tokio::sync::Mutex::new(Some(channel)),
             connection: None,
             endpoint: None,
             remote_metadata: None,

@@ -63,6 +63,7 @@ pub use server::{Server, ServerOptions, ServerReady, ServerShutdown};
 pub use russh;
 
 /// Re-export iroh for downstream consumers (CLI).
+#[cfg(feature = "transport")]
 pub use iroh;
 
 #[cfg(feature = "client")]

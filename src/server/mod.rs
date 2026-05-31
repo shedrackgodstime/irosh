@@ -182,21 +182,30 @@ pub struct ServerReady {
     pub host_key_openssh: String,
 }
 
+/// A currently connected remote peer session.
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveSession {
+    /// The remote peer's node identifier.
     pub(crate) peer_id: String,
+    /// Timestamp when this session was established.
     pub(crate) started_at: chrono::DateTime<chrono::Utc>,
+    /// Total bytes transmitted to the peer.
     pub(crate) bytes_sent: Arc<AtomicU64>,
+    /// Total bytes received from the peer.
     pub(crate) bytes_received: Arc<AtomicU64>,
 }
 
+/// Manages the set of active remote sessions.
 #[derive(Default, Clone)]
 pub(crate) struct SessionTracker {
+    /// Map of session IDs to active session state.
     pub(crate) sessions: Arc<Mutex<HashMap<usize, ActiveSession>>>,
+    /// Monotonically increasing session ID counter.
     pub(crate) next_id: Arc<AtomicUsize>,
 }
 
 impl SessionTracker {
+    /// Creates a new empty tracker.
     fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -204,6 +213,7 @@ impl SessionTracker {
         }
     }
 
+    /// Registers a new session and returns its ID and byte-counting atomics.
     async fn register(&self, peer_id: String) -> (usize, Arc<AtomicU64>, Arc<AtomicU64>) {
         let id = self
             .next_id
@@ -220,10 +230,12 @@ impl SessionTracker {
         (id, sent, received)
     }
 
+    /// Removes a session from the tracker by its ID.
     async fn unregister(&self, id: usize) {
         self.sessions.lock().await.remove(&id);
     }
 
+    /// Returns a snapshot of all active sessions for IPC reporting.
     async fn snapshot(&self) -> Vec<ipc::SessionStatus> {
         let sessions = self.sessions.lock().await;
         sessions

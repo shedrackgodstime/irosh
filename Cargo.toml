@@ -27,7 +27,7 @@ exclude = [
 # See docs/ROADMAP.md "Fat Library" architecture notes for rationale.
 [features]
 default   = ["server", "client"]
-server    = ["transport", "storage", "dep:russh", "dep:portable-pty"]
+server    = ["transport", "storage", "dep:russh", "dep:portable-pty", "dep:chrono"]
 client    = ["transport", "storage", "dep:russh"]
 storage   = ["dep:serde", "dep:serde_json"]
 transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets", "dep:iroh-blobs"]
@@ -59,6 +59,9 @@ thiserror = "2"
 # tracing: structured logging and diagnostics.
 tracing = "0.1"
 
+# secrecy: zeroizing wrapper for sensitive strings (passwords, keys).
+secrecy = { version = "0.8", features = ["alloc"] }
+
 # tokio: async runtime and traits. 
 tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "net", "fs", "signal"] }
 tokio-util = { version = "0.7" }
@@ -66,12 +69,6 @@ dirs = "6"
 
 # rand: cryptographically secure random number generation.
 rand = "0.9"
-
-# data-encoding: Base32 encoding (for legacy ticket fallback).
-data-encoding = "2.7"
-
-# postcard: Compact binary serialization (for legacy ticket fallback).
-postcard = { version = "1", features = ["alloc"] }
 
 # hex: Hexadecimal encoding for protocol identifiers.
 hex = "0.4"
@@ -82,7 +79,7 @@ sha2 = "0.10"
 walkdir = "2"
 argon2 = "0.5.3"
 console = { version = "0.16.3", optional = true }
-chrono = { version = "0.4.44", features = ["serde"] }
+chrono = { version = "0.4.44", features = ["serde"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -17,6 +17,10 @@ impl JobObject {
     /// Creates a new job object and configures it to kill all assigned
     /// processes when the job handle is closed.
     pub fn new() -> std::io::Result<Self> {
+        // SAFETY: Win32 API calls for job object creation and configuration.
+        // We validate the handle against INVALID_HANDLE_VALUE and check all
+        // return codes. The `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` is
+        // zero-initialized via `std::mem::zeroed`.
         unsafe {
             let handle = CreateJobObjectW(null_mut(), null_mut());
             if handle == INVALID_HANDLE_VALUE || handle == 0 {
@@ -44,6 +48,9 @@ impl JobObject {
 
     /// Assigns a process to this job object.
     pub fn assign_process(&self, process_handle: HANDLE) -> std::io::Result<()> {
+        // SAFETY: `self.handle` is a valid job object handle created by `JobObject::new`.
+        // `process_handle` must be a valid process handle provided by the caller.
+        // `AssignProcessToJobObject` is a documented Win32 API.
         unsafe {
             if AssignProcessToJobObject(self.handle, process_handle) == 0 {
                 return Err(std::io::Error::last_os_error());
@@ -51,16 +58,12 @@ impl JobObject {
             Ok(())
         }
     }
-
-    /// Returns the raw handle for this job object.
-    #[allow(dead_code)]
-    pub fn handle(&self) -> HANDLE {
-        self.handle
-    }
 }
 
 impl Drop for JobObject {
     fn drop(&mut self) {
+        // SAFETY: `self.handle` is a valid job object handle created by `JobObject::new`.
+        // `CloseHandle` is safe to call in Drop as long as the handle is valid.
         unsafe {
             let _ = CloseHandle(self.handle);
         }
@@ -87,6 +90,8 @@ pub fn init_global_job() -> std::io::Result<()> {
 pub fn assign_current_process_to_job() -> std::io::Result<()> {
     init_global_job()?;
     if let Some(job) = GLOBAL_JOB.get() {
+        // SAFETY: `GetCurrentProcess` returns a pseudo-handle to the current process
+        // (always valid, no need to close). `job` was initialized by `init_global_job`.
         unsafe {
             job.assign_process(GetCurrentProcess())?;
         }

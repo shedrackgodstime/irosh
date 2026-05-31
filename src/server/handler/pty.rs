@@ -529,7 +529,7 @@ impl ServerHandler {
                     }
                 })
                 .await
-                .ok();
+                .unwrap_or_else(|e| warn!("PTY reader task failed on channel {channel:?}: {e}"));
             };
 
             let mut child_waiter = tokio::task::spawn_blocking(move || {
@@ -537,7 +537,10 @@ impl ServerHandler {
                     "Waiting for child process {:?} for channel {:?}",
                     pid, channel
                 );
-                let res = child.wait().ok().map(|s| s.exit_code()).unwrap_or(255);
+                let res = child.wait().map(|s| s.exit_code()).unwrap_or_else(|e| {
+                    warn!("Failed to wait for child process {pid:?}: {e}");
+                    255
+                });
                 info!(
                     "Child process {:?} for channel {:?} exited with code {}",
                     pid, channel, res
@@ -718,6 +721,8 @@ impl ServerHandler {
                     // because there is no attached console window. We still attempt it as a
                     // best-effort fallback for interactive testing runs.
                     if let Some(pid) = pid {
+                        // SAFETY: `GenerateConsoleCtrlEvent` is a documented Win32 API.
+                        // `pid` is a valid process ID obtained during PTY allocation.
                         unsafe {
                             GenerateConsoleCtrlEvent(event, pid);
                         }
