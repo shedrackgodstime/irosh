@@ -16,7 +16,7 @@ name = "irosh"
 path = "src/main.rs"
 
 [dependencies]
-irosh = { version = "0.4.0", path = "..", features = ["server", "client", "storage", "transport"] }
+irosh = { version = "0.4.0", features = ["server", "client", "storage", "transport"] }
 anyhow = "1.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
