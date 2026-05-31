@@ -69,9 +69,9 @@ Removed from `Cargo.toml`:
 
 `src/lib.rs:66` — `pub use iroh;` has no `#[cfg(feature = "transport")]` gate, so `iroh` is always compiled even without the transport feature.
 
-### No rate limiting on public key auth
+### ~~No rate limiting on public key auth~~ ✅ RESOLVED
 
-`src/auth.rs:521` — `UnifiedAuthenticator::check_public_key` does not check `failed_attempts`. Only password auth is rate-limited. An attacker could brute-force public keys without triggering the rate limit.
+`UnifiedAuthenticator::check_public_key` now checks `failed_attempts >= 3` before validating keys (`src/auth.rs`).
 
 ### Performance: Registry PATH built on every shell spawn
 
@@ -81,9 +81,9 @@ Removed from `Cargo.toml`:
 
 The CLI crate (`cli/src/`) has no test modules. Only `input.rs`, `transfer.rs`, and `completion.rs` have coverage via integration tests.
 
-### `chrono` dependency is unconditional
+### ~~`chrono` dependency is unconditional~~ ✅ RESOLVED
 
-`Cargo.toml:85` — `chrono` is always compiled but only used in `src/server/mod.rs`. Feature-gate it behind `server`.
+`chrono` is now gated behind the `server` feature in `Cargo.toml`.
 
 ---
 

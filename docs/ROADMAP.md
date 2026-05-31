@@ -16,8 +16,10 @@ Expanding the "Service-Oriented" nature of Irosh across all major platforms.
 *   *** Storage Hardening**: High-assurance Windows ACLs and atomic secure writes.
 *   *** IPC Lifecycle**: Synchronized shutdown of control listeners and session tasks.
 
-## Phase 3: Stabilization & Polish (v0.3.x) - [CURRENT]
+## Phase 3: Stabilization & Polish (v0.4.x) - [CURRENT]
 Focusing on developer experience, documentation, and performance edge cases.
+*   **v0.4.0 Release**: See [V0_4_0_RELEASE.md](V0_4_0_RELEASE.md) for the release checklist.
+*   **v0.5.0 Planning**: See [V0_5_0_ROADMAP.md](V0_5_0_ROADMAP.md) for post-0.4 stabilization work.
 *   **Optimized Binary**: Reduce binary size and further prune unused transitive dependencies.
 *   **Audit & Documentation**: Complete the technical manual and finalize public API documentation for library users.
 *   **P2P-Native Updates**: Implement the secure binary update flow via Iroh's blob transport.

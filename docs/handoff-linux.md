@@ -1,5 +1,7 @@
 # Handoff: Windows Work Complete — Proceed on Linux
 
+> **Release:** For v0.4.0 tagging, follow [V0_4_0_RELEASE.md](V0_4_0_RELEASE.md). Post-0.4 work is in [V0_5_0_ROADMAP.md](V0_5_0_ROADMAP.md).
+
 ## What Was Done on Windows
 
 ### Build System

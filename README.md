@@ -96,7 +96,18 @@ Irosh is built as a **"Fat Library"**. All the networking, security, and SSH log
 
 - [**Technical Manual (Library)**](src/README.md) - For developers building on Irosh.
 - [**Development Roadmap**](docs/ROADMAP.md) - Our path to v1.0 and beyond.
-- [**Changelog**](CHANGELOG.md) - What's new in v0.3.0.
+- [**Changelog**](CHANGELOG.md) - What's new in v0.4.0.
+
+---
+
+## What's New in v0.4.0
+
+- **Windows-native reliability**: Static CRT binary, job-object child cleanup, and smarter install/update scripts.
+- **Stronger auth**: Public-key failures now count toward wormhole rate limits; passwords use zeroizing storage.
+- **Safer sessions**: Concurrent session API (`&self` resize/send) and resize forwarding during file transfers.
+- **Better test coverage**: Storage, config, error, and session modules now have unit tests.
+
+Full details in the [Changelog](CHANGELOG.md).
 
 ---
 

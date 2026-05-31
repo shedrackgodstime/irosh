@@ -5,6 +5,42 @@ All notable changes to the `irosh` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-31
+
+### Added
+- **Windows Job Objects**: Child PTY processes are grouped into a global job object so they terminate when the Irosh daemon exits or crashes.
+- **Storage Test Suite**: Comprehensive unit tests for `src/storage/` (keys, peers, trust, shadow, config, utils) covering TOFU records, peer profiles, and secure writes.
+- **Session & Config Tests**: Unit tests for `src/config.rs`, `src/error.rs`, and `src/session/` modules.
+- **Public-Key Rate Limiting**: Failed authentication attempts now count toward the same 3-attempt burn for both password and public-key auth.
+- **Transfer Resize Forwarding**: Terminal resize events propagate to the remote PTY during active `put`/`get` transfers.
+- **Release Planning Docs**: Added `docs/V0_5_0_ROADMAP.md` and `docs/PROJECT_ASSESSMENT.md` for post-0.4.0 work.
+
+### Improved
+- **Windows Static Binary**: MSVC builds link the C runtime statically (`+crt-static`) so the `.exe` has no VC++ Redistributable dependency.
+- **Windows Installer**: `install.ps1` detects running services, stops before update, restarts after, and skips redundant `system install` on upgrade.
+- **Windows Service Paths**: `exe_path` now returns an error instead of silently falling back to a relative `"irosh.exe"`.
+- **Password Security**: `Credentials.password` uses `secrecy::SecretString` for zeroization on drop.
+- **Session Concurrency**: `Session.channel` uses `tokio::sync::Mutex` with double-checked locking; `resize`, `send`, and `eof` take `&self` for safe concurrent access.
+- **Error Visibility**: Added `tracing::warn!` on critical silent-failure paths in PTY handler, transfer, and client connect code.
+- **Release CI**: Added `--locked` builds, `cargo test`, `cargo clippy -D warnings`, `cargo fmt --check`, and `Swatinem/rust-cache` to the release workflow.
+- **Dependency Hygiene**: Removed unused `data-encoding` and `postcard` crates; gated `chrono` behind the `server` feature.
+
+### Fixed
+- **Windows Build**: Enabled `Win32_System_JobObjects` feature and fixed `JobObject` thread-safety for `GLOBAL_JOB` static initialization.
+- **Windows Uninstaller**: Removed spurious `schtasks /delete` call (Irosh uses SCM services, not scheduled tasks).
+
+### Known Limitations
+- **Windows CWD resolution**: `~get`/`~put` with relative paths on Windows may silently fall back to home directory. Use absolute paths for reliable transfers on Windows.
+
+### Deferred to v0.5.0
+- Session idle timeout
+- Authenticator rate-limit persistence across daemon restarts
+- Config export/import CLI
+- Remote port forward CLI (`-R`)
+- PR/push CI workflow
+
+See [docs/V0_5_0_ROADMAP.md](docs/V0_5_0_ROADMAP.md) for details.
+
 ## [0.3.0] - 2026-05-15
 
 ### Added

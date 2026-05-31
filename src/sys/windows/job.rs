@@ -13,6 +13,13 @@ pub struct JobObject {
     handle: HANDLE,
 }
 
+// SAFETY: `JobObject` wraps a Win32 job object handle created by `CreateJobObjectW`.
+// The handle is only accessed through synchronized Win32 job APIs
+// (`AssignProcessToJobObject`, `SetInformationJobObject`, `CloseHandle`), which
+// are safe to call from any thread for a given job handle.
+unsafe impl Send for JobObject {}
+unsafe impl Sync for JobObject {}
+
 impl JobObject {
     /// Creates a new job object and configures it to kill all assigned
     /// processes when the job handle is closed.
@@ -23,7 +30,7 @@ impl JobObject {
         // zero-initialized via `std::mem::zeroed`.
         unsafe {
             let handle = CreateJobObjectW(null_mut(), null_mut());
-            if handle == INVALID_HANDLE_VALUE || handle == 0 {
+            if handle == INVALID_HANDLE_VALUE || handle.is_null() {
                 return Err(std::io::Error::last_os_error());
             }
 
@@ -47,7 +54,7 @@ impl JobObject {
     }
 
     /// Assigns a process to this job object.
-    pub fn assign_process(&self, process_handle: HANDLE) -> std::io::Result<()> {
+    fn assign_process(&self, process_handle: HANDLE) -> std::io::Result<()> {
         // SAFETY: `self.handle` is a valid job object handle created by `JobObject::new`.
         // `process_handle` must be a valid process handle provided by the caller.
         // `AssignProcessToJobObject` is a documented Win32 API.
