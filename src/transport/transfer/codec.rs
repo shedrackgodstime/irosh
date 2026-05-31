@@ -1,3 +1,10 @@
+//! Wire format encoders and decoders for the transfer protocol.
+//!
+//! All public functions in this module follow the naming convention
+//! `{direction}_{frame}` (e.g. `write_put_request`, `read_get_chunk`)
+//! and are paired as writer/reader for each transfer frame type.
+#![allow(missing_docs)]
+
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 

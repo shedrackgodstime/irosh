@@ -25,7 +25,9 @@ pub struct PutRequest {
 /// A download request from client to server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetRequest {
+    /// The remote path to download from.
     pub path: String,
+    /// If `true`, download the directory tree rooted at [`path`](Self::path).
     #[serde(default)]
     pub recursive: bool,
 }
@@ -33,38 +35,51 @@ pub struct GetRequest {
 /// A request to push a content-addressed blob.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlobPutRequest {
+    /// The local path of the blob to upload.
     pub path: String,
+    /// The content hash of the blob.
     pub hash: String,
+    /// The blob format identifier.
     pub format: String,
 }
 
 /// A request to pull a content-addressed blob.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlobGetRequest {
+    /// The destination path on the remote filesystem.
     pub path: String,
 }
 
 /// A response indicating the blob is ready to be downloaded via iroh-blobs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlobGetReady {
+    /// The content hash of the blob.
     pub hash: String,
+    /// The blob format identifier.
     pub format: String,
+    /// Total size of the blob in bytes.
     pub size: u64,
 }
 
 /// A ready response that includes the expected file size.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransferReady {
+    /// Total expected size in bytes.
     pub size: u64,
+    /// Optional file permissions (Unix mode bits).
     pub mode: Option<u32>,
 }
 
 /// A header for a new entry in a recursive transfer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntryHeader {
+    /// Relative path of the entry within the transfer.
     pub path: String,
+    /// Size of the entry in bytes.
     pub size: u64,
+    /// Optional file permissions (Unix mode bits).
     pub mode: Option<u32>,
+    /// Whether this entry is a directory.
     pub is_dir: bool,
 }
 
@@ -75,6 +90,7 @@ pub struct EntryComplete;
 /// A transfer completion marker.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransferComplete {
+    /// Total bytes transferred.
     pub size: u64,
 }
 
@@ -110,11 +126,14 @@ pub enum TransferFailureCode {
 /// A terminal transfer error.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransferFailure {
+    /// The high-level failure category.
     pub code: TransferFailureCode,
+    /// Human-readable explanation of the failure.
     pub detail: String,
 }
 
 impl TransferFailure {
+    /// Creates a new transfer failure with the given code and detail message.
     pub fn new(code: TransferFailureCode, detail: impl Into<String>) -> Self {
         Self {
             code,
@@ -159,19 +178,23 @@ pub struct CwdRequest;
 /// A response containing the current working directory of the live remote shell.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CwdResponse {
+    /// The absolute path of the remote working directory.
     pub path: String,
 }
 
 /// An request to check if a remote path exists.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExistsRequest {
+    /// The remote path to check.
     pub path: String,
 }
 
 /// A response indicating whether a remote path exists.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExistsResponse {
+    /// Whether the path exists on the remote filesystem.
     pub exists: bool,
+    /// Whether the path is a directory (if it exists).
     #[serde(default)]
     pub is_dir: bool,
 }
@@ -179,12 +202,14 @@ pub struct ExistsResponse {
 /// A request for tab completion from the remote server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompletionRequest {
+    /// The path prefix to complete.
     pub path: String,
 }
 
 /// A response containing possible completion matches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompletionResponse {
+    /// The list of matching paths or filenames.
     pub matches: Vec<String>,
 }
 
@@ -245,7 +270,12 @@ pub enum TransferError {
     /// An unknown or unhandled frame kind was received.
     UnsupportedKind(u8),
     /// Received a frame kind that was invalid for the current state.
-    UnexpectedKind { expected: u8, actual: u8 },
+    UnexpectedKind {
+        /// The frame kind the receiver was expecting.
+        expected: u8,
+        /// The frame kind that was actually received.
+        actual: u8,
+    },
     /// The received control payload exceeds the maximum allowed size.
     PayloadTooLarge(usize),
     /// Failed to parse or serialize a JSON control payload.

@@ -81,6 +81,7 @@ impl ClientOptions {
         self
     }
 
+    /// Returns a reference to the [`StateConfig`] this client was configured with.
     pub fn state(&self) -> &StateConfig {
         &self.state
     }

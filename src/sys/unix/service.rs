@@ -9,6 +9,9 @@ use crate::error::ServerError;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tracing::info;
 
+/// Queries whether the irosh service is installed and running.
+///
+/// On Linux this checks systemd; on macOS it checks launchd.
 pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     #[cfg(target_os = "linux")]
     return query_status_linux(state).await;
@@ -86,6 +89,9 @@ async fn query_status_macos(_state: Option<PathBuf>) -> ServiceStatus {
     }
 }
 
+/// Installs, removes, starts, or stops the irosh system service.
+///
+/// Delegates to platform-specific implementations (systemd / launchd).
 pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Result<()> {
     #[cfg(target_os = "linux")]
     return handle_service_linux(action, state).await;
@@ -379,6 +385,9 @@ fn current_uid() -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Displays the irosh service logs.
+///
+/// Uses platform-specific tools: `journalctl` on Linux, `log show` on macOS.
 pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     #[cfg(target_os = "linux")]
     return view_logs_linux(follow, state).await;

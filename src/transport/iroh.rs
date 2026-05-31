@@ -22,6 +22,10 @@ pub fn derive_alpn(secret: Option<&str>) -> Vec<u8> {
     }
 }
 
+/// A bound Iroh endpoint ready for peer-to-peer connections.
+///
+/// Holds the live [`Endpoint`], its address, endpoint ID, and any relay
+/// URLs the endpoint is connected to.
 #[derive(Debug, Clone)]
 pub struct ServerEndpoint {
     /// The actual Iroh endpoint bound on the networking interfaces.

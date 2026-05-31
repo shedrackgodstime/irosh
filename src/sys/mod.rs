@@ -1,3 +1,5 @@
+//! Platform-specific system interfaces for terminal, service, and signal handling.
+
 #[cfg(unix)]
 pub mod unix;
 

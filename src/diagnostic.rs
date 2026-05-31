@@ -88,20 +88,30 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
 /// The result of a security permissions check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityReport {
+    /// The daemon's state directory path.
     pub root_path: std::path::PathBuf,
+    /// Whether the state directory exists.
     pub root_exists: bool,
+    /// The Unix permission mode of the state directory.
     pub root_mode: Option<u32>,
+    /// Whether the state directory has overly permissive access.
     pub root_loose: bool,
+    /// The path to the endpoint secret key file.
     pub key_path: std::path::PathBuf,
+    /// Whether the key file exists.
     pub key_exists: bool,
+    /// The Unix permission mode of the key file.
     pub key_mode: Option<u32>,
+    /// Whether the key file is accessible by non-owners.
     pub key_unsafe: bool,
 }
 
 /// The result of system-level environment checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemReport {
+    /// The detected SSH client version string, if available.
     pub ssh_version: Option<String>,
+    /// Whether UDP networking appears to be available.
     pub udp_available: bool,
 }
 

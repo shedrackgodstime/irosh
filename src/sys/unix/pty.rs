@@ -90,6 +90,10 @@ pub struct AsyncStdin {
 }
 
 impl AsyncStdin {
+    /// Creates a new non-blocking stdin reader.
+    ///
+    /// Configures the raw stdin file descriptor for non-blocking I/O and
+    /// saves the original terminal flags so they can be restored on drop.
     pub fn new() -> Result<Self> {
         use std::os::unix::io::AsRawFd;
         let fd = std::io::stdin().as_raw_fd();

@@ -277,6 +277,10 @@ pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
 
 define_windows_service!(ffi_service_main, irosh_service_main);
 
+/// Starts the Windows service dispatcher for irosh.
+///
+/// Registers the main service entry point and blocks until the service
+/// receives a stop signal. Only relevant on Windows platforms.
 pub fn run_service() -> std::result::Result<(), windows_service::Error> {
     windows_service::service_dispatcher::start(SERVICE_NAME, ffi_service_main)
 }

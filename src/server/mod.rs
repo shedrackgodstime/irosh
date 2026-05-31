@@ -149,6 +149,7 @@ impl ServerOptions {
         self
     }
 
+    /// Returns a reference to the [`StateConfig`] this server was configured with.
     pub fn state(&self) -> &StateConfig {
         &self.state
     }
@@ -157,6 +158,7 @@ impl ServerOptions {
         self.security
     }
 
+    /// Returns the optional shared secret for wormhole authentication.
     pub fn secret_value(&self) -> Option<&str> {
         self.secret.as_deref()
     }

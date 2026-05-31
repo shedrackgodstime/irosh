@@ -31,19 +31,30 @@ pub enum IpcCommand {
 
 /// Internal version of IpcCommand that includes a response channel.
 pub enum InternalCommand {
+    /// Enable the wormhole pairing mechanism with the given code and optional password.
     EnableWormhole {
+        /// The human-friendly wormhole code.
         code: String,
+        /// Optional password protecting the wormhole.
         password: Option<String>,
+        /// Whether the wormhole should remain active across daemon restarts.
         persistent: bool,
+        /// Channel to send the response back to the caller.
         tx: tokio::sync::oneshot::Sender<IpcResponse>,
     },
+    /// Disable an active wormhole.
     DisableWormhole {
+        /// Channel to send the response back to the caller.
         tx: tokio::sync::oneshot::Sender<IpcResponse>,
     },
+    /// Query the current daemon status.
     GetStatus {
+        /// Channel to send the response back to the caller.
         tx: tokio::sync::oneshot::Sender<IpcResponse>,
     },
+    /// Request a graceful shutdown of the daemon.
     Shutdown {
+        /// Channel to send the response back to the caller.
         tx: tokio::sync::oneshot::Sender<IpcResponse>,
     },
 }
@@ -95,7 +106,9 @@ pub enum IpcError {
     /// Failed to bind the IPC socket.
     #[error("failed to bind ipc socket at {path}")]
     BindFailed {
+        /// The socket path that could not be bound.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },

@@ -150,24 +150,36 @@ fn username_syscall() -> Option<String> {
 /// Error type for metadata framing and I/O.
 #[derive(Debug, thiserror::Error)]
 pub enum MetadataError {
+    /// A standard library I/O error during metadata exchange.
     #[error("metadata I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The stream header does not match the expected metadata magic bytes.
     #[error("invalid metadata magic header")]
     InvalidMagic,
 
+    /// The remote peer is using an incompatible metadata protocol version.
     #[error("unsupported metadata version: {0}")]
     UnsupportedVersion(u8),
 
+    /// An unknown or unhandled metadata frame kind was received.
     #[error("unsupported metadata frame kind: {0}")]
     UnsupportedKind(u8),
 
+    /// Received a frame kind that was invalid for the current protocol state.
     #[error("unexpected metadata frame kind: expected {expected}, got {actual}")]
-    UnexpectedKind { expected: u8, actual: u8 },
+    UnexpectedKind {
+        /// The frame kind the receiver was expecting.
+        expected: u8,
+        /// The frame kind that was actually received.
+        actual: u8,
+    },
 
+    /// The received metadata payload exceeds the maximum allowed size.
     #[error("metadata payload too large: {0} bytes")]
     PayloadTooLarge(usize),
 
+    /// Failed to parse or serialize a JSON metadata payload.
     #[error("invalid metadata payload: {0}")]
     Json(#[from] serde_json::Error),
 }

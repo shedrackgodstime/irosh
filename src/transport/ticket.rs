@@ -1,3 +1,5 @@
+//! P2P connection ticket format for peer addressing and discovery.
+
 use iroh::EndpointAddr;
 use iroh_tickets::endpoint::EndpointTicket;
 use serde::{Deserialize, Serialize};

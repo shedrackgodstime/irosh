@@ -9,6 +9,7 @@ pub enum TransportError {
     /// Binding a local endpoint failed.
     #[error("failed to bind transport endpoint")]
     EndpointBind {
+        /// The underlying iroh bind error.
         #[source]
         source: iroh::endpoint::BindError,
     },
@@ -16,6 +17,7 @@ pub enum TransportError {
     /// The P2P connection was lost or refused.
     #[error("transport connection lost: {source}")]
     ConnectionLost {
+        /// The underlying iroh connection error.
         #[source]
         source: iroh::endpoint::ConnectionError,
     },
@@ -34,130 +36,188 @@ pub enum TransportError {
 
     /// The provided relay URL is invalid.
     #[error("invalid relay URL: {url}")]
-    InvalidRelayUrl { url: String },
+    InvalidRelayUrl {
+        /// The invalid relay URL.
+        url: String,
+    },
 
     /// A general protocol violation or unexpected message sequence.
     #[error("protocol violation: {details}")]
-    ProtocolError { details: String },
+    ProtocolError {
+        /// A description of the violation.
+        details: String,
+    },
 }
 
 /// Storage and persistence errors.
 #[cfg(feature = "storage")]
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// Failed to create a directory at the given path.
     #[error("failed to create directory at {path}")]
     DirectoryCreate {
+        /// The path that could not be created.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
+    /// Failed to read the contents of a directory.
     #[error("failed to read directory at {path}")]
     DirectoryRead {
+        /// The path that could not be read.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
+    /// Failed to read an entry within a directory.
     #[error("failed to read entry in directory {path}")]
     DirectoryEntryRead {
+        /// The directory being enumerated.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
+    /// Failed to read a file from disk.
     #[error("failed to read file at {path}")]
     FileRead {
+        /// The file path that could not be read.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
+    /// Failed to write a file to disk.
     #[error("failed to write file at {path}")]
     FileWrite {
+        /// The file path that could not be written to.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
+    /// Failed to delete a file.
     #[error("failed to delete file at {path}")]
     FileDelete {
+        /// The file path that could not be deleted.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
+    /// The requested peer alias was not found in the local storage.
     #[error("peer '{alias}' not found in storage")]
-    PeerNotFound { alias: String },
+    PeerNotFound {
+        /// The alias that was searched for.
+        alias: String,
+    },
 
+    /// Failed to parse or decode a connection ticket.
     #[error("failed to parse connection ticket")]
     TicketParse {
+        /// The underlying ticket parsing error.
         #[source]
         source: crate::transport::ticket::TicketError,
     },
 
+    /// Failed to load or generate the local P2P identity.
     #[error("failed to load or generate local identity")]
     IdentityLoad {
+        /// The underlying transport error from iroh.
         #[source]
         source: iroh::endpoint::TransportError,
     },
 
+    /// Failed to parse an SSH public key.
     #[error("failed to parse SSH public key")]
     PublicKeyParse {
+        /// The underlying SSH key error.
         #[source]
         source: russh::keys::ssh_key::Error,
     },
 
+    /// Failed to read an SSH public key file from disk.
     #[error("failed to read SSH public key file at {path}")]
     PublicKeyRead {
+        /// The path to the key file.
         path: PathBuf,
+        /// The underlying SSH key error.
         #[source]
         source: russh::keys::ssh_key::Error,
     },
 
+    /// Failed to write an SSH public key to disk.
     #[error("failed to write SSH public key")]
     PublicKeyWrite {
+        /// The path to the key file.
         path: PathBuf,
+        /// The underlying SSH key error.
         #[source]
         source: russh::keys::ssh_key::Error,
     },
 
+    /// Failed to format an SSH public key for display or export.
     #[error("failed to format public key")]
     PublicKeyFormat {
+        /// The underlying SSH key error.
         #[source]
         source: russh::keys::ssh_key::Error,
     },
 
+    /// A blocking storage task (e.g. key generation) failed.
     #[error("blocking storage task failed during {operation}")]
     BlockingTaskFailed {
+        /// A description of the operation that was in progress.
         operation: &'static str,
+        /// The Tokio join error.
         #[source]
         source: tokio::task::JoinError,
     },
 
+    /// The endpoint secret file is invalid or corrupt.
     #[error("invalid endpoint secret at {path}: {details}")]
     EndpointSecretInvalid {
+        /// Path to the invalid secret file.
         path: PathBuf,
+        /// Details about why the secret is invalid.
         details: String,
+        /// The underlying error, if available.
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    /// The provided peer name is invalid (e.g. contains path separators).
     #[error("invalid peer name: {name}")]
-    PeerNameInvalid { name: String },
+    PeerNameInvalid {
+        /// The invalid name that was provided.
+        name: String,
+    },
 
+    /// Failed to serialize a peer profile to JSON.
     #[error("failed to serialize peer profile")]
     PeerProfileSerialize {
+        /// The underlying serialization error.
         #[source]
         source: serde_json::Error,
     },
 
+    /// Failed to parse a peer profile from JSON.
     #[error("failed to parse peer profile")]
     PeerProfileParse {
+        /// The underlying parsing error.
         #[source]
         source: serde_json::Error,
     },
 
+    /// Password hashing failed (argon2).
     #[error("failed to hash password: {reason}")]
     PasswordHash {
         /// The underlying error from the argon2 crate.
@@ -200,6 +260,7 @@ pub enum ClientError {
     /// The P2P connection to the target peer failed.
     #[error("failed to connect to P2P endpoint")]
     ConnectFailed {
+        /// The underlying iroh connection error.
         #[source]
         source: iroh::endpoint::ConnectError,
     },
@@ -207,17 +268,22 @@ pub enum ClientError {
     /// Opening a bi-directional stream for SSH failed.
     #[error("failed to open SSH transport stream")]
     StreamOpenFailed {
+        /// The underlying iroh connection error.
         #[source]
         source: iroh::endpoint::ConnectionError,
     },
 
     /// A metadata-related operation failed.
     #[error("metadata request failed: {detail}")]
-    MetadataFailed { detail: String },
+    MetadataFailed {
+        /// A description of the metadata failure.
+        detail: String,
+    },
 
     /// Negotiating the SSH protocol failed.
     #[error("failed to negotiate SSH protocol")]
     SshNegotiationFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -225,6 +291,7 @@ pub enum ClientError {
     /// The SSH session channel could not be opened.
     #[error("failed to open SSH session channel")]
     ChannelOpenFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -232,6 +299,7 @@ pub enum ClientError {
     /// Requesting a PTY failed.
     #[error("failed to request PTY")]
     PtyRequestFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -239,6 +307,7 @@ pub enum ClientError {
     /// Requesting a shell session failed.
     #[error("failed to request shell")]
     ShellRequestFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -246,6 +315,7 @@ pub enum ClientError {
     /// A command failed to execute.
     #[error("remote command execution failed")]
     ExecFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -253,6 +323,7 @@ pub enum ClientError {
     /// Sending data over the SSH channel failed.
     #[error("failed to send data to remote channel")]
     DataSendFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -260,6 +331,7 @@ pub enum ClientError {
     /// Sending EOF over the SSH channel failed.
     #[error("failed to send EOF")]
     EofSendFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -267,6 +339,7 @@ pub enum ClientError {
     /// Resizing the PTY window failed.
     #[error("failed to resize PTY window")]
     WindowChangeFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -274,6 +347,7 @@ pub enum ClientError {
     /// Disconnecting the SSH session failed.
     #[error("failed to disconnect SSH session")]
     DisconnectFailed {
+        /// The underlying SSH error.
         #[source]
         source: russh::Error,
     },
@@ -281,54 +355,78 @@ pub enum ClientError {
     /// Standard I/O failure on the local terminal.
     #[error("terminal I/O error")]
     TerminalIo {
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
     /// The SSH peer disconnected abruptly during the initial handshake.
     #[error("ssh peer disconnected during handshake")]
-    SshHandshakeDisconnected { detail: Option<String> },
+    SshHandshakeDisconnected {
+        /// Optional details about the disconnection.
+        detail: Option<String>,
+    },
 
     /// A file upload operation failed.
     #[error("upload failed: {details}")]
-    UploadFailed { details: String },
+    UploadFailed {
+        /// A description of what went wrong.
+        details: String,
+    },
 
     /// A file download operation failed.
     #[error("download failed: {details}")]
-    DownloadFailed { details: String },
+    DownloadFailed {
+        /// A description of what went wrong.
+        details: String,
+    },
 
     /// A file-level I/O operation failed.
     #[error("failed to {operation} at {path}")]
     FileIo {
+        /// A description of the operation that failed.
         operation: &'static str,
+        /// The file path involved in the operation.
         path: PathBuf,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
     /// The transfer target identifier or path is invalid.
     #[error("invalid transfer target: {reason}")]
-    TransferTargetInvalid { reason: &'static str },
+    TransferTargetInvalid {
+        /// The reason the target is invalid.
+        reason: &'static str,
+    },
 
     /// The remote peer rejected the transfer request.
     #[error("transfer rejected by remote: {failure}")]
     TransferRejected {
+        /// Details of the transfer rejection from the peer.
         failure: crate::transport::transfer::TransferFailure,
     },
 
     /// A transfer-related control operation failed.
     #[error("transfer control operation failed: {failure}")]
     TransferFailed {
+        /// Details of the transfer failure.
         failure: crate::transport::transfer::TransferFailure,
     },
 
     /// The session transport is not available (disconnected or not initialized).
     #[error("transport unavailable: {details}")]
-    TransportUnavailable { details: &'static str },
+    TransportUnavailable {
+        /// The reason transport is unavailable.
+        details: &'static str,
+    },
 
     /// A port forwarding tunnel failed.
     #[error("tunnel failed: {details}")]
-    TunnelFailed { details: String },
+    TunnelFailed {
+        /// A description of what went wrong.
+        details: String,
+    },
 }
 
 /// Server-side orchestration errors.
@@ -337,17 +435,22 @@ pub enum ServerError {
     /// The Iroh endpoint failed to bind.
     #[error("failed to bind server endpoint")]
     EndpointBind {
+        /// The underlying iroh bind error.
         #[source]
         source: iroh::endpoint::BindError,
     },
 
     /// Invalid authentication configuration.
     #[error("invalid auth configuration: {reason}")]
-    AuthConfiguration { reason: String },
+    AuthConfiguration {
+        /// The reason the configuration is invalid.
+        reason: String,
+    },
 
     /// Identity loading or generation failed.
     #[error("failed to load server identity")]
     IdentityLoad {
+        /// The underlying transport error.
         #[source]
         source: iroh::endpoint::TransportError,
     },
@@ -355,60 +458,83 @@ pub enum ServerError {
     /// SSH server configuration failed.
     #[error("failed to configure SSH server")]
     SshConfig {
+        /// The underlying SSH key error.
         #[source]
         source: russh::keys::ssh_key::Error,
     },
 
     /// A shell process failed to start or manage.
     #[error("remote shell error: {details}")]
-    ShellError { details: String },
+    ShellError {
+        /// Details about the shell failure.
+        details: String,
+    },
 
     /// A channel-level SSH operation failed.
     #[error("channel error during {operation}: {details}")]
     ChannelError {
+        /// Description of the operation that was in progress.
         operation: &'static str,
+        /// More details about the error.
         details: String,
     },
 
     /// A file transfer operation failed on the server.
     #[error("server transfer error: {failure}")]
     TransferFailed {
+        /// Details of the transfer failure.
         failure: crate::transport::transfer::TransferFailure,
     },
 
     /// The remote peer provided an invalid transfer path.
     #[error("invalid transfer path: {details}")]
-    InvalidPath { details: String },
+    InvalidPath {
+        /// Explanation of why the path is invalid.
+        details: String,
+    },
 
+    /// Failed to format an SSH host key for display.
     #[error("failed to format host key")]
     FormatHostKey {
+        /// The underlying SSH key error.
         #[source]
         source: russh::keys::ssh_key::Error,
     },
 
+    /// A blocking storage task (e.g. key generation) failed.
     #[error("blocking storage task failed during {operation}")]
     BlockingTaskFailed {
+        /// Description of the operation that was in progress.
         operation: &'static str,
+        /// The Tokio join error.
         #[source]
         source: tokio::task::JoinError,
     },
 
+    /// Failed to query OS process information by PID.
     #[error("failed to query process information for PID {pid}: {details}")]
     ProcessQueryFailed {
+        /// The process ID that was queried.
         pid: u32,
+        /// Details about the failure.
         details: String,
+        /// The underlying I/O error.
         #[source]
         source: std::io::Error,
     },
 
     /// Failure during OS service management (install/start/stop).
     #[error("service management failure: {details}")]
-    ServiceManagement { details: String },
+    ServiceManagement {
+        /// Details about the service failure.
+        details: String,
+    },
 }
 
 /// Top-level crate error unifying all subsystem failures.
 #[derive(Debug, thiserror::Error)]
 pub enum IroshError {
+    /// The current platform is not supported by this feature.
     #[error("platform not supported: {0}")]
     PlatformNotSupported(String),
 
@@ -452,11 +578,19 @@ pub enum IroshError {
 
     /// The remote server identity does not match the pinned trust record.
     #[error("server host key mismatch (expected {expected}, got {actual})")]
-    ServerKeyMismatch { expected: String, actual: String },
+    ServerKeyMismatch {
+        /// The expected host key fingerprint.
+        expected: String,
+        /// The actual host key fingerprint presented by the server.
+        actual: String,
+    },
 
     /// The requested connection target is invalid or unparseable.
     #[error("invalid connection target: {raw}")]
-    InvalidTarget { raw: String },
+    InvalidTarget {
+        /// The raw target string that could not be parsed.
+        raw: String,
+    },
     /// RPC errors from iroh-blobs.
     #[error("rpc error: {0}")]
     Rpc(String),

@@ -18,9 +18,13 @@ pub enum ServiceStatus {
 
 /// Actions that can be performed on the background service.
 pub enum ServiceAction {
+    /// Install the service for automatic startup.
     Install,
+    /// Remove the service from the system.
     Uninstall,
+    /// Start the service immediately.
     Start,
+    /// Stop the running service.
     Stop,
 }
 
