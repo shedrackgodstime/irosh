@@ -467,7 +467,7 @@ impl Session {
         local_host: String,
         local_port: u16,
     ) -> Result<()> {
-        let mut handle = self.handle.write().await;
+        let handle = self.handle.write().await;
         handle
             .tcpip_forward(remote_host.clone(), remote_port)
             .await

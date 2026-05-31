@@ -437,7 +437,7 @@ impl ServerHandler {
                                                 Ok(n) => {
                                                     guard.retain_ready();
                                                     debug!("PTY reader read {} bytes from channel {:?}", n, channel);
-                                                    if let Err(e) = handle_for_task.data(channel, buf[..n].to_vec().into()).await {
+                                                    if let Err(e) = handle_for_task.data(channel, buf[..n].to_vec()).await {
                                                         warn!("PTY reader failed to send data to channel {:?}: {:?}", channel, e);
                                                         break;
                                                     }
