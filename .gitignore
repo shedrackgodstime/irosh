@@ -38,3 +38,6 @@ api-guidelines
 
 # Internal development docs
 docs_dev/
+
+# Local AI tooling metadata
+.antigravitycli/
