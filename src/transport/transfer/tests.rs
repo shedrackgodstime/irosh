@@ -336,3 +336,20 @@ async fn read_next_frame_decodes_chunk_and_error_frames() {
         TransferFrame::Error(TransferFailure::new(TransferFailureCode::Internal, "nope"))
     );
 }
+
+#[tokio::test]
+async fn old_decoder_rejects_unknown_transfer_kind() {
+    let (mut client, mut server) = tokio::io::duplex(1024);
+    let unknown_kind = 255;
+
+    let writer = tokio::spawn(async move {
+        client.write_all(&MAGIC).await.unwrap();
+        client.write_u8(VERSION).await.unwrap();
+        client.write_u8(unknown_kind).await.unwrap();
+        client.write_u32(0).await.unwrap();
+    });
+
+    writer.await.unwrap();
+    let err = read_next_frame(&mut server).await.unwrap_err();
+    assert!(matches!(err, TransferError::UnsupportedKind(k) if k == unknown_kind));
+}

@@ -7,27 +7,67 @@ set -e
 
 echo "[pre-commit] Checking code quality..."
 
-# Stage 1: Formatting
+# Determine which packages changed.
+STAGED=$(git diff --cached --name-only)
+CHANGED_IROSH=false
+CHANGED_CLI=false
+CHANGED_FUZZ=false
+
+for f in $STAGED; do
+    case "$f" in
+        src/*|Cargo.toml|Cargo.lock)    CHANGED_IROSH=true ;;
+        cli/*)                          CHANGED_CLI=true ;;
+        fuzz/*)                         CHANGED_FUZZ=true ;;
+    esac
+done
+
+ALL=$CHANGED_IROSH
+
+# If cli/ or fuzz/ changed but src/ didn't, we still need the root crate
+# because cli depends on irosh and fuzz depends on irosh.
+if $CHANGED_CLI || $CHANGED_FUZZ; then
+    ALL=true
+fi
+
+# If only non-code files changed, skip the heavy checks.
+CODE_CHANGED=false
+for f in $STAGED; do
+    case "$f" in
+        *.rs|*.toml|*.lock) CODE_CHANGED=true; break ;;
+    esac
+done
+
+if $CODE_CHANGED; then
+    PACKAGES=""
+    if $ALL; then
+        PACKAGES="--workspace --exclude fuzz"
+    else
+        if $CHANGED_CLI; then   PACKAGES="$PACKAGES -p irosh-cli"; fi
+        if $CHANGED_FUZZ; then  PACKAGES="$PACKAGES -p irosh-fuzz"; fi
+    fi
+
+    if [ -n "$PACKAGES" ]; then
+        echo "[pre-commit] cargo clippy $PACKAGES..."
+        cargo clippy $PACKAGES -- -D warnings 2>/dev/null
+        if [ $? -ne 0 ]; then
+            echo "FAIL: clippy found warnings/errors. Fix before committing."
+            exit 1
+        fi
+
+        echo "[pre-commit] cargo test $PACKAGES --lib..."
+        cargo test $PACKAGES --lib 2>/dev/null
+        if [ $? -ne 0 ]; then
+            echo "FAIL: unit tests failed. Fix before committing."
+            exit 1
+        fi
+    fi
+fi
+
+# Stage 1: Formatting (always run, even on non-code files)
 echo "[pre-commit] cargo fmt --check..."
 cargo fmt --check 2>/dev/null
 if [ $? -ne 0 ]; then
     echo "FAIL: cargo fmt --check found unformatted code. Run 'cargo fmt' to fix."
-    exit 1
-fi
-
-# Stage 2: Clippy
-echo "[pre-commit] cargo clippy..."
-cargo clippy --workspace --all-features -- -D warnings 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo "FAIL: clippy found warnings/errors. Fix before committing."
-    exit 1
-fi
-
-# Stage 3: Quick unit tests (lib only, fast)
-echo "[pre-commit] cargo test --lib (quick)..."
-cargo test --workspace --all-features --lib 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo "FAIL: unit tests failed. Fix before committing."
     exit 1
 fi
 

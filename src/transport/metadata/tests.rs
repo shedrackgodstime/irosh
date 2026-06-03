@@ -94,3 +94,20 @@ async fn metadata_rejects_unexpected_frame_kind() {
     let err = read_metadata(&mut server).await.unwrap_err();
     assert!(matches!(err, MetadataError::UnexpectedKind { .. }));
 }
+
+#[tokio::test]
+async fn old_decoder_rejects_unknown_metadata_kind() {
+    let (mut client, mut server) = tokio::io::duplex(1024);
+    let unknown_kind = 255;
+
+    let writer = tokio::spawn(async move {
+        client.write_all(&MAGIC).await.unwrap();
+        client.write_u8(VERSION).await.unwrap();
+        client.write_u8(unknown_kind).await.unwrap();
+        client.write_u32(0).await.unwrap();
+    });
+
+    writer.await.unwrap();
+    let err = read_metadata(&mut server).await.unwrap_err();
+    assert!(matches!(err, MetadataError::UnsupportedKind(k) if k == unknown_kind));
+}
