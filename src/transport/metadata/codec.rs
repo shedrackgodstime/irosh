@@ -1,3 +1,4 @@
+//! Metadata codec/framing.
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::types::{MetadataError, PeerMetadata};
@@ -25,11 +26,13 @@ pub(crate) const MAX_METADATA_BYTES: usize = 8 * 1024;
 #[cfg(not(test))]
 const MAX_METADATA_BYTES: usize = 8 * 1024;
 
+#[tracing::instrument(skip(writer))]
 async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     kind: u8,
     payload: &[u8],
 ) -> Result<(), MetadataError> {
+    tracing::trace!(len = payload.len(), kind, "Writing metadata frame");
     if payload.len() > MAX_METADATA_BYTES {
         return Err(MetadataError::PayloadTooLarge(payload.len()));
     }
@@ -37,13 +40,17 @@ async fn write_frame<W: AsyncWrite + Unpin>(
     writer.write_all(&MAGIC).await?;
     writer.write_u8(VERSION).await?;
     writer.write_u8(kind).await?;
-    writer.write_u32(payload.len() as u32).await?;
+    // Reason: payload length is validated against a limit before this point.
+    #[allow(clippy::cast_possible_truncation)]
+    let len = payload.len() as u32;
+    writer.write_u32(len).await?;
     writer.write_all(payload).await?;
     writer.flush().await?;
 
     Ok(())
 }
 
+#[tracing::instrument(skip(reader))]
 async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>), MetadataError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic).await?;
@@ -68,10 +75,15 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
 
     let mut payload = vec![0u8; length];
     reader.read_exact(&mut payload).await?;
+    tracing::trace!(len = length, kind, "Read metadata frame");
     Ok((kind, payload))
 }
 
 /// Writes a metadata request frame to the provided stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
 pub async fn write_metadata_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
 ) -> Result<(), MetadataError> {
@@ -79,6 +91,10 @@ pub async fn write_metadata_request<W: AsyncWrite + Unpin>(
 }
 
 /// Reads and validates a metadata request frame from the provided stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
 pub async fn read_metadata_request<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<(), MetadataError> {
@@ -96,6 +112,11 @@ pub async fn read_metadata_request<R: AsyncRead + Unpin>(
 }
 
 /// Writes one metadata response frame to the provided stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[tracing::instrument(skip(writer))]
 pub async fn write_metadata<W: AsyncWrite + Unpin>(
     writer: &mut W,
     metadata: &PeerMetadata,
@@ -105,6 +126,11 @@ pub async fn write_metadata<W: AsyncWrite + Unpin>(
 }
 
 /// Reads one metadata response frame from the provided stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[tracing::instrument(skip(reader))]
 pub async fn read_metadata<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<PeerMetadata, MetadataError> {
@@ -115,5 +141,7 @@ pub async fn read_metadata<R: AsyncRead + Unpin>(
             actual: kind,
         });
     }
-    Ok(serde_json::from_slice(&payload)?)
+    let raw: PeerMetadata = serde_json::from_slice(&payload)?;
+    // Sanitize peer-supplied fields to prevent injection attacks.
+    Ok(PeerMetadata::new(raw.hostname, raw.user, raw.os))
 }

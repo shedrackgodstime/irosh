@@ -2,6 +2,7 @@
 
 /// The lifecycle state of an irosh client session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SessionState {
     /// A connection attempt has started but transport is not yet established.
     Dialing,
@@ -23,6 +24,7 @@ pub enum SessionState {
 
 impl SessionState {
     /// Returns whether this state terminates the current session lifecycle.
+    #[must_use] 
     pub fn is_terminal(self) -> bool {
         matches!(
             self,

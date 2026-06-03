@@ -33,11 +33,13 @@ impl irosh::PasswordPrompter for CliPasswordPrompter {
 use crate::context::CliContext;
 
 /// Entry point for the shortcut 'irosh <target>'
+#[must_use]
 pub async fn exec_shortcut(target: &str, ctx: &CliContext) -> Result<()> {
     exec_internal(Some(target.to_string()), None, None, None, None, None, ctx).await
 }
 
 /// Entry point for 'irosh connect <target>'
+#[must_use]
 pub async fn exec(
     target: Option<String>,
     code: Option<String>,
@@ -79,31 +81,38 @@ async fn exec_internal(
         Ui::info("Connecting via explicit ticket...");
         irosh::ResolvedTarget::Ticket(t.parse()?)
     } else if let Some(c) = code_str {
-        Ui::info(&format!("Connecting via explicit wormhole: {}", c));
+        Ui::info(&format!("Connecting via explicit wormhole: {c}"));
         irosh::ResolvedTarget::WormholeCode(c)
     } else {
-        let raw_target = match target_str {
-            Some(t) => t,
-            None => {
-                let peers = irosh::storage::list_peers(&state)?;
-                if peers.is_empty() {
-                    Ui::warn("Address book is empty", "You haven't saved any peers yet.");
-                    Ui::info("To connect, you can:");
-                    Ui::info("  1. Use a wormhole code:   irosh <code-word>");
-                    Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
-                    Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
-                    println!();
-                    anyhow::bail!("No target specified.");
-                }
+        let raw_target = if let Some(t) = target_str { t } else {
+            let peers = irosh::storage::list_peers(&state)?;
+            if peers.is_empty() {
+                Ui::warn("Address book is empty", "You haven't saved any peers yet.");
+                Ui::info("To connect, you can:");
+                Ui::info("  1. Use a wormhole code:   irosh <code-word>");
+                Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
+                Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
+                println!();
 
-                let items: Vec<String> = peers
-                    .iter()
-                    .map(|p| format!("[{}] {}", p.name, display::shorten_ticket(&p.ticket)))
-                    .collect();
+                match Ui::input("Enter a wormhole code or ticket", None) {
+                    Some(val) if !val.trim().is_empty() => val.trim().to_string(),
+                    _ => anyhow::bail!("No target specified."),
+                }
+            } else {
+                let mut items = vec!["[Use a wormhole code or ticket]".to_string()];
+                items.extend(
+                    peers
+                        .iter()
+                        .map(|p| format!("[{}] {}", p.name, display::shorten_ticket(&p.ticket))),
+                );
 
                 let selection = Ui::select("Select a peer to connect", &items);
                 match selection {
-                    Some(idx) => peers[idx].name.clone(),
+                    Some(0) => match Ui::input("Enter a wormhole code or ticket", None) {
+                        Some(val) if !val.trim().is_empty() => val.trim().to_string(),
+                        _ => anyhow::bail!("No target specified."),
+                    },
+                    Some(idx) => peers[idx - 1].name.clone(),
                     None => anyhow::bail!("Connection cancelled."),
                 }
             }
@@ -118,14 +127,15 @@ async fn exec_internal(
                     .any(|p| p.name == raw_target);
 
                 if is_alias {
-                    Ui::info(&format!("Connecting to saved peer: {}", raw_target));
+                    Ui::info(&format!("Connecting to saved peer: {raw_target}"));
                 } else {
                     Ui::info("Connecting via direct ticket...");
                 }
             }
             irosh::ResolvedTarget::WormholeCode(code) => {
-                Ui::info(&format!("Attempting wormhole connection: {}", code));
+                Ui::info(&format!("Attempting wormhole connection: {code}"));
             }
+            _ => {}
         }
         resolved
     };
@@ -140,12 +150,13 @@ async fn exec_internal(
             match target {
                 irosh::ResolvedTarget::Ticket(t) => Ok((t, false)),
                 irosh::ResolvedTarget::WormholeCode(code) => {
-                    pb.set_message(format!("Searching for wormhole: {}...", code));
+                    pb.set_message(format!("Searching for wormhole: {code}..."));
                     match Client::connect_wormhole(&options, &code).await {
                         Ok(t) => Ok((t, true)),
                         Err(e) => Err(e),
                     }
                 }
+                _ => unreachable!(),
             }
         } => res?,
         _ = tokio::signal::ctrl_c() => {
@@ -207,6 +218,7 @@ async fn exec_internal(
         std::io::stdout().write_all(&output.stdout)?;
         std::io::stderr().write_all(&output.stderr)?;
         if output.exit_status != 0 {
+            #[allow(clippy::cast_possible_wrap)]
             std::process::exit(output.exit_status as i32);
         }
         return Ok(());
@@ -219,7 +231,7 @@ async fn exec_internal(
         format!("peer-{}", &ticket.to_addr().id.to_string()[..8])
     };
 
-    Ui::success(&format!("Secure session established with {}", display_name));
+    Ui::success(&format!("Secure session established with {display_name}"));
 
     // Silent Auto-save logic: Automatically save the peer if it's new and doesn't conflict.
     let peers = irosh::storage::list_peers(&state)?;
@@ -235,8 +247,7 @@ async fn exec_internal(
             let fallback = format!("{}-{}", display_name, &ticket.to_addr().id.to_string()[..4]);
             Ui::input(
                 &format!(
-                    "A peer named '{}' already exists. Enter a new alias",
-                    display_name
+                    "A peer named '{display_name}' already exists. Enter a new alias"
                 ),
                 Some(&fallback),
             )
@@ -252,11 +263,10 @@ async fn exec_internal(
             };
             if irosh::storage::save_peer(&state, &profile).is_ok() {
                 if name_exists {
-                    Ui::success(&format!("Peer alias updated to '{}'", target_name));
+                    Ui::success(&format!("Peer alias updated to '{target_name}'"));
                 } else {
                     Ui::success(&format!(
-                        "Peer auto-saved as '{}'. Use 'irosh {}' next time.",
-                        target_name, target_name
+                        "Peer auto-saved as '{target_name}'. Use 'irosh {target_name}' next time."
                     ));
                 }
             }
@@ -282,8 +292,7 @@ async fn exec_internal(
 
     let remote_is_windows = session
         .remote_metadata()
-        .map(|meta| meta.os.eq_ignore_ascii_case("windows"))
-        .unwrap_or(false);
+        .is_some_and(|meta| meta.os.eq_ignore_ascii_case("windows"));
 
     let input_engine = input::InputEngine::new(&state, remote_is_windows);
 
@@ -307,11 +316,10 @@ fn auto_save_temp_peer(state: &irosh::StateConfig, ticket: &irosh::transport::ti
             Ui::info("");
             Ui::warn(
                 "Connection failed, but peer ticket was recovered!",
-                &format!("Saved as '{}' for future retries.", name),
+                &format!("Saved as '{name}' for future retries."),
             );
             Ui::info(&format!(
-                "You can reconnect by running: irosh connect {}",
-                name
+                "You can reconnect by running: irosh connect {name}"
             ));
         }
     }

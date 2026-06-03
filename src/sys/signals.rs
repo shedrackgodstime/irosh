@@ -83,8 +83,8 @@ pub async fn wait_for_shutdown_signal() {
             }
         }
 
-        // Register the handler. Safe because ctrl_handler only touches atomics
-        // and a Notify, which are both safe to call from any thread.
+        // SAFETY: `ctrl_handler` only touches atomics and a Notify, which are
+        // both safe to call from any thread.
         let registered = unsafe { SetConsoleCtrlHandler(Some(ctrl_handler), 1) } != 0;
 
         if registered {

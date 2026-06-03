@@ -52,12 +52,10 @@ pub async fn complete_line(
 
     match classify_completion_target(mode, &parsed) {
         CompletionTarget::Keyword(token) => Ok(complete_keyword(mode, &parsed, token)),
-        CompletionTarget::PutLocalPath(raw) => complete_local_path(&parsed, raw, transfer_context),
-        CompletionTarget::GetRemotePath(raw) => complete_remote_path(session, &parsed, raw).await,
-        CompletionTarget::ListLocalPath(raw) => complete_local_path(&parsed, raw, transfer_context),
-        CompletionTarget::ChangeLocalPath(raw) => {
-            complete_local_path(&parsed, raw, transfer_context)
+        CompletionTarget::PutLocalPath(raw) | CompletionTarget::ListLocalPath(raw) | CompletionTarget::ChangeLocalPath(raw) => {
+            Ok(complete_local_path(&parsed, raw, transfer_context))
         }
+        CompletionTarget::GetRemotePath(raw) => complete_remote_path(session, &parsed, raw).await,
         CompletionTarget::None => Ok(CompletionResult::None),
     }
 }
@@ -178,9 +176,9 @@ fn complete_keyword(
 
     match matches.as_slice() {
         [] => CompletionResult::None,
-        [matched] => {
-            let replacement = match *matched {
-                "~put" | "~get" | "put" | "get" | "lls" | "lcd" => format!("{matched} "),
+        [single] => {
+            let replacement = match *single {
+                "~put" | "~get" | "put" | "get" | "lls" | "lcd" => format!("{single} "),
                 other => other.to_string(),
             };
 
@@ -189,7 +187,7 @@ fn complete_keyword(
             )
         }
         matches => {
-            CompletionResult::Suggestions(matches.iter().map(|entry| entry.to_string()).collect())
+            CompletionResult::Suggestions(matches.iter().map(std::string::ToString::to_string).collect())
         }
     }
 }
@@ -198,16 +196,16 @@ fn complete_local_path(
     parsed: &ParsedLine<'_>,
     raw: &str,
     transfer_context: &TransferContext,
-) -> Result<CompletionResult> {
+) -> CompletionResult {
     let resolved = transfer_context.resolve_local_source(raw);
     let (search_dir, prefix, base) = local_completion_parts(raw, &resolved);
 
     let Ok(entries) = std::fs::read_dir(&search_dir) else {
-        return Ok(CompletionResult::None);
+        return CompletionResult::None;
     };
 
     let mut matches = entries
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
             if !name.starts_with(&prefix) {
@@ -221,7 +219,7 @@ fn complete_local_path(
 
     matches.sort_by(|left, right| left.0.cmp(&right.0));
     match matches.as_slice() {
-        [] => Ok(CompletionResult::None),
+        [] => CompletionResult::None,
         [(name, is_dir)] => {
             let mut completed = format!("{base}{name}");
             let replacement = if *is_dir {
@@ -232,14 +230,14 @@ fn complete_local_path(
             };
 
             let Some(token) = active_token(parsed) else {
-                return Ok(CompletionResult::None);
+                return CompletionResult::None;
             };
 
-            Ok(CompletionResult::Applied(
+            CompletionResult::Applied(
                 replace_range(parsed, token.raw_start, token.raw_end, &replacement).into_bytes(),
-            ))
+            )
         }
-        many => Ok(CompletionResult::Suggestions(
+        many => CompletionResult::Suggestions(
             many.iter()
                 .map(|(name, is_dir)| {
                     if *is_dir {
@@ -249,7 +247,7 @@ fn complete_local_path(
                     }
                 })
                 .collect(),
-        )),
+        ),
     }
 }
 
@@ -263,11 +261,11 @@ async fn complete_remote_path(
 
     match matches.as_slice() {
         [] => Ok(CompletionResult::None),
-        [matched] => {
-            let replacement = if matched.ends_with('/') {
-                matched.clone()
+        [single] => {
+            let replacement = if single.ends_with('/') {
+                single.clone()
             } else {
-                format!("{matched} ")
+                format!("{single} ")
             };
 
             let Some(token) = active_token(parsed) else {
@@ -317,9 +315,7 @@ fn local_completion_parts(raw: &str, resolved: &Path) -> (PathBuf, String, Strin
         .to_string();
 
     let search_dir = resolved
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 
     let base = match raw.rfind('/') {
         Some(index) => raw[..=index].to_string(),

@@ -23,6 +23,11 @@ unsafe impl Sync for JobObject {}
 impl JobObject {
     /// Creates a new job object and configures it to kill all assigned
     /// processes when the job handle is closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying Win32 `CreateJobObjectW` or
+    /// `SetInformationJobObject` calls fail.
     pub fn new() -> std::io::Result<Self> {
         // SAFETY: Win32 API calls for job object creation and configuration.
         // We validate the handle against INVALID_HANDLE_VALUE and check all
@@ -84,6 +89,11 @@ impl Drop for JobObject {
 pub static GLOBAL_JOB: std::sync::OnceLock<JobObject> = std::sync::OnceLock::new();
 
 /// Initializes the global job object.
+///
+/// # Errors
+///
+/// Returns an error if `JobObject::new` fails to create the underlying
+/// Win32 job object or configure it.
 pub fn init_global_job() -> std::io::Result<()> {
     if GLOBAL_JOB.get().is_none() {
         let job = JobObject::new()?;
@@ -94,6 +104,11 @@ pub fn init_global_job() -> std::io::Result<()> {
 
 /// Assigns the current process to the global job object.
 /// This will cause all *future* children to be automatically part of the job.
+///
+/// # Errors
+///
+/// Returns an error if `init_global_job` fails or if the underlying
+/// `AssignProcessToJobObject` call fails.
 pub fn assign_current_process_to_job() -> std::io::Result<()> {
     init_global_job()?;
     if let Some(job) = GLOBAL_JOB.get() {

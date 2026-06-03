@@ -137,7 +137,7 @@ Export/import (planned for v0.5.0) but also a **"bootstrap new machine"** flow: 
 3. **Collaborative session** — Hard, but Iroh gossip gives a path OpenSSH doesn't have.
 4. **JSON output mode on all CLI commands** — Unlocks automation/agents without a new API.
 
-See [future_roadmap.md](future_roadmap.md) for the full vision including collaborative SSH, QR pairing, git-over-irosh, AI diagnostics, and more.
+See [feature_proposals.md](../docs/feature_proposals.md) for the speculative ideas pool, including collaborative SSH, QR pairing, git-over-irosh, AI diagnostics, and more.
 
 ---
 
@@ -179,7 +179,7 @@ Irosh was built the **right way** for a serious P2P SSH tool: library-first, nat
 
 - [V0_5_0_ROADMAP.md](V0_5_0_ROADMAP.md) — post-0.4.0 stabilization plan
 - [ROADMAP.md](ROADMAP.md) — overall development phases
-- [future_roadmap.md](future_roadmap.md) — long-term vision
+- [feature_proposals.md](../docs/feature_proposals.md) — speculative feature proposals backlog
 - [improvements-audit.md](improvements-audit.md) — security and quality audit
 - [pre-v0.4.0-audit.md](pre-v0.4.0-audit.md) — pre-release codebase audit
 - [scratch/IROSH_DEFINITION.md](../scratch/IROSH_DEFINITION.md) — product definition

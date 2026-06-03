@@ -1,3 +1,4 @@
+//! Transfer state/store.
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{ClientError, Result};

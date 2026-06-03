@@ -8,6 +8,7 @@ use super::input::{EscapeAction, InputEngine, InputMode};
 use super::prompt::execute_local_command;
 use super::transfer::TransferContext;
 
+#[must_use]
 pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) -> Result<()> {
     let mut stdin = AsyncStdin::new()?;
     let mut stdout = tokio::io::stdout();
@@ -169,7 +170,7 @@ async fn handle_action(
 
     if input_engine.remote_is_windows && lines_printed > 0 {
         let size = irosh::sys::current_terminal_size();
-        let s = (before_row.saturating_add(lines_printed)).saturating_sub(size.rows as u16);
+        let s = (before_row.saturating_add(lines_printed)).saturating_sub(size.rows);
         if s > 0 {
             session.send(b"\x0C\r").await?;
         }
@@ -191,7 +192,7 @@ async fn query_cpr(
 
     loop {
         tokio::select! {
-            _ = &mut timeout => {
+            () = &mut timeout => {
                 break;
             }
             event = stdin.next_event() => {

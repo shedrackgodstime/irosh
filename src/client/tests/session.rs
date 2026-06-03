@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::pty::pty_size;
 
 #[tokio::test]
 async fn session_state_transitions_from_authenticated_to_shell_ready_to_closed() {
@@ -13,6 +14,47 @@ async fn session_state_transitions_from_authenticated_to_shell_ready_to_closed()
     assert_eq!(session.state(), SessionState::Closed);
 
     let _ = server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn session_pty_shell_and_disconnect_lifecycle() {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let server_state = temp_state_dir("server-pty-lifecycle");
+        let client_state = temp_state_dir("client-pty-lifecycle");
+        let (mut session, server_task) = connect_test_session(&server_state, &client_state).await;
+
+        // Request PTY with specific size
+        let size = pty_size(120, 40, 10, 20);
+        let opts = PtyOptions::new("xterm-256color", size);
+        session.request_pty(opts).await.unwrap();
+
+        // Start shell
+        session.start_shell().await.unwrap();
+        assert_eq!(session.state(), SessionState::ShellReady);
+
+        // Resize terminal
+        let new_size = pty_size(80, 24, 5, 10);
+        session.resize(new_size).await.unwrap();
+
+        // Disconnect and verify terminal state
+        session.disconnect().await.unwrap();
+        assert_eq!(session.state(), SessionState::Closed);
+
+        // Verify idempotent disconnect
+        session.disconnect().await.unwrap();
+        assert_eq!(session.state(), SessionState::Closed);
+
+        // Verify methods fail after disconnect
+        let err = session.start_shell().await.unwrap_err();
+        assert!(
+            err.to_string().contains("closed"),
+            "expected 'closed' error, got: {err}"
+        );
+
+        let _ = server_task.await.unwrap();
+    })
+    .await
+    .expect("Test timed out");
 }
 
 #[tokio::test]

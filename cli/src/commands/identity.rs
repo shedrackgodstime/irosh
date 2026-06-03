@@ -5,6 +5,7 @@ use anyhow::Result;
 use irosh::russh::keys::ssh_key::HashAlg;
 use irosh::storage;
 
+#[must_use]
 pub async fn exec(action: IdentityAction, ctx: &CliContext) -> Result<()> {
     let state = ctx.server_state()?;
 
@@ -55,7 +56,7 @@ pub async fn exec(action: IdentityAction, ctx: &CliContext) -> Result<()> {
                 let endpoint_id = identity.endpoint_id();
 
                 Ui::success("New identity generated and saved.");
-                Ui::info(&format!("New Endpoint ID: {}", endpoint_id));
+                Ui::info(&format!("New Endpoint ID: {endpoint_id}"));
                 Ui::info("Don't forget to update your saved tickets on other machines.");
             }
         }

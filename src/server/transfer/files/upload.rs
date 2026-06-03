@@ -1,3 +1,4 @@
+//! Server file upload.
 use crate::error::{Result, ServerError, TransportError};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
@@ -12,6 +13,7 @@ use crate::server::transfer::helpers::{
     target_exists_failure,
 };
 
+#[tracing::instrument(skip(stream, context, shell_state))]
 pub(crate) async fn handle_put_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::PutRequest,
@@ -22,15 +24,12 @@ pub(crate) async fn handle_put_request(
         return handle_recursive_put_request(stream, request, context, shell_state).await;
     }
 
-    let prepared = match prepare_put_destination(context, &request.path, shell_state).await? {
-        Some(prepared) => prepared,
-        None => {
-            let dest_path = context.resolve_path(&request.path, shell_state).await?;
-            write_transfer_error(stream, &target_exists_failure(&dest_path))
-                .await
-                .map_err(TransportError::from)?;
-            return Ok(());
-        }
+    let Some(prepared) = prepare_put_destination(context, &request.path, shell_state).await? else {
+        let dest_path = context.resolve_path(&request.path, shell_state).await?;
+        write_transfer_error(stream, &target_exists_failure(&dest_path))
+            .await
+            .map_err(TransportError::from)?;
+        return Ok(());
     };
     let PreparedPutDestination {
         final_arg,
@@ -179,20 +178,16 @@ async fn handle_recursive_put_request(
                     }
                 } else {
                     // Use atomic rename pattern for each file in the recursive stream
-                    let prepared = match prepare_put_destination(
+                    let Some(prepared) = prepare_put_destination(
                         context,
                         &full_path_str,
                         shell_state,
                     )
-                    .await?
-                    {
-                        Some(p) => p,
-                        None => {
-                            write_transfer_error(stream, &target_exists_failure(&full_path))
-                                .await
-                                .map_err(TransportError::from)?;
-                            return Ok(()); // Fail whole recursive transfer on collision
-                        }
+                    .await? else {
+                        write_transfer_error(stream, &target_exists_failure(&full_path))
+                            .await
+                            .map_err(TransportError::from)?;
+                        return Ok(()); // Fail whole recursive transfer on collision
                     };
 
                     let mut sink = spawn_upload_helper(context, &prepared.part_arg).await?;

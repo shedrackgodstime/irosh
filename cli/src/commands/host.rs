@@ -63,7 +63,8 @@ pub async fn exec(
             Ok(res) => res,
             Err(e) => {
                 // Check for Identity Conflict (Double Instance)
-                let daemon_running = irosh::IpcClient::new(ctx.server_state_root()?)
+                let state_root = ctx.server_state_root()?;
+                let daemon_running = irosh::IpcClient::new(&state_root)
                     .send(irosh::IpcCommand::GetStatus)
                     .await
                     .is_ok();
@@ -78,9 +79,8 @@ pub async fn exec(
                         Some("run 'irosh system status' to inspect it, or 'irosh wormhole' to pair without stopping the daemon"),
                     );
                     anyhow::bail!("Identity conflict.");
-                } else {
-                    return Err(e.into());
                 }
+                return Err(e.into());
             }
         },
         _ = tokio::signal::ctrl_c() => {

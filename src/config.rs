@@ -33,16 +33,19 @@ impl StateConfig {
     ///
     /// The directory does not need to exist prior to initialization;
     /// the relevant storage modules will create subdirectories as needed.
+    #[must_use] 
     pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
 
     /// Returns the root directory used for state storage.
+    #[must_use] 
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     /// Returns the directory where iroh blobs are stored.
+    #[must_use] 
     pub fn blobs_path(&self) -> PathBuf {
         self.root.join("blobs")
     }
@@ -50,6 +53,7 @@ impl StateConfig {
 
 /// Defines the policy for handling remote host keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HostKeyPolicy {
     /// Strictly verify host keys against the trust store. Connections to
     /// unknown or mismatched hosts will fail.

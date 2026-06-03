@@ -10,6 +10,7 @@ pub struct CliContext {
 }
 
 impl CliContext {
+    #[must_use]
     pub fn new(args: Args) -> Result<Self> {
         let state_root = args
             .state
@@ -23,6 +24,7 @@ impl CliContext {
     }
 
     /// Returns the server-specific state directory (default fallback).
+    #[must_use]
     pub fn server_state_root(&self) -> Result<PathBuf> {
         self.args
             .state
@@ -31,10 +33,12 @@ impl CliContext {
             .context("could not determine server state directory")
     }
 
+    #[must_use]
     pub fn server_state(&self) -> Result<StateConfig> {
         Ok(StateConfig::new(self.server_state_root()?))
     }
 
+    #[must_use]
     pub fn server_options(&self) -> Result<irosh::ServerOptions> {
         let state = self.server_state()?;
         let config = irosh::storage::load_config(&state)?;

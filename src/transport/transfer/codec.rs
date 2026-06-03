@@ -43,6 +43,7 @@ const KIND_BLOB_PUT_REQUEST: u8 = 18;
 const KIND_BLOB_GET_REQUEST: u8 = 19;
 const KIND_BLOB_GET_READY: u8 = 20;
 
+#[inline]
 fn validate_payload_limit(kind: u8, payload_len: usize) -> Result<(), TransferError> {
     let max_len = match kind {
         KIND_PUT_CHUNK | KIND_GET_CHUNK => MAX_CHUNK_BYTES,
@@ -55,22 +56,28 @@ fn validate_payload_limit(kind: u8, payload_len: usize) -> Result<(), TransferEr
     Ok(())
 }
 
+#[tracing::instrument(skip(writer))]
 async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     kind: u8,
     payload: &[u8],
 ) -> Result<(), TransferError> {
+    tracing::trace!(len = payload.len(), kind, "Writing transfer frame");
     validate_payload_limit(kind, payload.len())?;
 
     writer.write_all(&MAGIC).await?;
     writer.write_u8(VERSION).await?;
     writer.write_u8(kind).await?;
-    writer.write_u32(payload.len() as u32).await?;
+    // Reason: payload length is validated against MAX_CONTROL_BYTES / MAX_CHUNK_BYTES before this point.
+    #[allow(clippy::cast_possible_truncation)]
+    let len = payload.len() as u32;
+    writer.write_u32(len).await?;
     writer.write_all(payload).await?;
     writer.flush().await?;
     Ok(())
 }
 
+#[tracing::instrument(skip(reader))]
 async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>), TransferError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic).await?;
@@ -114,6 +121,7 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
 
     let mut payload = vec![0u8; length];
     reader.read_exact(&mut payload).await?;
+    tracing::trace!(len = length, kind, "Read transfer frame");
     Ok((kind, payload))
 }
 
@@ -140,6 +148,12 @@ async fn read_json_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     Ok(serde_json::from_slice(&payload)?)
 }
 
+/// Writes a put request frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_put_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
     request: &PutRequest,
@@ -147,12 +161,24 @@ pub async fn write_put_request<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_PUT_REQUEST, request).await
 }
 
+/// Reads and decodes a put request frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_put_request<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<PutRequest, TransferError> {
     read_json_frame(reader, KIND_PUT_REQUEST).await
 }
 
+/// Writes a put ready frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_put_ready<W: AsyncWrite + Unpin>(
     writer: &mut W,
     ready: &TransferReady,
@@ -160,12 +186,23 @@ pub async fn write_put_ready<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_PUT_READY, ready).await
 }
 
+/// Reads and decodes a put ready frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_put_ready<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<TransferReady, TransferError> {
     read_json_frame(reader, KIND_PUT_READY).await
 }
 
+/// Writes a put chunk frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
 pub async fn write_put_chunk<W: AsyncWrite + Unpin>(
     writer: &mut W,
     chunk: &[u8],
@@ -173,6 +210,11 @@ pub async fn write_put_chunk<W: AsyncWrite + Unpin>(
     write_frame(writer, KIND_PUT_CHUNK, chunk).await
 }
 
+/// Reads and decodes a put chunk frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
 pub async fn read_put_chunk<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<Vec<u8>, TransferError> {
@@ -186,6 +228,12 @@ pub async fn read_put_chunk<R: AsyncRead + Unpin>(
     Ok(payload)
 }
 
+/// Writes a put complete frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_put_complete<W: AsyncWrite + Unpin>(
     writer: &mut W,
     complete: &TransferComplete,
@@ -193,12 +241,24 @@ pub async fn write_put_complete<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_PUT_COMPLETE, complete).await
 }
 
+/// Reads and decodes a put complete frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_put_complete<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<TransferComplete, TransferError> {
     read_json_frame(reader, KIND_PUT_COMPLETE).await
 }
 
+/// Writes a get request frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_get_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
     request: &GetRequest,
@@ -206,12 +266,24 @@ pub async fn write_get_request<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_GET_REQUEST, request).await
 }
 
+/// Reads and decodes a get request frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_get_request<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<GetRequest, TransferError> {
     read_json_frame(reader, KIND_GET_REQUEST).await
 }
 
+/// Writes a get ready frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_get_ready<W: AsyncWrite + Unpin>(
     writer: &mut W,
     ready: &TransferReady,
@@ -219,12 +291,23 @@ pub async fn write_get_ready<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_GET_READY, ready).await
 }
 
+/// Reads and decodes a get ready frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_get_ready<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<TransferReady, TransferError> {
     read_json_frame(reader, KIND_GET_READY).await
 }
 
+/// Writes a get chunk frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
 pub async fn write_get_chunk<W: AsyncWrite + Unpin>(
     writer: &mut W,
     chunk: &[u8],
@@ -232,6 +315,11 @@ pub async fn write_get_chunk<W: AsyncWrite + Unpin>(
     write_frame(writer, KIND_GET_CHUNK, chunk).await
 }
 
+/// Reads and decodes a get chunk frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
 pub async fn read_get_chunk<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<Vec<u8>, TransferError> {
@@ -245,6 +333,12 @@ pub async fn read_get_chunk<R: AsyncRead + Unpin>(
     Ok(payload)
 }
 
+/// Writes a get complete frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_get_complete<W: AsyncWrite + Unpin>(
     writer: &mut W,
     complete: &TransferComplete,
@@ -252,12 +346,24 @@ pub async fn write_get_complete<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_GET_COMPLETE, complete).await
 }
 
+/// Reads and decodes a get complete frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_get_complete<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<TransferComplete, TransferError> {
     read_json_frame(reader, KIND_GET_COMPLETE).await
 }
 
+/// Writes a transfer error frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_transfer_error<W: AsyncWrite + Unpin>(
     writer: &mut W,
     error: &TransferFailure,
@@ -265,12 +371,24 @@ pub async fn write_transfer_error<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_ERROR, error).await
 }
 
+/// Reads and decodes a transfer error frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_transfer_error<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<TransferFailure, TransferError> {
     read_json_frame(reader, KIND_ERROR).await
 }
 
+/// Writes a cwd request frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_cwd_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
     request: &CwdRequest,
@@ -278,6 +396,12 @@ pub async fn write_cwd_request<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_CWD_REQUEST, request).await
 }
 
+/// Writes a cwd response frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_cwd_response<W: AsyncWrite + Unpin>(
     writer: &mut W,
     response: &CwdResponse,
@@ -285,6 +409,12 @@ pub async fn write_cwd_response<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_CWD_RESPONSE, response).await
 }
 
+/// Writes an exists request frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_exists_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
     req: &ExistsRequest,
@@ -292,12 +422,24 @@ pub async fn write_exists_request<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_EXISTS_REQUEST, req).await
 }
 
+/// Reads and decodes an exists request frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_exists_request<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<ExistsRequest, TransferError> {
     read_json_frame(reader, KIND_EXISTS_REQUEST).await
 }
 
+/// Writes an exists response frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_exists_response<W: AsyncWrite + Unpin>(
     writer: &mut W,
     res: &ExistsResponse,
@@ -305,12 +447,24 @@ pub async fn write_exists_response<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_EXISTS_RESPONSE, res).await
 }
 
+/// Reads and decodes an exists response frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn read_exists_response<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<ExistsResponse, TransferError> {
     read_json_frame(reader, KIND_EXISTS_RESPONSE).await
 }
 
+/// Writes a new entry frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_new_entry<W: AsyncWrite + Unpin>(
     writer: &mut W,
     header: &crate::transport::transfer::EntryHeader,
@@ -318,6 +472,12 @@ pub async fn write_new_entry<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_NEW_ENTRY, header).await
 }
 
+/// Writes an entry complete frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_entry_complete<W: AsyncWrite + Unpin>(
     writer: &mut W,
     complete: &crate::transport::transfer::EntryComplete,
@@ -325,6 +485,12 @@ pub async fn write_entry_complete<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_ENTRY_COMPLETE, complete).await
 }
 
+/// Writes a completion request frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_completion_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
     req: &crate::transport::transfer::CompletionRequest,
@@ -332,6 +498,12 @@ pub async fn write_completion_request<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_COMPLETION_REQUEST, req).await
 }
 
+/// Writes a completion response frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_completion_response<W: AsyncWrite + Unpin>(
     writer: &mut W,
     res: &crate::transport::transfer::CompletionResponse,
@@ -339,6 +511,12 @@ pub async fn write_completion_response<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_COMPLETION_RESPONSE, res).await
 }
 
+/// Writes a blob put request frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_blob_put_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
     req: &BlobPutRequest,
@@ -346,6 +524,12 @@ pub async fn write_blob_put_request<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_BLOB_PUT_REQUEST, req).await
 }
 
+/// Writes a blob get request frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
 pub async fn write_blob_get_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
     req: &BlobGetRequest,
@@ -353,6 +537,11 @@ pub async fn write_blob_get_request<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_BLOB_GET_REQUEST, req).await
 }
 
+/// Writes a blob get ready frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
 pub async fn write_blob_get_ready<W: AsyncWrite + Unpin>(
     writer: &mut W,
     ready: &BlobGetReady,
@@ -361,6 +550,11 @@ pub async fn write_blob_get_ready<W: AsyncWrite + Unpin>(
 }
 
 /// Reads and decodes the next transfer frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[tracing::instrument(skip(reader))]
 pub async fn read_next_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<TransferFrame, TransferError> {

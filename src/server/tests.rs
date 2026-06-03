@@ -84,7 +84,7 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
     // Give IPC server time to bind
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let ipc = IpcClient::new(state.root().to_path_buf());
+    let ipc = IpcClient::new(state.root());
 
     let password_hash = crate::auth::hash_password("correct-password").unwrap();
 

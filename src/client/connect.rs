@@ -1,3 +1,4 @@
+//! Client connection handling.
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -82,6 +83,7 @@ impl ClientOptions {
     }
 
     /// Returns a reference to the [`StateConfig`] this client was configured with.
+    #[must_use] 
     pub fn state(&self) -> &StateConfig {
         &self.state
     }
@@ -135,6 +137,7 @@ impl Client {
     ///
     /// If the target is a [`ResolvedTarget::WormholeCode`], this will first perform
     /// a rendezvous handshake via Iroh Gossip to find the target's connection ticket.
+    #[tracing::instrument(skip(options, target))]
     pub async fn connect(
         options: &ClientOptions,
         target: impl Into<ResolvedTarget>,
@@ -151,6 +154,12 @@ impl Client {
     }
 
     /// Performs a wormhole rendezvous to discover a peer's connection ticket.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails, times out, or the remote peer sends invalid data.
+    #[must_use]
+    #[tracing::instrument(skip(options))]
     pub async fn connect_wormhole(options: &ClientOptions, code: &str) -> Result<Ticket> {
         use crate::transport::iroh::bind_client_endpoint;
         use crate::transport::wormhole::listen_for_ticket;
@@ -173,7 +182,7 @@ impl Client {
         )
         .await
         .map_err(|_| crate::error::IroshError::InvalidTarget {
-            raw: format!("{} (Wormhole not found or discovery timed out)", code),
+            raw: format!("{code} (Wormhole not found or discovery timed out)"),
         })??;
 
         endpoint.close().await;
@@ -182,6 +191,10 @@ impl Client {
     }
 
     /// Establishes the low-level P2P connection to the target.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the P2P connection fails or times out.
     pub async fn dial_p2p(
         options: &ClientOptions,
         ticket: Ticket,
@@ -194,7 +207,7 @@ impl Client {
         let blobs = iroh_blobs::store::fs::FsStore::load(options.state().blobs_path())
             .await
             .map_err(|e| ClientError::MetadataFailed {
-                detail: format!("failed to load blobs store: {}", e),
+                detail: format!("failed to load blobs store: {e}"),
             })?;
         let target_addr = ticket.to_addr();
         let identity = load_or_generate_identity(options.state()).await?;
@@ -253,6 +266,11 @@ impl Client {
     }
 
     /// Performs the SSH handshake and metadata exchange over an existing P2P connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if SSH authentication fails, the stream cannot be opened, or the metadata exchange is interrupted.
+    #[tracing::instrument(skip(options, connection, endpoint, blobs))]
     pub async fn establish_session(
         options: &ClientOptions,
         (connection, endpoint, blobs): (
@@ -269,7 +287,12 @@ impl Client {
         {
             None
         } else {
-            load_known_server(options.state(), &endpoint_id)?
+            let state = options.state().clone();
+            let eid = endpoint_id.clone();
+            let inner = tokio::task::spawn_blocking(move || {
+                load_known_server(&state, &eid)
+            }).await.map_err(|e| IroshError::Io(std::io::Error::other(e)))?;
+            inner?
         };
 
         let (send, recv): (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) =
@@ -277,6 +300,7 @@ impl Client {
                 Ok(streams) => streams,
                 Err(err) => {
                     endpoint.close().await;
+                    tracing::error!("Failed to open bidirectional stream: {err}");
                     return Err(ClientError::StreamOpenFailed { source: err }.into());
                 }
             };
@@ -301,6 +325,7 @@ impl Client {
             let mut handle = client::connect_stream(config, stream, handler.clone())
                 .await
                 .map_err(|e| {
+                    tracing::error!("SSH connect stream failed: {e}");
                     let detail = lock_or_recover(&last_disconnect).clone();
                     match (e, detail) {
                         (IroshError::Russh(russh::Error::Disconnect), detail) => {
@@ -336,11 +361,13 @@ impl Client {
                             warn!("Password prompter task failed: {e}");
                             None
                         });
-                    match pw {
-                        Some(pw) => (Self::DEFAULT_USER.to_string(), pw),
-                        None => return Err(IroshError::AuthenticationFailed),
-                    }
+                    let Some(pw) = pw else {
+                        tracing::error!("Password prompter returned no password");
+                        return Err(IroshError::AuthenticationFailed);
+                    };
+                    (Self::DEFAULT_USER.to_string(), pw)
                 } else {
+                    tracing::error!("No credentials or prompter available for password auth");
                     return Err(IroshError::AuthenticationFailed);
                 };
 
@@ -351,6 +378,7 @@ impl Client {
                     .map_err(|e| ClientError::SshNegotiationFailed { source: e })?;
 
                 if !matches!(pw_res, client::AuthResult::Success) {
+                    tracing::error!("Password authentication failed");
                     return Err(IroshError::AuthenticationFailed);
                 }
             }
@@ -360,6 +388,7 @@ impl Client {
         })
         .await
         .map_err(|_| {
+            tracing::error!("SSH handshake timed out after 60 seconds");
             IroshError::Client(ClientError::SshNegotiationFailed {
                 source: russh::Error::Disconnect,
             })
@@ -373,7 +402,10 @@ impl Client {
                         let (send, recv) = connection
                             .open_bi()
                             .await
-                            .map_err(|e| ClientError::StreamOpenFailed { source: e })?;
+                            .map_err(|e| {
+                                tracing::error!("Failed to open metadata stream: {e}");
+                                ClientError::StreamOpenFailed { source: e }
+                            })?;
                         let mut stream = IrohDuplex::new(send, recv);
 
                         let metadata_res =
@@ -385,18 +417,31 @@ impl Client {
 
                         match metadata_res {
                             Ok(Ok(metadata)) => Ok(metadata),
-                            Ok(Err(e)) => Err(ClientError::MetadataFailed {
-                                detail: e.to_string(),
-                            }),
-                            Err(_) => Err(ClientError::MetadataFailed {
-                                detail: "timeout".to_string(),
-                            }),
+                            Ok(Err(e)) => {
+                                tracing::error!("Metadata request failed: {e}");
+                                Err(ClientError::MetadataFailed {
+                                    detail: e.to_string(),
+                                })
+                            }
+                            Err(_) => {
+                                tracing::error!("Metadata request timed out");
+                                Err(ClientError::MetadataFailed {
+                                    detail: "timeout".to_string(),
+                                })
+                            }
                         }
                     })
                     .await
                     {
                         Ok(Ok(metadata)) => Some(metadata),
-                        _ => None,
+                        Ok(Err(e)) => {
+                            tracing::warn!("Metadata exchange failed (continuing session): {e}");
+                            None
+                        }
+                        Err(_) => {
+                            tracing::warn!("Metadata exchange timed out (continuing session)");
+                            None
+                        }
                     };
 
                 Ok(Session {
@@ -411,6 +456,7 @@ impl Client {
                 })
             }
             Err(e) => {
+                tracing::error!("Session establishment failed: {e}");
                 connection.close(0u32.into(), b"SSH handshake failed");
                 endpoint.close().await;
                 Err(e)
@@ -424,6 +470,7 @@ impl Client {
     ///
     /// Returns an error if the target is unparseable or a requested alias is not found.
     #[cfg(feature = "storage")]
+    #[must_use]
     pub fn parse_target(state: &StateConfig, target: &str) -> Result<ResolvedTarget> {
         use std::str::FromStr;
 
@@ -446,20 +493,16 @@ impl Client {
         let has_ticket_prefix = target.starts_with("endpoint")
             || target.starts_with("ticket")
             || target.starts_with("node")
-            || target.starts_with("{");
+            || target.starts_with('{');
 
         if is_suspiciously_long || has_ticket_prefix {
             return Err(crate::error::IroshError::InvalidTarget {
-                raw: format!("{} (Hint: This looks like a malformed ticket)", target),
+                raw: format!("{target} (Hint: This looks like a malformed ticket)"),
             });
         }
 
         // 4. Fallback to assuming it is a Wormhole code.
         Ok(ResolvedTarget::WormholeCode(target.to_string()))
-    }
-    #[allow(dead_code)]
-    pub(crate) fn classify_connect_error(error: &IroshError) -> SessionState {
-        SessionState::from_irosh_error(error)
     }
 }
 
@@ -471,13 +514,3 @@ fn lock_or_recover<T>(mutex: &Arc<StdMutex<T>>) -> MutexGuard<'_, T> {
 }
 
 use std::sync::MutexGuard;
-
-impl SessionState {
-    pub(crate) fn from_irosh_error(error: &IroshError) -> Self {
-        match error {
-            IroshError::AuthenticationFailed => SessionState::AuthRejected,
-            IroshError::ServerKeyMismatch { .. } => SessionState::TrustMismatch,
-            _ => SessionState::Closed,
-        }
-    }
-}

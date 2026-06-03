@@ -1,3 +1,4 @@
+//! Transfer shell state tracking.
 use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 use std::sync::{Arc, MutexGuard};
@@ -7,9 +8,14 @@ use tracing::warn;
 
 use crate::error::{Result, ServerError};
 use crate::server::shell_access::{configure_live_shell_context, resolve_process_cwd};
+use crate::transport::transfer::{TransferFailure, TransferFailureCode};
 
+/// State shared across server-side transfer operations for a single connection.
+///
+/// Tracks the shell process PID and caches the current working directory
+/// so that transfer paths can be resolved relative to it.
 #[derive(Clone, Debug)]
-pub(crate) struct ConnectionShellState {
+pub struct ConnectionShellState {
     shell_pid: Arc<StdMutex<Option<u32>>>,
     cached_cwd: Arc<StdMutex<Option<(std::path::PathBuf, std::time::Instant)>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -18,7 +24,12 @@ pub(crate) struct ConnectionShellState {
 }
 
 impl ConnectionShellState {
-    pub(crate) fn new(state_root: PathBuf, blobs: iroh_blobs::store::fs::FsStore) -> Self {
+    /// Creates a new shell state rooted at the given directory.
+    ///
+    /// The `state_root` is used for resolving absolute paths and `blobs`
+    /// provides content-addressed blob storage for file transfers.
+    #[must_use]
+    pub fn new(state_root: PathBuf, blobs: iroh_blobs::store::fs::FsStore) -> Self {
         Self {
             shell_pid: Arc::new(StdMutex::new(None)),
             cached_cwd: Arc::new(StdMutex::new(None)),
@@ -76,15 +87,12 @@ impl ShellContext {
     /// Returns the context from the current connection state.
     pub(super) fn from_state(shell_state: &ConnectionShellState) -> Self {
         let pid = shell_state.shell_pid();
-        match pid {
-            Some(pid) => {
-                tracing::info!("Transfer context: Live (shell PID {})", pid);
-                Self::Live { pid }
-            }
-            None => {
-                tracing::info!("Transfer context: Stateless (no active shell PID)");
-                Self::Stateless
-            }
+        if let Some(pid) = pid {
+            tracing::info!("Transfer context: Live (shell PID {})", pid);
+            Self::Live { pid }
+        } else {
+            tracing::info!("Transfer context: Stateless (no active shell PID)");
+            Self::Stateless
         }
     }
 
@@ -96,6 +104,11 @@ impl ShellContext {
     }
 
     /// Resolves the current working directory for this context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::ShellError`] if the home directory cannot be determined
+    /// in stateless mode, or propagates errors from [`resolve_process_cwd`].
     pub(super) async fn cwd(self, shell_state: &ConnectionShellState) -> Result<PathBuf> {
         match self {
             Self::Live { pid } => {
@@ -108,8 +121,7 @@ impl ShellContext {
                     }
                 }
 
-                let fallback_home = self
-                    .home_dir(shell_state)
+                let fallback_home = Self::home_dir(shell_state)
                     .unwrap_or_else(|| PathBuf::from("."));
                 let path = resolve_process_cwd(pid, fallback_home).await?;
 
@@ -126,8 +138,7 @@ impl ShellContext {
                 Ok(path)
             }
             Self::Stateless => {
-                let home = self
-                    .home_dir(shell_state)
+                let home = Self::home_dir(shell_state)
                     .ok_or_else(|| ServerError::ShellError {
                         details: "could not determine server home directory".to_string(),
                     })?;
@@ -137,6 +148,9 @@ impl ShellContext {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns [`ServerError::ShellError`] if the remote probe command fails.
     pub(super) async fn path_exists(self, path: &str) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
@@ -156,10 +170,17 @@ impl ShellContext {
         Ok(tokio::fs::metadata(path).await.is_ok())
     }
 
+    /// # Errors
+    ///
+    /// Propagates errors from [`ShellContext::path_exists`].
     pub(super) async fn path_missing(self, path: &str) -> Result<bool> {
         Ok(!self.path_exists(path).await?)
     }
 
+    /// # Errors
+    ///
+    /// Returns [`ServerError::ShellError`] if the remote probe command fails,
+    /// or propagates I/O errors on non-Linux paths.
     pub(super) async fn is_dir(self, path: &str) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
@@ -184,6 +205,9 @@ impl ShellContext {
         Ok(meta.is_dir())
     }
 
+    /// # Errors
+    ///
+    /// Propagates I/O errors from the underlying filesystem or command execution.
     pub(super) async fn create_dir_all(self, path: &Path) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
@@ -191,13 +215,17 @@ impl ShellContext {
             command.arg("-p").arg(path);
             self.configure(&mut command);
             let status = command.status().await;
-            return Ok(status.map(|s| s.success()).unwrap_or(false));
+            return Ok(status.is_ok_and(|s| s.success()));
         }
 
         tokio::fs::create_dir_all(path).await?;
         Ok(true)
     }
 
+    /// # Errors
+    ///
+    /// Errors from the underlying removal command are silently ignored, so this
+    /// function is effectively infallible.
     pub(super) async fn remove_file_if_present(self, path: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
@@ -212,6 +240,9 @@ impl ShellContext {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Propagates I/O errors from the underlying filesystem rename operation.
     pub(super) async fn rename(self, from: &str, to: &str) -> Result<bool> {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
@@ -219,7 +250,7 @@ impl ShellContext {
             command.arg(from).arg(to);
             self.configure(&mut command);
             let status = command.status().await;
-            return Ok(status.map(|s| s.success()).unwrap_or(false));
+            return Ok(status.is_ok_and(|s| s.success()));
         }
 
         tokio::fs::rename(from, to).await?;
@@ -230,7 +261,7 @@ impl ShellContext {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
             let mut command = Command::new("chmod");
-            command.arg(format!("{:o}", mode)).arg(path);
+            command.arg(format!("{mode:o}")).arg(path);
             self.configure(&mut command);
             let _ = command.status().await;
             return;
@@ -247,7 +278,7 @@ impl ShellContext {
         }
     }
 
-    fn home_dir(self, _shell_state: &ConnectionShellState) -> Option<PathBuf> {
+    fn home_dir(_shell_state: &ConnectionShellState) -> Option<PathBuf> {
         #[cfg(unix)]
         {
             std::env::var_os("HOME").map(PathBuf::from)
@@ -301,8 +332,10 @@ impl ShellContext {
             return Ok(path.to_path_buf());
         }
 
+        // Guard against path traversal: reject relative paths containing `..`
+        // components that would escape the current working directory.
         if raw == "~" {
-            return self.home_dir(shell_state).ok_or_else(|| {
+            return Self::home_dir(shell_state).ok_or_else(|| {
                 ServerError::ShellError {
                     details: "could not determine server home directory for ~ expansion"
                         .to_string(),
@@ -312,8 +345,18 @@ impl ShellContext {
         }
 
         if let Some(home_relative) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
-            let home = self
-                .home_dir(shell_state)
+            if home_relative.split(std::path::MAIN_SEPARATOR).any(|c| c == "..")
+                || home_relative.split('/').any(|c| c == "..")
+            {
+                return Err(ServerError::TransferFailed {
+                    failure: TransferFailure::new(
+                        TransferFailureCode::PathInvalid,
+                        "path traversal detected in home-relative path",
+                    ),
+                }
+                .into());
+            }
+            let home = Self::home_dir(shell_state)
                 .ok_or_else(|| ServerError::ShellError {
                     details: "could not determine server home directory for ~/ expansion"
                         .to_string(),
@@ -321,10 +364,33 @@ impl ShellContext {
             return Ok(home.join(home_relative));
         }
 
+        // Reject `..` in relative paths to prevent traversal beyond CWD.
+        if raw.split('/').any(|c| c == "..") || raw.split('\\').any(|c| c == "..") {
+            return Err(ServerError::TransferFailed {
+                failure: TransferFailure::new(
+                    TransferFailureCode::PathInvalid,
+                    "path traversal detected in relative path",
+                ),
+            }
+            .into());
+        }
+
         // Relative path: resolve against CWD.
         let base = self.cwd(shell_state).await?;
         let full = base.join(path);
         tracing::info!("Resolved remote path: '{}' -> '{}'", raw, full.display());
         Ok(full)
+    }
+}
+
+#[cfg(test)]
+mod send_sync_tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn connection_shell_state_is_send_sync() {
+        assert_send_sync::<ConnectionShellState>();
     }
 }

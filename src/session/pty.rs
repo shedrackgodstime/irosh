@@ -28,22 +28,26 @@ impl PtyOptions {
     }
 
     /// Returns the terminal identifier that will be requested.
+    #[must_use] 
     pub fn term(&self) -> &str {
         &self.term
     }
 
     /// Returns the requested PTY size.
+    #[must_use] 
     pub fn size(&self) -> PtySize {
         self.size
     }
 
     /// Returns the encoded terminal modes.
+    #[must_use] 
     pub fn modes_slice(&self) -> &[(russh::Pty, u32)] {
         &self.modes
     }
 }
 
 /// Returns a fallback pseudo-terminal size if probing the active terminal fails.
+#[must_use] 
 pub fn default_pty_size() -> PtySize {
     let rows = std::env::var("LINES")
         .ok()
@@ -64,12 +68,15 @@ pub fn default_pty_size() -> PtySize {
 }
 
 /// Clamps the requested PTY dimensions to safe bounds and converts them to [`PtySize`].
+// Reason: values clamped to u16::MAX before cast; safe by construction.
+#[allow(clippy::cast_possible_truncation)]
+#[must_use] 
 pub fn pty_size(cols: u32, rows: u32, pixel_width: u32, pixel_height: u32) -> PtySize {
     PtySize {
-        rows: rows.clamp(1, u16::MAX as u32) as u16,
-        cols: cols.clamp(1, u16::MAX as u32) as u16,
-        pixel_width: pixel_width.clamp(0, u16::MAX as u32) as u16,
-        pixel_height: pixel_height.clamp(0, u16::MAX as u32) as u16,
+        rows: rows.clamp(1, u32::from(u16::MAX)) as u16,
+        cols: cols.clamp(1, u32::from(u16::MAX)) as u16,
+        pixel_width: pixel_width.clamp(0, u32::from(u16::MAX)) as u16,
+        pixel_height: pixel_height.clamp(0, u32::from(u16::MAX)) as u16,
     }
 }
 
@@ -168,6 +175,7 @@ mod tests {
         // Temporarily remove LINES and COLUMNS to test fallback
         let prev_lines = std::env::var("LINES").ok();
         let prev_cols = std::env::var("COLUMNS").ok();
+        // SAFETY: Test-only — removing env vars is single-threaded and safe here.
         unsafe {
             std::env::remove_var("LINES");
             std::env::remove_var("COLUMNS");
@@ -179,9 +187,11 @@ mod tests {
 
         // Restore
         if let Some(val) = prev_lines {
+            // SAFETY: Restoring env var within the same test thread.
             unsafe { std::env::set_var("LINES", val) };
         }
         if let Some(val) = prev_cols {
+            // SAFETY: Restoring env var within the same test thread.
             unsafe { std::env::set_var("COLUMNS", val) };
         }
     }

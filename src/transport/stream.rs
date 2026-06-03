@@ -18,8 +18,20 @@ pub struct IrohDuplex {
     bytes_received: Option<Arc<AtomicU64>>,
 }
 
+impl std::fmt::Debug for IrohDuplex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IrohDuplex")
+            .field("send", &"SendStream")
+            .field("recv", &"Box<dyn AsyncRead + Send + Sync>")
+            .field("bytes_sent", &self.bytes_sent)
+            .field("bytes_received", &self.bytes_received)
+            .finish()
+    }
+}
+
 impl IrohDuplex {
     /// Creates a new `IrohDuplex` from an Iroh send/recv stream pair.
+    #[must_use] 
     pub fn new(send: SendStream, recv: RecvStream) -> Self {
         Self {
             send,
@@ -33,19 +45,20 @@ impl IrohDuplex {
     pub fn with_stats(
         send: SendStream,
         recv: RecvStream,
-        sent: Arc<AtomicU64>,
+        bytes_tx: Arc<AtomicU64>,
         received: Arc<AtomicU64>,
     ) -> Self {
         Self {
             send,
             recv: Box::pin(recv),
-            bytes_sent: Some(sent),
+            bytes_sent: Some(bytes_tx),
             bytes_received: Some(received),
         }
     }
 
     /// Creates a new `IrohDuplex` with a pre-read prefix buffer.
     /// This is useful for stream dispatching based on magic headers.
+    #[must_use] 
     pub fn with_prefix(send: SendStream, recv: RecvStream, prefix: Vec<u8>) -> Self {
         let chained = tokio::io::AsyncReadExt::chain(std::io::Cursor::new(prefix), recv);
         Self {

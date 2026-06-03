@@ -5,7 +5,10 @@ use anyhow::Result;
 use irosh::russh::keys::ssh_key::HashAlg;
 use irosh::storage;
 
-pub async fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
+#[must_use]
+// Reason: CLI dispatch pattern; value is moved into match.
+#[allow(clippy::needless_pass_by_value)]
+pub fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
     let state = ctx.server_state()?;
 
     match action {
@@ -59,7 +62,7 @@ pub async fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                     id.clone()
                 };
 
-                println!("  {:<20} {}", short_id, fingerprint);
+                println!("  {short_id:<20} {fingerprint}");
             }
             println!("  ----------------------------------------------------\n");
         }
@@ -75,51 +78,47 @@ pub async fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                 .map(|(id, k)| {
                     let fingerprint = k.fingerprint(HashAlg::Sha256).to_string();
                     if id == &fingerprint {
-                        format!("Unknown [{}]", fingerprint)
+                        format!("Unknown [{fingerprint}]")
                     } else {
-                        format!("{} [{}]", id, fingerprint)
+                        format!("{id} [{fingerprint}]")
                     }
                 })
                 .collect();
 
-            match Ui::select("Select a device to revoke", &items) {
-                Some(idx) => {
-                    let (id, _) = &keys[idx];
-                    if ctx.args.json
-                        || Ui::danger_confirm(
-                            &format!("Are you sure you want to revoke trust for '{}'?", id),
-                            "yes",
-                        )
-                    {
-                        storage::revoke_key(&state, id)?;
+            if let Some(idx) = Ui::select("Select a device to revoke", &items) {
+                let (id, _) = &keys[idx];
+                if ctx.args.json
+                    || Ui::danger_confirm(
+                        &format!("Are you sure you want to revoke trust for '{id}'?"),
+                        "yes",
+                    )
+                {
+                    storage::revoke_key(&state, id)?;
 
-                        if ctx.args.json {
-                            #[derive(serde::Serialize)]
-                            struct TrustRevokeResponse {
-                                identity: String,
-                            }
-                            crate::output::print_success(TrustRevokeResponse {
-                                identity: id.clone(),
-                            });
-                            return Ok(());
-                        }
-
-                        Ui::success(&format!(
-                            "Identity '{}' has been removed from the vault.",
-                            id
-                        ));
-                    }
-                }
-                None => {
                     if ctx.args.json {
-                        crate::output::print_error(
-                            "No identity specified for revocation",
-                            "missing_args",
-                        );
+                        #[derive(serde::Serialize)]
+                        struct TrustRevokeResponse {
+                            identity: String,
+                        }
+                        crate::output::print_success(TrustRevokeResponse {
+                            identity: id.clone(),
+                        });
                         return Ok(());
                     }
-                    Ui::info("Cancelled.");
+
+                    Ui::success(&format!(
+                        "Identity '{id}' has been removed from the vault."
+                    ));
                 }
+            } else {
+                if ctx.args.json {
+                    crate::output::print_error(
+                        "No identity specified for revocation",
+                        "missing_args",
+                    );
+                    return Ok(());
+                }
+                Ui::info("Cancelled.");
             }
         }
         TrustAction::Reset => {

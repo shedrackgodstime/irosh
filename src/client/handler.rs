@@ -26,7 +26,7 @@ pub struct ClientHandler {
 
 impl ClientHandler {
     /// Creates a new `ClientHandler` with the designated server validation state.
-    pub(crate) fn new(
+    pub fn new(
         node_id: String,
         known_server: Option<PublicKey>,
         last_disconnect: Arc<StdMutex<Option<String>>>,
@@ -91,47 +91,57 @@ impl client::Handler for ClientHandler {
             return Ok(true);
         }
 
-        let mut known = self.lock_known_server();
-
-        match known.as_ref() {
-            Some(known_key) if key == known_key => {
-                info!("Server matched trusted key. Connection verified.");
-                Ok(true)
+        // Check known keys while holding the lock; release before any await.
+        {
+            let known = self.lock_known_server();
+            match known.as_ref() {
+                Some(known_key) if key == known_key => {
+                    info!("Server matched trusted key. Connection verified.");
+                    return Ok(true);
+                }
+                Some(known_key) => {
+                    let expected = known_key.fingerprint(HashAlg::Sha256);
+                    let actual = key.fingerprint(HashAlg::Sha256);
+                    warn!(
+                        "SECURITY WARNING: Server key mismatch! Expected {}, got {}",
+                        expected, actual
+                    );
+                    return Err(IroshError::ServerKeyMismatch {
+                        expected: expected.to_string(),
+                        actual: actual.to_string(),
+                    });
+                }
+                None => {}
             }
-            Some(known_key) => {
-                let expected = known_key.fingerprint(HashAlg::Sha256);
-                let actual = key.fingerprint(HashAlg::Sha256);
-                warn!(
-                    "SECURITY WARNING: Server key mismatch! Expected {}, got {}",
-                    expected, actual
-                );
+        }
+
+        match self.security.host_key_policy {
+            HostKeyPolicy::Strict => {
+                warn!("No trusted server key found and strict host key checking is active.");
                 Err(IroshError::ServerKeyMismatch {
-                    expected: expected.to_string(),
-                    actual: actual.to_string(),
+                    expected: "trusted key".to_string(),
+                    actual: "unknown key".to_string(),
                 })
             }
-            None => match self.security.host_key_policy {
-                HostKeyPolicy::Strict => {
-                    warn!("No trusted server key found and strict host key checking is active.");
-                    Err(IroshError::ServerKeyMismatch {
-                        expected: "trusted key".to_string(),
-                        actual: "unknown key".to_string(),
-                    })
-                }
-                HostKeyPolicy::Tofu => {
-                    info!("No trusted server key found. Trusting server key on first use.");
-                    let event = write_known_server(&self.state, &self.node_id, key)?;
-                    info!(
-                        "Trusted first server key and saved it to {}",
-                        event.path.display()
-                    );
-                    *known = Some(key.clone());
-                    Ok(true)
-                }
-                HostKeyPolicy::AcceptAll => {
-                    unreachable!("AcceptAll already handled at top of function")
-                }
-            },
+            HostKeyPolicy::Tofu => {
+                info!("No trusted server key found. Trusting server key on first use.");
+                let state = self.state.clone();
+                let node_id = self.node_id.clone();
+                let key_for_blocking = PublicKey::clone(key);
+                let event = tokio::task::spawn_blocking(move || {
+                    write_known_server(&state, &node_id, &key_for_blocking)
+                }).await.map_err(|e| IroshError::Io(std::io::Error::other(e)))??;
+                info!(
+                    "Trusted first server key and saved it to {}",
+                    event.path.display()
+                );
+                let mut known = self.lock_known_server();
+                *known = Some(key.clone());
+                Ok(true)
+            }
+            HostKeyPolicy::AcceptAll => {
+                unreachable!("AcceptAll already handled at top of function")
+            }
         }
     }
 
@@ -194,7 +204,7 @@ impl client::Handler for ClientHandler {
         if let Some((local_host, local_port)) = target {
             tokio::spawn(async move {
                 if let Ok(mut stream) =
-                    tokio::net::TcpStream::connect(format!("{}:{}", local_host, local_port)).await
+                    tokio::net::TcpStream::connect(format!("{local_host}:{local_port}")).await
                 {
                     let mut channel_stream = channel.into_stream();
                     let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut stream).await;

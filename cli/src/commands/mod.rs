@@ -183,11 +183,14 @@ impl CommandExec for Commands {
                 persistent,
             } => wormhole::exec(code.clone(), *passwd, *persistent, ctx).await,
             Commands::System { action } => system::exec(action.clone(), ctx).await,
-            Commands::Peer { action } => peer::exec(action.clone(), ctx).await,
-            Commands::Trust { action } => trust::exec(action.clone(), ctx).await,
-            Commands::Passwd { action } => passwd::exec(action.clone(), ctx).await,
+            Commands::Peer { action } => peer::exec(action.clone(), ctx),
+
+            Commands::Trust { action } => trust::exec(action.clone(), ctx),
+
+            Commands::Passwd { action } => passwd::exec(action.clone(), ctx),
+
             Commands::Identity { action } => identity::exec(action.clone(), ctx).await,
-            Commands::Config { action } => config::exec(action.clone(), ctx).await,
+            Commands::Config { action } => config::exec(action.clone(), ctx),
             Commands::Check | Commands::Status => check::exec(ctx).await,
         }
     }

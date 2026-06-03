@@ -1,8 +1,22 @@
 //! Irosh CLI - The thin frontend for P2P SSH.
+#![deny(unused_lifetimes)]
+#![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::double_must_use)]
+#![warn(clippy::missing_errors_doc)]
+#![warn(clippy::must_use_candidate)]
+#![warn(clippy::suspicious)]
+#![warn(clippy::undocumented_unsafe_blocks)]
+#![warn(trivial_casts)]
+#![warn(trivial_numeric_casts)]
 
 mod commands;
 mod context;
 mod display;
+/// Terminal output helpers for JSON and plain-text formatting.
 pub mod output;
 mod terminal;
 mod ui;
@@ -12,6 +26,7 @@ use commands::{CommandExec, Commands};
 use context::CliContext;
 use ui::Ui;
 
+/// Command-line arguments for the irosh CLI.
 #[derive(Parser)]
 #[command(name = "irosh")]
 #[command(
@@ -44,6 +59,7 @@ pub struct Args {
     #[arg(index = 1)]
     pub target: Option<String>,
 
+    /// Optional subcommand (connect, host, wormhole, etc.)
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -124,11 +140,11 @@ async fn main() {
         Ok(c) => c,
         Err(e) => {
             if crate::output::JSON_MODE.load(std::sync::atomic::Ordering::SeqCst) {
-                crate::output::print_error(&format!("Initialization failed: {}", e), "init_failed");
+                crate::output::print_error(&format!("Initialization failed: {e}"), "init_failed");
             } else {
                 use crate::ui::Ui;
                 Ui::error(
-                    &format!("initialization failed: {}", e),
+                    &format!("initialization failed: {e}"),
                     Some("check that ~/.irosh exists and is readable, or re-run with --verbose"),
                 );
             }
@@ -154,14 +170,14 @@ async fn main() {
 
     if let Err(e) = res {
         if ctx.args.json {
-            crate::output::print_error(&format!("{:#}", e), "command_failed");
+            crate::output::print_error(&format!("{e:#}"), "command_failed");
         } else {
             let msg = if ctx.args.verbose {
-                format!("{:#}", e)
+                format!("{e:#}")
             } else {
-                format!("{}", e)
+                format!("{e}")
             };
-            let tip = classify_error(&e);
+            let tip = Some(classify_error(&e));
             Ui::error(&msg, tip);
         }
         std::process::exit(1);
@@ -173,25 +189,25 @@ async fn main() {
 /// Returns `None` for errors that are self-explanatory or already contain
 /// enough context. The fallback `"--verbose"` tip is added in the caller only
 /// when no specific tip is available.
-fn classify_error(e: &anyhow::Error) -> Option<&'static str> {
-    let s = format!("{:#}", e).to_lowercase();
+fn classify_error(e: &anyhow::Error) -> &'static str {
+    let s = format!("{e:#}").to_lowercase();
 
     if s.contains("connection refused") || s.contains("connect failed") || s.contains("timed out") {
-        Some("check that the remote server is running with 'irosh host'")
+        "check that the remote server is running with 'irosh host'"
     } else if s.contains("wormhole") && (s.contains("not found") || s.contains("no peer")) {
-        Some("wormhole codes expire after 60s — ask the remote side to re-run 'irosh wormhole'")
+        "wormhole codes expire after 60s — ask the remote side to re-run 'irosh wormhole'"
     } else if s.contains("auth") && s.contains("failed") {
-        Some("run 'irosh peer list' to see trusted keys, or re-pair with 'irosh wormhole'")
+        "run 'irosh peer list' to see trusted keys, or re-pair with 'irosh wormhole'"
     } else if s.contains("blobs") || s.contains("store") {
-        Some("check permissions on ~/.irosh/client/blobs, or re-run with --verbose")
+        "check permissions on ~/.irosh/client/blobs, or re-run with --verbose"
     } else if s.contains("identity conflict") || s.contains("already running") {
-        Some("use 'irosh system status' to inspect the running daemon")
+        "use 'irosh system status' to inspect the running daemon"
     } else if s.contains("permission denied") {
-        Some("check file permissions, or run 'irosh check' for a full diagnostic")
+        "check file permissions, or run 'irosh check' for a full diagnostic"
     } else if s.contains("no such file") || s.contains("not found") {
-        Some("verify the path exists and is accessible from the current directory")
+        "verify the path exists and is accessible from the current directory"
     } else {
         // Generic fallback only shown when no specific tip matches
-        Some("run with --verbose for full diagnostic details")
+        "run with --verbose for full diagnostic details"
     }
 }

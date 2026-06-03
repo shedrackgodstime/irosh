@@ -1,3 +1,4 @@
+//! Transfer frame types.
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,14 @@ pub struct BlobGetReady {
 }
 
 /// A ready response that includes the expected file size.
+///
+/// # Invariants
+///
+/// - `size` must equal the total bytes that will be transferred across all
+///   subsequent [`TransferFrame::Data`] chunks for this entry.
+/// - Individual chunk payloads must not exceed [`MAX_CHUNK_BYTES`] (64 KiB).
+/// - For recursive transfers, each [`EntryHeader`] is followed by its data
+///   chunks and an [`EntryComplete`] marker before the next entry begins.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransferReady {
     /// Total expected size in bytes.
@@ -96,6 +105,7 @@ pub struct TransferComplete {
 
 /// Specific codes indicating why a file transfer was terminated or rejected.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TransferFailureCode {
     /// The remote machine does not have a live shell available to determine CWD.
     RemoteShellUnavailable,
@@ -215,6 +225,7 @@ pub struct CompletionResponse {
 
 /// A decoded transfer frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TransferFrame {
     /// The client wishes to upload a file.
     PutRequest(PutRequest),
@@ -260,6 +271,7 @@ pub enum TransferFrame {
 
 /// Low-level errors occurring during transfer framing, parsing, or transport I/O.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TransferError {
     /// A standard library I/O error.
     Io(std::io::Error),
@@ -287,26 +299,25 @@ pub enum TransferError {
 impl fmt::Display for TransferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TransferError::Io(err) => write!(f, "transfer I/O error: {}", err),
+            TransferError::Io(err) => write!(f, "transfer I/O error: {err}"),
             TransferError::InvalidMagic => write!(f, "invalid transfer magic header"),
             TransferError::UnsupportedVersion(version) => {
-                write!(f, "unsupported transfer version: {}", version)
+                write!(f, "unsupported transfer version: {version}")
             }
             TransferError::UnsupportedKind(kind) => {
-                write!(f, "unsupported transfer frame kind: {}", kind)
+                write!(f, "unsupported transfer frame kind: {kind}")
             }
             TransferError::UnexpectedKind { expected, actual } => {
                 write!(
                     f,
-                    "unexpected transfer frame kind: expected {}, got {}",
-                    expected, actual
+                    "unexpected transfer frame kind: expected {expected}, got {actual}"
                 )
             }
             TransferError::PayloadTooLarge(size) => {
-                write!(f, "transfer payload too large: {} bytes", size)
+                write!(f, "transfer payload too large: {size} bytes")
             }
-            TransferError::Json(err) => write!(f, "invalid transfer payload: {}", err),
-            TransferError::InvalidPath(details) => write!(f, "invalid transfer path: {}", details),
+            TransferError::Json(err) => write!(f, "invalid transfer payload: {err}"),
+            TransferError::InvalidPath(details) => write!(f, "invalid transfer path: {details}"),
         }
     }
 }

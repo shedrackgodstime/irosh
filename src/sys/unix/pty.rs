@@ -13,12 +13,22 @@ pub struct RawTerminal {
 
 impl fmt::Debug for RawTerminal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RawTerminal").field("fd", &self.fd).finish()
+        f.debug_struct("RawTerminal")
+            .field("fd", &self.fd)
+            .field("original", &self.original)
+            .finish()
     }
 }
 
 impl RawTerminal {
     /// Puts the given file descriptor into raw mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying terminal I/O operation fails.
+    // Reason: libc C functions expect raw pointers; implicit borrow is intentional in FFI.
+    #[must_use]
+    #[allow(clippy::borrow_as_ptr)]
     pub fn new(fd: i32) -> Result<Self> {
         // SAFETY: `fd` is supplied by the caller as a valid terminal file descriptor.
         unsafe {
@@ -42,6 +52,8 @@ impl RawTerminal {
 }
 
 impl Drop for RawTerminal {
+    // Reason: libc tcsetattr expects a raw pointer; implicit borrow is intentional in FFI.
+    #[allow(clippy::borrow_as_ptr)]
     fn drop(&mut self) {
         // SAFETY: Restoring original termios settings for the terminal.
         unsafe {
@@ -52,6 +64,7 @@ impl Drop for RawTerminal {
 
 /// Probes the physical terminal size utilizing the `TIOCGWINSZ` syscall.
 /// Returns the current terminal size using standard OS queries.
+#[must_use] 
 pub fn current_terminal_size() -> PtySize {
     // SAFETY: Querying terminal size via `ioctl` (TIOCGWINSZ).
     unsafe {
@@ -94,6 +107,10 @@ impl AsyncStdin {
     ///
     /// Configures the raw stdin file descriptor for non-blocking I/O and
     /// saves the original terminal flags so they can be restored on drop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying terminal I/O operation fails.
     pub fn new() -> Result<Self> {
         use std::os::unix::io::AsRawFd;
         let fd = std::io::stdin().as_raw_fd();
@@ -130,19 +147,19 @@ impl AsyncStdin {
     /// Reads the next terminal event (Data or Resize).
     ///
     /// Races between raw stdin bytes and `SIGWINCH`. Returns `None` on EOF.
+    #[allow(clippy::cast_precision_loss, reason = "POSIX struct fields are fixed-width")]
     pub async fn next_event(&mut self) -> Option<TerminalEvent> {
         use std::io::Read;
+        let mut buf = [0u8; 4096];
         loop {
-            let mut buf = [0u8; 4096];
             tokio::select! {
                 // Data path: bytes arrive on stdin.
                 guard_result = self.inner.readable_mut() => {
                     let mut guard = guard_result.ok()?;
                     match guard.try_io(|inner| inner.get_ref().read(&mut buf)) {
-                        Ok(Ok(0)) => return None,
+                        Ok(Ok(0) | Err(_)) => return None,
                         Ok(Ok(n)) => return Some(TerminalEvent::Data(buf[..n].to_vec())),
-                        Ok(Err(_)) => return None,
-                        Err(_would_block) => continue,
+                        Err(_would_block) => {},
                     }
                 }
                 // Resize path: SIGWINCH fires when the terminal window is resized.
@@ -158,7 +175,7 @@ impl AsyncStdin {
         loop {
             match self.next_event().await? {
                 TerminalEvent::Data(data) => return Some(data),
-                TerminalEvent::Resize(_) => continue,
+                TerminalEvent::Resize(_) => {},
             }
         }
     }
@@ -168,10 +185,10 @@ impl AsyncStdin {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<TerminalEvent>> {
+        use std::io::Read;
         match self.inner.poll_read_ready(cx) {
             std::task::Poll::Ready(Ok(mut guard)) => {
                 let mut buf = [0u8; 4096];
-                use std::io::Read;
                 match guard.try_io(|inner| inner.get_ref().read(&mut buf)) {
                     Ok(Ok(0)) => std::task::Poll::Ready(None),
                     Ok(Ok(n)) => {
@@ -202,7 +219,8 @@ impl Drop for AsyncStdin {
 }
 
 /// Maps a russh protocol signal representation into the local libc signal ID.
-pub fn map_sig(signal: russh::Sig) -> Option<libc::c_int> {
+#[must_use] 
+pub fn map_sig(signal: &russh::Sig) -> Option<libc::c_int> {
     match signal {
         russh::Sig::ABRT => Some(libc::SIGABRT),
         russh::Sig::ALRM => Some(libc::SIGALRM),
@@ -226,66 +244,18 @@ mod tests {
 
     #[test]
     fn map_sig_abrt() {
-        assert_eq!(map_sig(russh::Sig::ABRT), Some(libc::SIGABRT));
-    }
-
-    #[test]
-    fn map_sig_alrm() {
-        assert_eq!(map_sig(russh::Sig::ALRM), Some(libc::SIGALRM));
-    }
-
-    #[test]
-    fn map_sig_fpe() {
-        assert_eq!(map_sig(russh::Sig::FPE), Some(libc::SIGFPE));
-    }
-
-    #[test]
-    fn map_sig_hup() {
-        assert_eq!(map_sig(russh::Sig::HUP), Some(libc::SIGHUP));
-    }
-
-    #[test]
-    fn map_sig_ill() {
-        assert_eq!(map_sig(russh::Sig::ILL), Some(libc::SIGILL));
-    }
-
-    #[test]
-    fn map_sig_int() {
-        assert_eq!(map_sig(russh::Sig::INT), Some(libc::SIGINT));
-    }
-
-    #[test]
-    fn map_sig_kill() {
-        assert_eq!(map_sig(russh::Sig::KILL), Some(libc::SIGKILL));
-    }
-
-    #[test]
-    fn map_sig_pipe() {
-        assert_eq!(map_sig(russh::Sig::PIPE), Some(libc::SIGPIPE));
-    }
-
-    #[test]
-    fn map_sig_quit() {
-        assert_eq!(map_sig(russh::Sig::QUIT), Some(libc::SIGQUIT));
-    }
-
-    #[test]
-    fn map_sig_segv() {
-        assert_eq!(map_sig(russh::Sig::SEGV), Some(libc::SIGSEGV));
-    }
-
-    #[test]
-    fn map_sig_term() {
-        assert_eq!(map_sig(russh::Sig::TERM), Some(libc::SIGTERM));
-    }
-
-    #[test]
-    fn map_sig_usr1() {
-        assert_eq!(map_sig(russh::Sig::USR1), Some(libc::SIGUSR1));
-    }
-
-    #[test]
-    fn map_sig_custom_returns_none() {
-        assert_eq!(map_sig(russh::Sig::Custom("test".into())), None);
+        assert_eq!(map_sig(&russh::Sig::ABRT), Some(libc::SIGABRT));
+        assert_eq!(map_sig(&russh::Sig::ALRM), Some(libc::SIGALRM));
+        assert_eq!(map_sig(&russh::Sig::FPE), Some(libc::SIGFPE));
+        assert_eq!(map_sig(&russh::Sig::HUP), Some(libc::SIGHUP));
+        assert_eq!(map_sig(&russh::Sig::ILL), Some(libc::SIGILL));
+        assert_eq!(map_sig(&russh::Sig::INT), Some(libc::SIGINT));
+        assert_eq!(map_sig(&russh::Sig::KILL), Some(libc::SIGKILL));
+        assert_eq!(map_sig(&russh::Sig::PIPE), Some(libc::SIGPIPE));
+        assert_eq!(map_sig(&russh::Sig::QUIT), Some(libc::SIGQUIT));
+        assert_eq!(map_sig(&russh::Sig::SEGV), Some(libc::SIGSEGV));
+        assert_eq!(map_sig(&russh::Sig::TERM), Some(libc::SIGTERM));
+        assert_eq!(map_sig(&russh::Sig::USR1), Some(libc::SIGUSR1));
+        assert_eq!(map_sig(&russh::Sig::Custom("test".into())), None);
     }
 }

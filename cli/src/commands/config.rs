@@ -5,7 +5,8 @@ use anyhow::Result;
 
 use irosh::storage;
 
-pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
+#[must_use]
+pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
     let state = &ctx.state;
     let mut config = storage::load_config(state)?;
 
@@ -52,7 +53,7 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
             ];
 
             for (k, v) in settings {
-                println!("  {:<18} {}", k, v);
+                println!("  {k:<18} {v}");
             }
             println!("  ----------------------------------------------------\n");
         }
@@ -77,11 +78,11 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     .to_string(),
                 _ => {
                     if ctx.args.json {
-                        crate::output::print_error(&format!("Unknown key: {}", key), "invalid_key");
+                        crate::output::print_error(&format!("Unknown key: {key}"), "invalid_key");
                         return Ok(());
                     }
                     Ui::error(
-                        &format!("unknown configuration key: {}", key),
+                        &format!("unknown configuration key: {key}"),
                         Some("run 'irosh config list' to see all valid keys"),
                     );
                     anyhow::bail!("Invalid key.");
@@ -101,7 +102,7 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                 return Ok(());
             }
 
-            Ui::info(&format!("{} = {}", key, val));
+            Ui::info(&format!("{key} = {val}"));
         }
         ConfigAction::Set { key, value } => {
             match key.as_str() {
@@ -123,21 +124,21 @@ pub async fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                 "wormhole-timeout" => {
                     config.wormhole_timeout = value
                         .parse()
-                        .map_err(|_| anyhow::anyhow!("Timeout must be a number (seconds)"))?
+                        .map_err(|_| anyhow::anyhow!("Timeout must be a number (seconds)"))?;
                 }
                 "default-user" => {
                     config.default_user = if value.is_empty() { None } else { Some(value) }
                 }
                 _ => {
                     Ui::error(
-                        &format!("unknown configuration key: {}", key),
+                        &format!("unknown configuration key: {key}"),
                         Some("run 'irosh config list' to see all valid keys"),
                     );
                     anyhow::bail!("Invalid key.");
                 }
             }
             storage::save_config(state, &config)?;
-            Ui::success(&format!("Configuration updated: '{}' has been saved.", key));
+            Ui::success(&format!("Configuration updated: '{key}' has been saved."));
         }
         ConfigAction::Export { .. } => {
             Ui::info("Export not yet implemented.");

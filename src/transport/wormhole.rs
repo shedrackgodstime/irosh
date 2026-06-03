@@ -18,6 +18,7 @@ const WORMHOLE_PKARR_SALT: &[u8] = b"irosh-wormhole-v1";
 pub const PAIRING_ALPN: &[u8] = b"irosh/pairing/v1";
 
 /// Derives a Pkarr Keypair from a human-readable wormhole code.
+#[must_use] 
 pub fn derive_keypair(code: &str) -> Keypair {
     let mut hasher = Sha256::new();
     hasher.update(WORMHOLE_PKARR_SALT);
@@ -27,13 +28,19 @@ pub fn derive_keypair(code: &str) -> Keypair {
 }
 
 /// Resolves a connection ticket using Pkarr as a rendezvous point.
+///
+/// # Errors
+///
+/// Returns an error if the Pkarr client cannot be built or if the wormhole
+/// discovery times out after 5 minutes.
+#[must_use]
 pub async fn listen_for_ticket(_endpoint: &iroh::Endpoint, code: &str) -> Result<Ticket> {
     let keypair = derive_keypair(code);
     let public_key = keypair.public_key();
     let client = Client::builder()
         .build()
         .map_err(|e| TransportError::ProtocolError {
-            details: format!("Failed to build pkarr client: {}", e),
+            details: format!("Failed to build pkarr client: {e}"),
         })?;
 
     info!("Searching for wormhole rendezvous via Pkarr: {}", code);
@@ -70,6 +77,11 @@ pub async fn listen_for_ticket(_endpoint: &iroh::Endpoint, code: &str) -> Result
 }
 
 /// Publishes a connection ticket using Pkarr as a rendezvous point.
+///
+/// # Errors
+///
+/// Returns an error if the Pkarr client cannot be built, the TXT record
+/// cannot be created, or the packet cannot be signed.
 pub async fn broadcast_ticket_loop(
     _gossip: &iroh_gossip::net::Gossip, // Kept for API compatibility for now
     code: &str,
@@ -79,12 +91,12 @@ pub async fn broadcast_ticket_loop(
     let client = Client::builder()
         .build()
         .map_err(|e| TransportError::ProtocolError {
-            details: format!("Failed to build pkarr client: {}", e),
+            details: format!("Failed to build pkarr client: {e}"),
         })?;
 
-    let msg = format!("irosh-ticket={}", ticket);
+    let msg = format!("irosh-ticket={ticket}");
     let txt = TXT::try_from(msg.as_str()).map_err(|e| TransportError::ProtocolError {
-        details: format!("Failed to create TXT record: {}", e),
+        details: format!("Failed to create TXT record: {e}"),
     })?;
 
     let signed_packet = SignedPacket::builder()
@@ -99,14 +111,14 @@ pub async fn broadcast_ticket_loop(
         )
         .sign(&keypair)
         .map_err(|e| TransportError::ProtocolError {
-            details: format!("Failed to sign pkarr packet: {}", e),
+            details: format!("Failed to sign pkarr packet: {e}"),
         })?;
 
     info!("Publishing wormhole to Pkarr rendezvous: {}", code);
 
     loop {
         match client.publish(&signed_packet, None).await {
-            Ok(_) => debug!("Successfully published to Pkarr rendezvous"),
+            Ok(()) => debug!("Successfully published to Pkarr rendezvous"),
             Err(e) => warn!("Failed to publish to Pkarr rendezvous: {}", e),
         }
 
@@ -115,12 +127,18 @@ pub async fn broadcast_ticket_loop(
 }
 
 /// Actively unpublishes a wormhole from Pkarr relays to minimize lingering discovery.
+///
+/// # Errors
+///
+/// Returns an error if the Pkarr client cannot be built or the empty
+/// tombstone packet cannot be signed.
+#[must_use]
 pub async fn unpublish_ticket(code: &str) -> Result<()> {
     let keypair = derive_keypair(code);
     let client = Client::builder()
         .build()
         .map_err(|e| TransportError::ProtocolError {
-            details: format!("Failed to build pkarr client: {}", e),
+            details: format!("Failed to build pkarr client: {e}"),
         })?;
 
     // Create an empty signed packet (tombstone) to overwrite the old record
@@ -128,7 +146,7 @@ pub async fn unpublish_ticket(code: &str) -> Result<()> {
         SignedPacket::builder()
             .sign(&keypair)
             .map_err(|e| TransportError::ProtocolError {
-                details: format!("Failed to sign empty pkarr packet: {}", e),
+                details: format!("Failed to sign empty pkarr packet: {e}"),
             })?;
 
     debug!("Unpublishing wormhole from Pkarr: {}", code);
@@ -139,24 +157,25 @@ pub async fn unpublish_ticket(code: &str) -> Result<()> {
     Ok(())
 }
 
+const WORDS: &[&str] = &[
+    "apple", "banana", "cherry", "dog", "elephant", "fox", "grape", "honey", "iron", "jungle",
+    "kite", "lemon", "mountain", "night", "ocean", "piano", "quartz", "river", "sky", "tiger",
+    "umbrella", "valley", "whale", "xray", "yellow", "zebra", "amber", "bright", "crystal",
+    "delta", "echo", "frost",
+];
+
 /// Generates a random, human-friendly wormhole pairing code.
 ///
 /// The code consists of two random words and a single digit, joined by hyphens.
 /// Example: `apple-banana-7`
+#[must_use]
 pub fn generate_code() -> String {
     use rand::Rng;
     let mut rng = rand::rng();
-
-    const WORDS: &[&str] = &[
-        "apple", "banana", "cherry", "dog", "elephant", "fox", "grape", "honey", "iron", "jungle",
-        "kite", "lemon", "mountain", "night", "ocean", "piano", "quartz", "river", "sky", "tiger",
-        "umbrella", "valley", "whale", "xray", "yellow", "zebra", "amber", "bright", "crystal",
-        "delta", "echo", "frost",
-    ];
 
     let w1 = WORDS[rng.random_range(0..WORDS.len())];
     let w2 = WORDS[rng.random_range(0..WORDS.len())];
     let n = rng.random_range(1..10);
 
-    format!("{}-{}-{}", w1, w2, n)
+    format!("{w1}-{w2}-{n}")
 }

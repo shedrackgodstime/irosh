@@ -5,7 +5,8 @@ use crate::ui::Ui;
 use anyhow::Result;
 use irosh::storage;
 
-pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
+#[must_use]
+pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
     let state = &ctx.state;
 
     match action {
@@ -54,22 +55,19 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             println!("  ----------------------------------------------------\n");
         }
         PeerAction::Add { name, ticket } => {
-            let target_ticket = match ticket {
-                Some(t) => t,
-                None => {
-                    if ctx.args.json {
-                        crate::output::print_error(
-                            "Missing required argument: ticket",
-                            "missing_args",
-                        );
+            let target_ticket = if let Some(t) = ticket { t } else {
+                if ctx.args.json {
+                    crate::output::print_error(
+                        "Missing required argument: ticket",
+                        "missing_args",
+                    );
+                    return Ok(());
+                }
+                match Ui::input("Enter the peer connection ticket", None) {
+                    Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+                    _ => {
+                        Ui::info("Cancelled.");
                         return Ok(());
-                    }
-                    match Ui::input("Enter the peer connection ticket", None) {
-                        Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-                        _ => {
-                            Ui::info("Cancelled.");
-                            return Ok(());
-                        }
                     }
                 }
             };
@@ -79,8 +77,7 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 .parse::<irosh::transport::ticket::Ticket>()
                 .map_err(|e| {
                     anyhow::anyhow!(
-                        "Invalid ticket format: {}. Make sure you copied the full ticket string.",
-                        e
+                        "Invalid ticket format: {e}. Make sure you copied the full ticket string."
                     )
                 })?;
 
@@ -109,13 +106,13 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             if storage::load_peer(state, &target_name)?.is_some() {
                 if ctx.args.json {
                     crate::output::print_error(
-                        &format!("A peer named '{}' already exists.", target_name),
+                        &format!("A peer named '{target_name}' already exists."),
                         "duplicate_name",
                     );
                     return Ok(());
                 }
                 Ui::error(
-                    &format!("a peer named '{}' already exists", target_name),
+                    &format!("a peer named '{target_name}' already exists"),
                     Some(
                         "use a different alias, or remove the existing one with 'irosh peer remove'",
                     ),
@@ -147,31 +144,24 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             }
 
             Ui::success(&format!(
-                "Peer '{}' has been added to your address book.",
-                target_name
+                "Peer '{target_name}' has been added to your address book."
             ));
         }
         PeerAction::Remove { name } => {
-            let target_name = match name {
-                Some(n) => n,
-                None => {
-                    let peers = storage::list_peers(state)?;
-                    if peers.is_empty() {
-                        Ui::info("No peers to remove.");
-                        return Ok(());
-                    }
-                    let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
-                    match Ui::select("Select a peer to remove", &items) {
-                        Some(idx) => peers[idx].name.clone(),
-                        None => {
-                            Ui::info("Cancelled.");
-                            return Ok(());
-                        }
-                    }
+            let target_name = if let Some(n) = name { n } else {
+                let peers = storage::list_peers(state)?;
+                if peers.is_empty() {
+                    Ui::info("No peers to remove.");
+                    return Ok(());
+                }
+                let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
+                if let Some(idx) = Ui::select("Select a peer to remove", &items) { peers[idx].name.clone() } else {
+                    Ui::info("Cancelled.");
+                    return Ok(());
                 }
             };
             if ctx.args.json
-                || Ui::soft_confirm(&format!("Remove peer '{}' from address book?", target_name))
+                || Ui::soft_confirm(&format!("Remove peer '{target_name}' from address book?"))
             {
                 storage::delete_peer(state, &target_name)?;
 
@@ -184,32 +174,26 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     return Ok(());
                 }
 
-                Ui::success(&format!("Peer '{}' removed.", target_name));
+                Ui::success(&format!("Peer '{target_name}' removed."));
             }
         }
         PeerAction::Info { name } => {
-            let target_name = match name {
-                Some(n) => n,
-                None => {
-                    let peers = storage::list_peers(state)?;
-                    if peers.is_empty() {
-                        Ui::info("Your address book is empty.");
-                        return Ok(());
-                    }
-                    let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
-                    match Ui::select("Select a peer to inspect", &items) {
-                        Some(idx) => peers[idx].name.clone(),
-                        None => {
-                            Ui::info("Cancelled.");
-                            return Ok(());
-                        }
-                    }
+            let target_name = if let Some(n) = name { n } else {
+                let peers = storage::list_peers(state)?;
+                if peers.is_empty() {
+                    Ui::info("Your address book is empty.");
+                    return Ok(());
+                }
+                let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
+                if let Some(idx) = Ui::select("Select a peer to inspect", &items) { peers[idx].name.clone() } else {
+                    Ui::info("Cancelled.");
+                    return Ok(());
                 }
             };
 
             if let Some(p) = storage::load_peer(state, &target_name)? {
                 let addr = p.ticket.to_addr();
-                let relay = addr.relay_urls().next().map(|r| r.to_string());
+                let relay = addr.relay_urls().next().map(std::string::ToString::to_string);
 
                 if ctx.args.json {
                     #[derive(serde::Serialize)]
@@ -228,54 +212,48 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     return Ok(());
                 }
 
-                println!("\n  Peer Detail: {}", target_name);
+                println!("\n  Peer Detail: {target_name}");
                 println!("  ----------------------------------------------------");
-                println!("  Alias:       {}", target_name);
+                println!("  Alias:       {target_name}");
                 println!("  Endpoint ID: {}", addr.id);
                 println!("  Ticket:    {}", p.ticket);
 
                 if let Some(r) = relay {
-                    println!("  Relay:     {}", r);
+                    println!("  Relay:     {r}");
                 }
                 println!("  ----------------------------------------------------\n");
             } else {
                 if ctx.args.json {
                     crate::output::print_error(
-                        &format!("Peer '{}' not found", target_name),
+                        &format!("Peer '{target_name}' not found"),
                         "not_found",
                     );
                     return Ok(());
                 }
                 Ui::error(
-                    &format!("peer '{}' not found in address book", target_name),
+                    &format!("peer '{target_name}' not found in address book"),
                     Some("run 'irosh peer list' to see known peers"),
                 );
             }
         }
 
         PeerAction::Rename { old_name, new_name } => {
-            let target_old = match old_name {
-                Some(n) => n,
-                None => {
-                    let peers = storage::list_peers(state)?;
-                    if peers.is_empty() {
-                        Ui::info("No peers to rename.");
-                        return Ok(());
-                    }
-                    let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
-                    match Ui::select("Select a peer to rename", &items) {
-                        Some(idx) => peers[idx].name.clone(),
-                        None => {
-                            Ui::info("Cancelled.");
-                            return Ok(());
-                        }
-                    }
+            let target_old = if let Some(n) = old_name { n } else {
+                let peers = storage::list_peers(state)?;
+                if peers.is_empty() {
+                    Ui::info("No peers to rename.");
+                    return Ok(());
+                }
+                let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
+                if let Some(idx) = Ui::select("Select a peer to rename", &items) { peers[idx].name.clone() } else {
+                    Ui::info("Cancelled.");
+                    return Ok(());
                 }
             };
 
             let target_new = match new_name {
                 Some(n) => n,
-                None => match Ui::input(&format!("Enter new name for '{}'", target_old), None) {
+                None => match Ui::input(&format!("Enter new name for '{target_old}'"), None) {
                     Some(n) if !n.trim().is_empty() => n.trim().to_string(),
                     _ => {
                         Ui::info("Cancelled.");
@@ -287,26 +265,22 @@ pub async fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             // Validate target_new doesn't conflict with an existing peer (unless it's the same)
             if target_old != target_new && storage::load_peer(state, &target_new)?.is_some() {
                 Ui::error(
-                    &format!("a peer named '{}' already exists", target_new),
+                    &format!("a peer named '{target_new}' already exists"),
                     Some("remove the existing peer first with 'irosh peer remove'"),
                 );
                 return Ok(());
             }
 
-            match storage::rename_peer(state, &target_old, &target_new)? {
-                true => {
-                    Ui::success(&format!(
-                        "Peer renamed: '{}' -> '{}'",
-                        target_old, target_new
-                    ));
-                    Ui::info(&format!("Connect with: irosh connect {}", target_new));
-                }
-                false => {
-                    Ui::error(
-                        &format!("peer '{}' not found in address book", target_old),
-                        None,
-                    );
-                }
+            if storage::rename_peer(state, &target_old, &target_new)? {
+                Ui::success(&format!(
+                    "Peer renamed: '{target_old}' -> '{target_new}'"
+                ));
+                Ui::info(&format!("Connect with: irosh connect {target_new}"));
+            } else {
+                Ui::error(
+                    &format!("peer '{target_old}' not found in address book"),
+                    None,
+                );
             }
         }
     }

@@ -155,7 +155,7 @@ pub async fn execute_local_command(
         LocalCommand::Lpwd => {
             let path = transfer_context.local_root.display();
             stdout
-                .write_all(format!("Local working directory: {}\r\n", path).as_bytes())
+                .write_all(format!("Local working directory: {path}\r\n").as_bytes())
                 .await?;
             print_prompt!();
             Ok((true, 1))
@@ -173,7 +173,7 @@ pub async fn execute_local_command(
             } else {
                 stdout
                     .write_all(
-                        format!("Error: '{}' is not a valid local directory\r\n", path).as_bytes(),
+                        format!("Error: '{path}' is not a valid local directory\r\n").as_bytes(),
                     )
                     .await?;
             }
@@ -185,31 +185,24 @@ pub async fn execute_local_command(
                 Some(p) => transfer_context.resolve_local_source(p),
                 None => transfer_context.local_root.clone(),
             };
-            if !target.is_dir() {
-                stdout
-                    .write_all(
-                        format!("Error: '{}' is not a local directory\r\n", target.display())
-                            .as_bytes(),
-                    )
-                    .await?;
-                print_prompt!();
-                Ok((true, 1))
-            } else {
+            if target.is_dir() {
                 let mut entries = Vec::new();
                 if let Ok(mut dir) = tokio::fs::read_dir(&target).await {
                     while let Ok(Some(entry)) = dir.next_entry().await {
                         if let Ok(name) = entry.file_name().into_string() {
                             let prefix =
-                                if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+                                if entry.file_type().await.is_ok_and(|t| t.is_dir()) {
                                     "[DIR] "
                                 } else {
                                     "      "
                                 };
-                            entries.push(format!("{}{}", prefix, name));
+                            entries.push(format!("{prefix}{name}"));
                         }
                     }
                 }
                 entries.sort();
+                // Reason: entries is a Vec of tab-completion results, realistically <1000 items.
+                #[allow(clippy::cast_possible_truncation)]
                 let lines_printed = entries.len() as u16;
                 let mut out = String::new();
                 for entry in entries {
@@ -219,24 +212,30 @@ pub async fn execute_local_command(
                 stdout.write_all(out.as_bytes()).await?;
                 print_prompt!();
                 Ok((true, lines_printed))
+            } else {
+                stdout
+                    .write_all(
+                        format!("Error: '{}' is not a local directory\r\n", target.display())
+                            .as_bytes(),
+                    )
+                    .await?;
+                print_prompt!();
+                Ok((true, 1))
             }
         }
         LocalCommand::Paths => {
             let local = transfer_context.local_root.display();
             let remote =
                 tokio::time::timeout(std::time::Duration::from_secs(30), session.remote_cwd())
-                    .await
-                    .map(|res| match res {
+                    .await.map_or_else(|_| "unknown (timeout)".to_string(), |res| match res {
                         Ok(p) => p.display().to_string(),
                         Err(_) => "unknown (error)".to_string(),
-                    })
-                    .unwrap_or_else(|_| "unknown (timeout)".to_string());
+                    });
 
             stdout
                 .write_all(
                     format!(
-                        "Local transfer root: {}\r\nRemote transfer root: {}\r\n",
-                        local, remote
+                        "Local transfer root: {local}\r\nRemote transfer root: {remote}\r\n"
                     )
                     .as_bytes(),
                 )
@@ -282,7 +281,7 @@ pub async fn execute_local_command(
         }
         LocalCommand::UsageError(msg) => {
             stdout
-                .write_all(format!("Error: {}\r\n", msg).as_bytes())
+                .write_all(format!("Error: {msg}\r\n").as_bytes())
                 .await?;
             print_prompt!();
             Ok((true, 1))
@@ -291,8 +290,7 @@ pub async fn execute_local_command(
             stdout
                 .write_all(
                     format!(
-                        "Unknown command: '{}'. Type 'help' for available commands.\r\n",
-                        cmd
+                        "Unknown command: '{cmd}'. Type 'help' for available commands.\r\n"
                     )
                     .as_bytes(),
                 )

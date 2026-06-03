@@ -76,4 +76,4 @@ Finalizing the protocol and committing to API stability.
 ---
 
 > [!NOTE]
-> For our long-term vision and advanced P2P concepts (Collaborative SSH, Mobile support, AI agents), please see the [Future Roadmap](future_roadmap.md).
+> For our speculative/experimental design space and next-generation ideas (Collaborative SSH, Mobile support, AI agents), please see the [Feature Proposals](feature_proposals.md) document.

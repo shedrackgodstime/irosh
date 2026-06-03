@@ -20,7 +20,8 @@ pub mod ipc;
 pub(crate) mod shell_access;
 pub(crate) mod side_streams;
 pub(crate) mod startup;
-pub(crate) mod transfer;
+pub mod transfer;
+pub use transfer::ConnectionShellState;
 
 use russh::server;
 use std::collections::HashMap;
@@ -39,7 +40,6 @@ use crate::server::startup::bind_server;
 use crate::transport::stream::IrohDuplex;
 
 use self::side_streams::spawn_side_stream_listener;
-use self::transfer::ConnectionShellState;
 
 /// Configuration options for the irosh server.
 #[derive(Debug)]
@@ -150,6 +150,7 @@ impl ServerOptions {
     }
 
     /// Returns a reference to the [`StateConfig`] this server was configured with.
+    #[must_use] 
     pub fn state(&self) -> &StateConfig {
         &self.state
     }
@@ -159,6 +160,7 @@ impl ServerOptions {
     }
 
     /// Returns the optional shared secret for wormhole authentication.
+    #[must_use] 
     pub fn secret_value(&self) -> Option<&str> {
         self.secret.as_deref()
     }
@@ -253,27 +255,50 @@ impl SessionTracker {
 }
 
 impl ServerReady {
+    /// Creates a new `ServerReady` instance.
+    #[must_use]
+    pub fn new(
+        endpoint_id: String,
+        ticket: crate::transport::ticket::Ticket,
+        relay_urls: Vec<String>,
+        direct_addresses: Vec<String>,
+        host_key_openssh: String,
+    ) -> Self {
+        Self {
+            endpoint_id,
+            ticket,
+            relay_urls,
+            direct_addresses,
+            host_key_openssh,
+        }
+    }
+
     /// Returns the unique Iroh node identifier.
+    #[must_use] 
     pub fn endpoint_id(&self) -> &str {
         &self.endpoint_id
     }
 
     /// Returns the connection ticket for this server.
+    #[must_use] 
     pub fn ticket(&self) -> &crate::transport::ticket::Ticket {
         &self.ticket
     }
 
     /// Returns the relay URLs the server is currently connected through.
+    #[must_use] 
     pub fn relay_urls(&self) -> &[String] {
         &self.relay_urls
     }
 
     /// Returns directly reachable network addresses when available.
+    #[must_use] 
     pub fn direct_addresses(&self) -> &[String] {
         &self.direct_addresses
     }
 
     /// Returns the OpenSSH-formatted host key.
+    #[must_use] 
     pub fn host_key_openssh(&self) -> &str {
         &self.host_key_openssh
     }
@@ -300,6 +325,8 @@ pub struct Server {
     blobs: iroh_blobs::store::fs::FsStore,
     shutdown_on_wormhole_success: bool,
     session_tracker: SessionTracker,
+    /// Runtime metrics counters.
+    metrics: crate::metrics::Metrics,
 }
 
 impl fmt::Debug for Server {
@@ -308,7 +335,9 @@ impl fmt::Debug for Server {
             .field("authenticator", &self.authenticator)
             .field("state", &self.state)
             .field("has_secret", &self.secret.is_some())
-            .finish()
+            .field("ipc_enabled", &self.ipc_enabled)
+            .field("shutdown_on_wormhole_success", &self.shutdown_on_wormhole_success)
+            .finish_non_exhaustive()
     }
 }
 
@@ -371,6 +400,7 @@ struct SshProtocol {
     active_sessions: Arc<std::sync::atomic::AtomicUsize>,
     blobs: iroh_blobs::store::fs::FsStore,
     session_tracker: Arc<SessionTracker>,
+    metrics: crate::metrics::Metrics,
 }
 
 impl std::fmt::Debug for SshProtocol {
@@ -384,8 +414,6 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
         &self,
         connection: iroh::endpoint::Connection,
     ) -> std::result::Result<(), iroh::protocol::AcceptError> {
-        self.active_sessions
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         struct SessionGuard(
             Arc<std::sync::atomic::AtomicUsize>,
             usize,
@@ -401,6 +429,11 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
                 });
             }
         }
+
+        self.active_sessions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let _metrics_guard = self.metrics.register_connection();
 
         let (session_id, bytes_sent, bytes_received) = self
             .session_tracker
@@ -427,7 +460,8 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
 
         let shell_state =
             ConnectionShellState::new(self.state.root().to_path_buf(), self.blobs.clone());
-        spawn_side_stream_listener(connection, shell_state.clone());
+        let metrics = self.metrics.clone();
+        spawn_side_stream_listener(connection, shell_state.clone(), metrics.clone());
 
         let stream = IrohDuplex::with_stats(send, recv, bytes_sent, bytes_received);
         let mut session_authenticator = self.authenticator.clone();
@@ -437,8 +471,13 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
             let mut wh_lock = self.wormhole.lock().await;
             if let Some(wh) = wh_lock.as_mut() {
                 info!("Pairing connection established via wormhole code.");
-                let vault =
-                    crate::storage::load_all_authorized_clients(&self.state).unwrap_or_default();
+                let vault = match tokio::task::spawn_blocking({
+                    let state = self.state.clone();
+                    move || crate::storage::load_all_authorized_clients(&state)
+                }).await {
+                    Ok(Ok(vault)) => vault,
+                    _ => Vec::new(),
+                };
                 let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
 
                 let pairing_auth = crate::auth::UnifiedAuthenticator::with_tracking(
@@ -459,10 +498,10 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
                 for m in &pairing_methods {
                     match m {
                         crate::auth::AuthMethod::PublicKey => {
-                            pairing_method_set.push(russh::MethodKind::PublicKey)
+                            pairing_method_set.push(russh::MethodKind::PublicKey);
                         }
                         crate::auth::AuthMethod::Password => {
-                            pairing_method_set.push(russh::MethodKind::Password)
+                            pairing_method_set.push(russh::MethodKind::Password);
                         }
                     }
                 }
@@ -480,7 +519,7 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
             }
         }
 
-        let handler = ServerHandler::new(session_authenticator, shell_state);
+        let handler = ServerHandler::with_metrics(session_authenticator, shell_state, metrics);
         let config = session_config;
 
         tracing::debug!("Starting SSH session task");
@@ -502,6 +541,8 @@ impl Server {
     /// # Errors
     ///
     /// Returns an error if the server identity cannot be loaded or created.
+    #[must_use]
+    #[tracing::instrument(skip(options))]
     pub async fn inspect(options: &ServerOptions) -> Result<ServerReady> {
         startup::inspect_server(options).await
     }
@@ -526,11 +567,14 @@ impl Server {
     ///
     /// Returns an error if local identity material cannot be loaded or created,
     /// or if the Iroh endpoint cannot be bound.
+    #[must_use]
+    #[tracing::instrument(skip(options))]
     pub async fn bind(options: ServerOptions) -> Result<(ServerReady, Self)> {
         bind_server(options).await
     }
 
     /// Returns an explicit shutdown handle for the running server.
+    #[must_use] 
     pub fn shutdown_handle(&self) -> ServerShutdown {
         ServerShutdown {
             endpoint: self.endpoint.clone(),
@@ -539,8 +583,15 @@ impl Server {
     }
 
     /// Returns a channel to send control commands to the server loop.
+    #[must_use] 
     pub fn control_handle(&self) -> tokio::sync::mpsc::Sender<ipc::InternalCommand> {
         self.control_tx.clone()
+    }
+
+    /// Returns the runtime metrics collector for this server.
+    #[must_use]
+    pub fn metrics(&self) -> crate::metrics::Metrics {
+        self.metrics.clone()
     }
 
     /// Engages the server listen loop to accept connections until the endpoint closes.
@@ -553,6 +604,8 @@ impl Server {
     /// Returns an error only if the outer server loop fails before entering its
     /// normal shutdown path. Individual session failures are logged and do not
     /// stop the accept loop.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn run(mut self) -> Result<()> {
         info!("Server actively listening for connections.");
 
@@ -589,6 +642,7 @@ impl Server {
             active_sessions: active_sessions.clone(),
             blobs: self.blobs.clone(),
             session_tracker: Arc::new(SessionTracker::new()),
+            metrics: self.metrics.clone(),
         };
 
         let mut pairing_protocol = base_protocol.clone();

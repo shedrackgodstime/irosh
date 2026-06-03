@@ -9,6 +9,7 @@ pub(crate) const BASE_ALPN: &[u8] = b"irosh/1";
 /// Derives a unique ALPN for this session based on an optional shared secret.
 /// If no secret is provided, the standard "irosh/1" protocol is used.
 /// If a secret is provided, it is hashed to create a private stealth protocol.
+#[must_use] 
 pub fn derive_alpn(secret: Option<&str>) -> Vec<u8> {
     match secret {
         None => BASE_ALPN.to_vec(),
@@ -41,6 +42,10 @@ pub struct ServerEndpoint {
 }
 
 /// Binds a new Iroh endpoint for the server to listen on.
+///
+/// # Errors
+///
+/// Returns an error if the endpoint fails to bind.
 pub async fn bind_server_endpoint(
     secret_key: SecretKey,
     alpns: Vec<Vec<u8>>,
@@ -63,11 +68,11 @@ pub async fn bind_server_endpoint(
 
     let direct_addresses = endpoint_addr
         .ip_addrs()
-        .map(|addr| addr.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>();
     let relay_urls = endpoint_addr
         .relay_urls()
-        .map(|url| url.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>();
 
     Ok(ServerEndpoint {
@@ -80,6 +85,10 @@ pub async fn bind_server_endpoint(
 }
 
 /// Binds a new Iroh endpoint for a client connection.
+///
+/// # Errors
+///
+/// Returns an error if the endpoint fails to bind.
 pub async fn bind_client_endpoint(
     secret_key: SecretKey,
     alpns: Vec<Vec<u8>>,
@@ -105,6 +114,11 @@ pub async fn bind_client_endpoint(
 /// - "disabled": Disables relaying entirely.
 /// - "default": Uses the default Iroh relay servers.
 /// - Any valid URL: Uses a custom relay server at that address.
+///
+/// # Errors
+///
+/// Returns an error if the relay URL is invalid and cannot be parsed.
+#[must_use]
 pub fn parse_relay_mode(url: &str) -> Result<RelayMode> {
     match url {
         "disabled" => Ok(RelayMode::Disabled),

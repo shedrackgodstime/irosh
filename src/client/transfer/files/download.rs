@@ -1,3 +1,4 @@
+//! Client file download implementation.
 use tokio::io::AsyncWriteExt;
 use tracing::warn;
 
@@ -16,6 +17,10 @@ impl Session {
     /// Downloads one remote file or directory to a local path.
     ///
     /// If `remote` is a directory, it will be downloaded recursively.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn download(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -74,6 +79,10 @@ impl Session {
     }
 
     /// Downloads a remote file using content-addressed blobs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn download_blob<F>(
         &self,
         remote: impl AsRef<std::path::Path>,
@@ -148,7 +157,7 @@ impl Session {
                     }
                     .into());
                 }
-                _ => {}
+                iroh_blobs::api::remote::GetProgressItem::Done(_) => {}
             }
         }
 
@@ -161,7 +170,7 @@ impl Session {
             let collection = iroh_blobs::format::collection::Collection::load(hash, &*self.blobs)
                 .await
                 .map_err(|e| ClientError::DownloadFailed {
-                    details: format!("failed to parse collection {}: {}", hash, e),
+                    details: format!("failed to parse collection {hash}: {e}"),
                 })?;
 
             for (name, item_hash) in collection.iter() {
@@ -184,21 +193,23 @@ impl Session {
                     .into());
                 }
             }
-        } else {
-            if let Err(e) = self.blobs.blobs().export(hash, local).await {
-                return Err(ClientError::FileIo {
-                    operation: "export blob to local file",
-                    path: local.to_path_buf(),
-                    source: std::io::Error::other(e.to_string()),
-                }
-                .into());
+        } else if let Err(e) = self.blobs.blobs().export(hash, local).await {
+            return Err(ClientError::FileIo {
+                operation: "export blob to local file",
+                path: local.to_path_buf(),
+                source: std::io::Error::other(e.to_string()),
             }
+            .into());
         }
 
         Ok(hash)
     }
 
     /// Downloads one remote file to a local path on a separate authenticated stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn download_file(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -209,6 +220,10 @@ impl Session {
     }
 
     /// Downloads one remote file and reports progress synchronously through the callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn download_file_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -256,7 +271,7 @@ impl Session {
             }
             other => {
                 return Err(ClientError::DownloadFailed {
-                    details: format!("unexpected preflight frame for {:?}: {:?}", remote, other),
+                    details: format!("unexpected preflight frame for {}: {other:?}", remote.display()),
                 }
                 .into());
             }
@@ -316,8 +331,7 @@ impl Session {
                     let _ = tokio::fs::remove_file(&temp_path).await;
                     return Err(ClientError::DownloadFailed {
                         details: format!(
-                            "unexpected data stream frame for {:?}: {:?}",
-                            remote, other
+                            "unexpected data stream frame for {}: {other:?}", remote.display()
                         ),
                     }
                     .into());
@@ -334,12 +348,12 @@ impl Session {
 
         persist_temp_file(&temp_path, local).await?;
 
-        if let Some(_mode) = expected_mode {
+        if let Some(mode) = expected_mode {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 let _ =
-                    tokio::fs::set_permissions(local, std::fs::Permissions::from_mode(_mode)).await;
+                    tokio::fs::set_permissions(local, std::fs::Permissions::from_mode(mode)).await;
             }
         }
 
@@ -347,6 +361,10 @@ impl Session {
     }
 
     /// Downloads a remote directory recursively.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn download_dir_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -457,13 +475,13 @@ impl Session {
                         drop(dest);
                         persist_temp_file(&temp_path, &local_path).await?;
 
-                        if let Some(_mode) = header.mode {
+                        if let Some(mode) = header.mode {
                             #[cfg(unix)]
                             {
                                 use std::os::unix::fs::PermissionsExt;
                                 let _ = tokio::fs::set_permissions(
                                     &local_path,
-                                    std::fs::Permissions::from_mode(_mode),
+                                    std::fs::Permissions::from_mode(mode),
                                 )
                                 .await;
                             }
@@ -510,7 +528,7 @@ impl Session {
                 Err(crate::error::ClientError::TransferRejected { failure }.into())
             }
             other => Err(crate::error::ClientError::DownloadFailed {
-                details: format!("unexpected frame during is_dir check: {:?}", other),
+                details: format!("unexpected frame during is_dir check: {other:?}"),
             }
             .into()),
         }

@@ -52,10 +52,10 @@ impl Ui {
 
     pub fn machine_identity(endpoint_id: &str, fingerprint: &str, ticket: &str, label: &str) {
         use console::style;
-        eprintln!("\n  Machine Identity ({})", label);
+        eprintln!("\n  Machine Identity ({label})");
         eprintln!("  ----------------------------------------------------");
-        eprintln!("  Endpoint ID: {}", endpoint_id);
-        eprintln!("  Fingerprint: {}", fingerprint);
+        eprintln!("  Endpoint ID: {endpoint_id}");
+        eprintln!("  Fingerprint: {fingerprint}");
         eprintln!("  Ticket:      {}", style(ticket).cyan().bold());
         eprintln!("  ----------------------------------------------------\n");
     }
@@ -112,6 +112,7 @@ impl Ui {
         eprintln!();
     }
 
+    #[allow(clippy::cast_precision_loss, reason = "human-readable byte formatting")]
     fn format_bytes(bytes: u64) -> String {
         const KB: u64 = 1024;
         const MB: u64 = KB * 1024;
@@ -124,7 +125,7 @@ impl Ui {
         } else if bytes >= KB {
             format!("{:.2} KB", bytes as f64 / KB as f64)
         } else {
-            format!("{} B", bytes)
+            format!("{bytes} B")
         }
     }
 }

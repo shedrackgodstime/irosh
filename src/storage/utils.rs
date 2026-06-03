@@ -11,6 +11,13 @@ use crate::error::{Result, StorageError};
 ///
 /// This also ensures the file has strict permissions (0600) on Unix-like systems,
 /// and equivalent restricted ACLs on Windows.
+///
+/// # Errors
+///
+/// Returns an error if the parent directory cannot be determined, the
+/// temporary file cannot be created, permissions cannot be applied, data
+/// cannot be written or synced, or the atomic rename fails.
+#[must_use]
 pub fn atomic_write_secure(path: &Path, data: &[u8]) -> Result<()> {
     let parent = path.parent().ok_or_else(|| StorageError::DirectoryCreate {
         path: path.to_path_buf(),
@@ -52,6 +59,12 @@ pub fn atomic_write_secure(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Ensures a directory exists and has strict permissions (0700) on Unix/Windows.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be created or if strict
+/// permissions cannot be applied to an existing or new directory.
+#[must_use]
 pub fn ensure_dir_secure(path: &Path) -> Result<()> {
     if !path.exists() {
         fs::create_dir_all(path).map_err(|source| StorageError::DirectoryCreate {
@@ -101,9 +114,21 @@ fn apply_secure_permissions(path: &Path) -> Result<()> {
         const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x00000020;
         const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x00000220;
 
-        // SAFETY: Windows API calls for security descriptor manipulation.
-        // We ensure that buffers are correctly sized and pointers are valid
-        // by using established Win32 patterns (query size first, then allocate).
+        // SAFETY:
+        // - `OpenProcessToken` and `GetTokenInformation` follow the standard
+        //   Win32 pattern: call with null/zero to query required size, allocate,
+        //   then call again with the allocated buffer. This ensures `buf` is
+        //   correctly sized before the second call.
+        // - `buf.as_mut_ptr()` is a valid, aligned pointer to a properly sized
+        //   allocation. The cast `*mut _` is required by the Win32 API and is
+        //   safe because `TOKEN_USER` is a standard Windows structure.
+        // - `CloseHandle` is called with a valid handle obtained from
+        //   `OpenProcessToken`. The handle is non-null if `OpenProcessToken`
+        //   succeeded.
+        // - Pre-condition: Caller must ensure the process has a valid token
+        //   (i.e., not run in an environment where `OpenProcessToken` is
+        //   unsupported). No `.await` points exist while these handles are
+        //   live; all Win32 calls complete synchronously within this block.
         unsafe {
             let mut process_token: HANDLE = std::ptr::null_mut();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut process_token) == 0 {

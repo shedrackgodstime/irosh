@@ -3,6 +3,7 @@ use crate::ui::Ui;
 use anyhow::Result;
 use irosh::diagnostic;
 
+#[must_use]
 pub async fn exec(ctx: &CliContext) -> Result<()> {
     let state = &ctx.state;
 
@@ -20,7 +21,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
         if url == "disabled" {
             "Disabled".to_string()
         } else {
-            format!("Custom ({})", url)
+            format!("Custom ({url})")
         }
     } else {
         "Default".to_string()
@@ -28,6 +29,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
 
     if ctx.args.json {
         #[derive(serde::Serialize)]
+        #[allow(clippy::struct_excessive_bools)]
         struct SecurityJson {
             root_exists: bool,
             root_mode: Option<u32>,
@@ -141,7 +143,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     Ui::info("System Environment");
 
     if let Some(v) = system.ssh_version {
-        Ui::success(&format!("SSH Binary: Found ({})", v));
+        Ui::success(&format!("SSH Binary: Found ({v})"));
     } else {
         Ui::error(
             "SSH Binary: not found",
@@ -175,7 +177,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
 
             if probe.has_relay_connectivity() {
                 for relay in &probe.relay_urls {
-                    Ui::success(&format!("Relay Link: Connected ({})", relay));
+                    Ui::success(&format!("Relay Link: Connected ({relay})"));
                 }
             } else {
                 Ui::error("Relay Link: DISCONNECTED", None);
@@ -184,7 +186,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
         Err(e) => {
             pb.finish_with_message("Done");
             Ui::error("P2P Endpoint: OFFLINE", None);
-            Ui::info(&format!("Error: {:#}", e));
+            Ui::info(&format!("Error: {e:#}"));
         }
     }
 

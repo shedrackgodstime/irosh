@@ -36,6 +36,7 @@ use crate::storage::trust::write_authorized_client;
 
 /// Which authentication methods a backend supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum AuthMethod {
     /// SSH public key authentication.
     PublicKey,
@@ -45,6 +46,7 @@ pub enum AuthMethod {
 
 /// The overall authentication policy mode for the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum AuthMode {
     /// Only SSH public keys are allowed (Strict/TOFU).
     Key,
@@ -99,12 +101,20 @@ pub trait Authenticator: Send + Sync + fmt::Debug + 'static {
     ///
     /// Return `Ok(true)` to accept, `Ok(false)` to reject.
     /// Return `Err(...)` for internal failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying storage or cryptographic operation fails.
     fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool>;
 
     /// Validate a username + password combination.
     ///
     /// Return `Ok(true)` to accept, `Ok(false)` to reject.
     /// Return `Err(...)` for internal failures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if authentication fails or the credentials are invalid.
     fn check_password(&self, user: &str, password: &str) -> Result<bool>;
 }
 
@@ -126,6 +136,7 @@ pub struct KeyOnlyAuth {
 
 impl KeyOnlyAuth {
     /// Creates a new key-only authenticator with the given policy and initial keys.
+    #[must_use] 
     pub fn new(
         security: SecurityConfig,
         authorized_keys: Vec<PublicKey>,
@@ -185,7 +196,10 @@ impl Authenticator for KeyOnlyAuth {
                 authorized.push(key.clone());
                 Ok(true)
             }
-            HostKeyPolicy::AcceptAll => unreachable!(),
+            HostKeyPolicy::AcceptAll => {
+                info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
+                Ok(true)
+            }
         }
     }
 
@@ -253,6 +267,7 @@ impl Authenticator for PasswordAuth {
 /// # Errors
 ///
 /// Returns a [`crate::error::StorageError::PasswordHash`] if salt generation or hashing fails.
+#[must_use]
 pub fn hash_password(password: &str) -> Result<String> {
     let mut salt_bytes = [0u8; 16];
 
@@ -288,6 +303,7 @@ pub struct CombinedAuth {
 
 impl CombinedAuth {
     /// Creates a combined authenticator from a key backend and a password backend.
+    #[must_use] 
     pub fn new(key_auth: KeyOnlyAuth, password_auth: PasswordAuth) -> Self {
         Self {
             key_auth,
@@ -400,6 +416,7 @@ pub struct UnifiedAuthenticator {
 
 impl UnifiedAuthenticator {
     /// Creates a new unified authenticator.
+    #[must_use] 
     pub fn new(
         state: StateConfig,
         policy: HostKeyPolicy,
@@ -421,6 +438,7 @@ impl UnifiedAuthenticator {
 
     /// Creates a new unified authenticator that shares its success and failure tracking
     /// with an external monitor (used by the Server for wormhole auto-burn).
+    #[must_use] 
     pub fn with_tracking(
         state: StateConfig,
         policy: HostKeyPolicy,
@@ -442,11 +460,13 @@ impl UnifiedAuthenticator {
     }
 
     /// Returns the success flag, which is set to true when a NEW device is successfully added to the vault.
+    #[must_use] 
     pub fn was_successful(&self) -> bool {
         self.success_flag.load(Ordering::Relaxed)
     }
 
     /// Returns the number of failed password attempts.
+    #[must_use] 
     pub fn failed_attempts(&self) -> u32 {
         self.failed_attempts.load(Ordering::Relaxed)
     }
@@ -478,24 +498,32 @@ impl UnifiedAuthenticator {
         Ok(())
     }
 
-    /// Returns `Ok(Some(is_wormhole))` if the password matches.
+    /// Returns `Some(is_wormhole)` if the password matches.
     /// `is_wormhole` is true if the temp (pairing) password was used, false if the node password was used.
-    fn check_password_match(&self, password: &str) -> Result<Option<bool>> {
+    fn check_password_match(&self, password: &str) -> Option<bool> {
         let argon2 = Argon2::default();
 
         // 1. Check Node Password (Permanent)
         // Refresh from disk to catch 'irosh passwd set' without restart
-        let node_hash = crate::storage::load_shadow_file(&self.state).unwrap_or_default();
-        if let Some(hash) = node_hash {
-            if let Ok(parsed_hash) = PasswordHash::new(&hash) {
-                if argon2
-                    .verify_password(password.as_bytes(), &parsed_hash)
-                    .is_ok()
-                {
-                    return Ok(Some(false));
+        // NOTE: if the file doesn't exist, that's OK (no password configured).
+        // Only fail-closed if the file exists but cannot be read.
+        match crate::storage::load_shadow_file(&self.state) {
+            Ok(Some(hash)) => {
+                if let Ok(parsed_hash) = PasswordHash::new(&hash) {
+                    if argon2
+                        .verify_password(password.as_bytes(), &parsed_hash)
+                        .is_ok()
+                    {
+                        return Some(false);
+                    }
+                } else {
+                    warn!("Invalid shadow file hash format.");
                 }
-            } else {
-                warn!("Invalid shadow file hash format.");
+            }
+            Ok(None) => {} // no password configured, continue
+            Err(_) => {
+                warn!("Failed to read shadow file; failing closed");
+                return None;
             }
         }
 
@@ -506,14 +534,14 @@ impl UnifiedAuthenticator {
                     .verify_password(password.as_bytes(), &parsed_hash)
                     .is_ok()
                 {
-                    return Ok(Some(true));
+                    return Some(true);
                 }
             } else {
                 warn!("Invalid temp password hash format.");
             }
         }
 
-        Ok(None)
+        None
     }
 
     fn notify_success(&self) {
@@ -529,9 +557,10 @@ impl UnifiedAuthenticator {
 impl Authenticator for UnifiedAuthenticator {
     fn supported_methods(&self) -> Vec<AuthMethod> {
         let mut methods = vec![AuthMethod::PublicKey];
-        let node_pw_exists = crate::storage::load_shadow_file(&self.state)
-            .unwrap_or_default()
-            .is_some();
+        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) { hash.is_some() } else {
+            warn!("Failed to read shadow file, assuming password exists (fail-closed)");
+            true
+        };
         if node_pw_exists || self.temp_password_hash.is_some() {
             methods.push(AuthMethod::Password);
         }
@@ -571,9 +600,10 @@ impl Authenticator for UnifiedAuthenticator {
         }
 
         // 3. If any password exists, we MUST reject the public key and force a password challenge.
-        let node_pw_exists = crate::storage::load_shadow_file(&self.state)
-            .unwrap_or_default()
-            .is_some();
+        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) { hash.is_some() } else {
+            warn!("Failed to read shadow file, assuming password exists (fail-closed)");
+            true
+        };
         if node_pw_exists || self.temp_password_hash.is_some() {
             if let Ok(mut cache) = self.cached_key.lock() {
                 *cache = Some(key.clone());
@@ -604,7 +634,7 @@ impl Authenticator for UnifiedAuthenticator {
             return Ok(false);
         }
 
-        if let Some(is_wormhole) = self.check_password_match(password)? {
+        if let Some(is_wormhole) = self.check_password_match(password) {
             // Password accepted!
             if is_wormhole {
                 // Wormhole code used: we must authorize the key that was cached during the publickey step.
@@ -909,5 +939,20 @@ mod tests {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod send_sync_tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn authenticators_are_send_sync() {
+        assert_send_sync::<KeyOnlyAuth>();
+        assert_send_sync::<PasswordAuth>();
+        assert_send_sync::<CombinedAuth>();
+        assert_send_sync::<UnifiedAuthenticator>();
     }
 }

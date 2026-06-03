@@ -1,3 +1,4 @@
+//! Transfer path sanitization.
 use crate::error::{Result, TransportError};
 use std::path::{Component, Path, PathBuf};
 
@@ -5,6 +6,12 @@ use std::path::{Component, Path, PathBuf};
 ///
 /// This ensures the path is relative and does not contain components that would
 /// escape the base directory (like `..` or absolute roots).
+///
+/// # Errors
+///
+/// Returns an error if the path is absolute, contains null bytes, attempts
+/// path traversal via `..`, or resolves to an empty path.
+#[must_use]
 pub fn sanitize_remote_path(raw: &str) -> Result<PathBuf> {
     if raw.contains('\0') {
         return Err(crate::error::IroshError::Transport(
@@ -20,7 +27,7 @@ pub fn sanitize_remote_path(raw: &str) -> Result<PathBuf> {
     if raw_path.is_absolute() {
         return Err(crate::error::IroshError::Transport(
             TransportError::Transfer(crate::transport::transfer::TransferError::InvalidPath(
-                format!("absolute path not allowed: {}", raw),
+                format!("absolute path not allowed: {raw}"),
             )),
         ));
     }
@@ -37,8 +44,7 @@ pub fn sanitize_remote_path(raw: &str) -> Result<PathBuf> {
                     return Err(crate::error::IroshError::Transport(
                         TransportError::Transfer(
                             crate::transport::transfer::TransferError::InvalidPath(format!(
-                                "path traversal attempt detected: {}",
-                                raw
+                                "path traversal attempt detected: {raw}"
                             )),
                         ),
                     ));
@@ -48,8 +54,7 @@ pub fn sanitize_remote_path(raw: &str) -> Result<PathBuf> {
                 return Err(crate::error::IroshError::Transport(
                     TransportError::Transfer(
                         crate::transport::transfer::TransferError::InvalidPath(format!(
-                            "root or prefix components not allowed: {}",
-                            raw
+                            "root or prefix components not allowed: {raw}"
                         )),
                     ),
                 ));

@@ -1,4 +1,9 @@
+//! Peer metadata types.
+use tracing::warn;
 use serde::{Deserialize, Serialize};
+
+/// Maximum length for any single metadata field.
+const MAX_FIELD_LEN: usize = 255;
 
 /// Connection metadata optionally exchanged on a separate control stream.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -12,11 +17,38 @@ pub struct PeerMetadata {
 }
 
 impl PeerMetadata {
+    /// Creates new peer metadata, sanitizing all fields.
+    #[must_use]
+    pub fn new(hostname: String, user: String, os: String) -> Self {
+        Self {
+            hostname: Self::sanitize_field(hostname),
+            user: Self::sanitize_field(user),
+            os: Self::sanitize_field(os),
+        }
+    }
+
+    /// Strips control characters (except space and tab) and truncates.
+    fn sanitize_field(mut s: String) -> String {
+        s.retain(|c| c >= ' ' || c == '\t');
+        s.truncate(MAX_FIELD_LEN);
+        s
+    }
+
+    /// Replaces `user` and `os` fields with sanitized values from a remote peer.
+    /// Preserves the local hostname.
+    #[must_use]
+    pub fn with_remote_user_os(mut self, user: String, os: String) -> Self {
+        self.user = Self::sanitize_field(user);
+        self.os = Self::sanitize_field(os);
+        self
+    }
+
     /// Generates a friendly default alias like "kristency-linux".
+    #[must_use]
     pub fn default_alias(&self) -> String {
         let clean_user = self.user.replace(' ', "-").to_lowercase();
         let clean_os = self.os.replace(' ', "-").to_lowercase();
-        format!("{}-{}", clean_user, clean_os)
+        format!("{clean_user}-{clean_os}")
     }
 
     /// Collects the current system's metadata to send to a connecting peer.
@@ -28,17 +60,23 @@ impl PeerMetadata {
     ///
     /// This is an async function that uses `spawn_blocking` because host/user
     /// resolution may involve spawning subprocesses or performing blocking syscalls.
+    #[must_use]
     pub async fn current() -> Self {
-        tokio::task::spawn_blocking(move || Self {
-            hostname: Self::resolve_hostname(),
-            user: Self::resolve_username(),
-            os: std::env::consts::OS.to_string(),
+        tokio::task::spawn_blocking(move || {
+            PeerMetadata::new(
+                Self::resolve_hostname(),
+                Self::resolve_username(),
+                std::env::consts::OS.to_string(),
+            )
         })
         .await
-        .unwrap_or_else(|_| Self {
-            hostname: "unknown-host".to_string(),
-            user: "unknown-user".to_string(),
-            os: std::env::consts::OS.to_string(),
+        .unwrap_or_else(|e| {
+            warn!("failed to resolve local metadata: {e}");
+            PeerMetadata::new(
+                "unknown-host".to_string(),
+                "unknown-user".to_string(),
+                std::env::consts::OS.to_string(),
+            )
         })
     }
 
@@ -88,7 +126,7 @@ fn hostname_syscall() -> Option<String> {
         let mut buf = vec![0u8; 256];
         // SAFETY: `buf` is correctly sized and we use a valid pointer.
         // `gethostname` is a standard Unix syscall.
-        let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+        let rc = unsafe { libc::gethostname(buf.as_mut_ptr().cast::<libc::c_char>(), buf.len()) };
         if rc == 0 {
             let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
             if let Ok(s) = String::from_utf8(buf[..nul].to_vec()) {
@@ -118,8 +156,12 @@ fn username_syscall() -> Option<String> {
         // SAFETY: `getuid` and `getpwuid` are standard Unix syscalls.
         // We check if `pw` is null before dereferencing it via `CStr`.
         let uid = unsafe { libc::getuid() };
+        // SAFETY: `uid` is our own UID, and `getpwuid` returns a valid
+        // pointer (null-checked below) or null for unknown UIDs.
         let pw = unsafe { libc::getpwuid(uid) };
         if !pw.is_null() {
+            // SAFETY: `pw` was checked for null above, and `pw_name` is a
+            // NUL-terminated C string guaranteed by POSIX for a valid passwd entry.
             let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
             if let Ok(s) = name.to_str() {
                 let s = s.to_string();
@@ -149,6 +191,7 @@ fn username_syscall() -> Option<String> {
 
 /// Error type for metadata framing and I/O.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum MetadataError {
     /// A standard library I/O error during metadata exchange.
     #[error("metadata I/O error: {0}")]

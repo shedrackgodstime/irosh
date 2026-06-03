@@ -6,11 +6,18 @@ use crate::storage::utils::atomic_write_secure;
 use std::path::PathBuf;
 
 /// Returns the path to the server's shadow file.
+#[must_use] 
 pub fn shadow_file_path(state: &StateConfig) -> PathBuf {
     state.root().join("shadow")
 }
 
 /// Saves a hashed password to the server's shadow file atomically and securely.
+///
+/// # Errors
+///
+/// Returns an error if the shadow file cannot be written atomically,
+/// typically due to file system permissions or disk space.
+#[must_use]
 pub fn write_shadow_file(state: &StateConfig, password_hash: &str) -> Result<()> {
     let path = shadow_file_path(state);
     atomic_write_secure(&path, password_hash.as_bytes())
@@ -19,6 +26,11 @@ pub fn write_shadow_file(state: &StateConfig, password_hash: &str) -> Result<()>
 /// Loads the hashed password from the server's shadow file.
 ///
 /// Returns `Ok(None)` if the shadow file does not exist.
+///
+/// # Errors
+///
+/// Returns an error if the shadow file exists but cannot be read.
+#[must_use]
 pub fn load_shadow_file(state: &StateConfig) -> Result<Option<String>> {
     let path = shadow_file_path(state);
     if !path.exists() {
@@ -34,6 +46,12 @@ pub fn load_shadow_file(state: &StateConfig) -> Result<Option<String>> {
 }
 
 /// Removes the shadow file, effectively disabling password authentication.
+///
+/// # Errors
+///
+/// Returns an error if the shadow file exists but cannot be deleted
+/// due to file system permissions or other I/O errors.
+#[must_use]
 pub fn delete_shadow_file(state: &StateConfig) -> Result<bool> {
     let path = shadow_file_path(state);
     if !path.exists() {

@@ -22,6 +22,54 @@ pub struct PeerProfile {
     pub ticket: Ticket,
 }
 
+/// Maximum length for a peer profile name.
+const MAX_NAME_LEN: usize = 128;
+
+/// Windows reserved filenames that cannot be used as file names.
+const RESERVED_NAMES: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// Validates a peer profile name for safe on-disk storage.
+///
+/// Returns an error if the name is empty, too long, contains special characters,
+/// matches a reserved name, or would enable path traversal.
+fn validate_peer_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(StorageError::PeerNameInvalid {
+            name: name.to_string(),
+        }
+        .into());
+    }
+    if name.len() > MAX_NAME_LEN {
+        return Err(StorageError::PeerNameInvalid {
+            name: name.to_string(),
+        }
+        .into());
+    }
+    if name.contains('\0') {
+        return Err(StorageError::PeerNameInvalid {
+            name: name.to_string(),
+        }
+        .into());
+    }
+    if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return Err(StorageError::PeerNameInvalid {
+            name: name.to_string(),
+        }
+        .into());
+    }
+    let lower = name.to_lowercase();
+    if RESERVED_NAMES.contains(&lower.as_str()) {
+        return Err(StorageError::PeerNameInvalid {
+            name: name.to_string(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 /// Ensures the peers storage subdirectory exists.
 fn ensure_peers_dir(state: &StateConfig) -> Result<PathBuf> {
     let path = state.root().join("peers");
@@ -36,7 +84,7 @@ fn ensure_peers_dir(state: &StateConfig) -> Result<PathBuf> {
 
 /// Generates the deterministic path for a given peer name.
 fn peer_path(state: &StateConfig, name: &str) -> PathBuf {
-    state.root().join("peers").join(format!("{}.json", name))
+    state.root().join("peers").join(format!("{name}.json"))
 }
 
 /// Saves a peer profile to disk.
@@ -46,17 +94,10 @@ fn peer_path(state: &StateConfig, name: &str) -> PathBuf {
 /// Returns an error if the peers directory cannot be created, if the peer name
 /// is invalid for on-disk storage, or if the profile cannot be serialized or
 /// written.
+#[must_use]
 pub fn save_peer(state: &StateConfig, profile: &PeerProfile) -> Result<()> {
     ensure_peers_dir(state)?;
-
-    // Validate the name doesn't contain path traversal vulnerabilities.
-    if profile.name.contains('/') || profile.name.contains('\\') || profile.name == ".." {
-        return Err(StorageError::PeerNameInvalid {
-            name: profile.name.clone(),
-        }
-        .into());
-    }
-
+    validate_peer_name(&profile.name)?;
     let path = peer_path(state, &profile.name);
     let json = serde_json::to_vec_pretty(profile)
         .map_err(|source| StorageError::PeerProfileSerialize { source })?;
@@ -73,6 +114,7 @@ pub fn save_peer(state: &StateConfig, profile: &PeerProfile) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the saved profile exists but cannot be read or parsed.
+#[must_use]
 pub fn load_peer(state: &StateConfig, name: &str) -> Result<Option<PeerProfile>> {
     let path = peer_path(state, name);
     if !path.exists() {
@@ -98,6 +140,7 @@ pub fn load_peer(state: &StateConfig, name: &str) -> Result<Option<PeerProfile>>
 /// # Errors
 ///
 /// Returns an error if the peers directory cannot be read.
+#[must_use]
 pub fn list_peers(state: &StateConfig) -> Result<Vec<PeerProfile>> {
     let dir = ensure_peers_dir(state)?;
     let mut profiles = Vec::new();
@@ -137,6 +180,7 @@ pub fn list_peers(state: &StateConfig) -> Result<Vec<PeerProfile>> {
 /// # Errors
 ///
 /// Returns an error if removing an existing profile fails.
+#[must_use]
 pub fn delete_peer(state: &StateConfig, name: &str) -> Result<bool> {
     let path = peer_path(state, name);
     match fs::remove_file(&path) {
@@ -155,10 +199,10 @@ pub fn delete_peer(state: &StateConfig, name: &str) -> Result<bool> {
 ///
 /// Returns an error if `new_name` is invalid, if the read/write fails, or if
 /// the old file cannot be deleted.
+#[must_use]
 pub fn rename_peer(state: &StateConfig, old_name: &str, new_name: &str) -> Result<bool> {
-    let profile = match load_peer(state, old_name)? {
-        Some(p) => p,
-        None => return Ok(false),
+    let Some(profile) = load_peer(state, old_name)? else {
+        return Ok(false);
     };
 
     save_peer(

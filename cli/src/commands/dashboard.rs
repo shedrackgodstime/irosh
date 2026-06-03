@@ -3,31 +3,29 @@ use crate::ui::Ui;
 use anyhow::Result;
 use irosh::{IpcClient, IpcCommand, IpcResponse, storage};
 
+#[must_use]
 pub async fn exec(ctx: &CliContext) -> Result<()> {
     let state = ctx.server_state()?;
     let state_root = ctx.server_state_root()?;
 
-    let ipc_client = IpcClient::new(state_root);
+    let ipc_client = IpcClient::new(&state_root);
     let daemon_status = ipc_client.send(IpcCommand::GetStatus).await;
 
     Ui::header(&format!("Irosh v{}", env!("CARGO_PKG_VERSION")));
 
     // 1. Daemon & Connectivity
-    match daemon_status {
-        Ok(IpcResponse::Status(info)) => {
-            Ui::success("Server Daemon: RUNNING");
-            Ui::status("Active Sessions", &info.active_sessions.to_string(), None);
-            let wormhole_status = if info.wormhole_active {
-                "ACTIVE"
-            } else {
-                "INACTIVE"
-            };
-            Ui::status("Wormhole", wormhole_status, None);
-        }
-        _ => {
-            Ui::status("Server Daemon", "STOPPED", None);
-            Ui::info("run 'irosh system start' to enable P2P hosting");
-        }
+    if let Ok(IpcResponse::Status(info)) = daemon_status {
+        Ui::success("Server Daemon: RUNNING");
+        Ui::status("Active Sessions", &info.active_sessions.to_string(), None);
+        let wormhole_status = if info.wormhole_active {
+            "ACTIVE"
+        } else {
+            "INACTIVE"
+        };
+        Ui::status("Wormhole", wormhole_status, None);
+    } else {
+        Ui::status("Server Daemon", "STOPPED", None);
+        Ui::info("run 'irosh system start' to enable P2P hosting");
     }
 
     // 2. Identity

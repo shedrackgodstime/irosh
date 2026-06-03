@@ -1,3 +1,4 @@
+//! Blob-based file transfer.
 use iroh_blobs::{BlobFormat, Hash};
 use std::str::FromStr;
 use tracing::{debug, info};
@@ -6,8 +7,11 @@ use crate::error::{Result, ServerError};
 use crate::server::transfer::state::{ConnectionShellState, ShellContext};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
-    BlobGetRequest, BlobPutRequest, TransferComplete, write_put_complete,
+    BlobGetReady, BlobGetRequest, BlobPutRequest, TransferComplete, write_blob_get_ready,
+    write_put_complete,
 };
+use futures_util::StreamExt;
+use tokio::io::AsyncReadExt;
 
 pub async fn handle_blob_put_request(
     stream: &mut IrohDuplex,
@@ -24,7 +28,7 @@ pub async fn handle_blob_put_request(
     let hash = Hash::from_str(&request.hash).map_err(|e| ServerError::TransferFailed {
         failure: crate::transport::transfer::TransferFailure::new(
             crate::transport::transfer::TransferFailureCode::PathInvalid,
-            format!("invalid hash: {}", e),
+            format!("invalid hash: {e}"),
         ),
     })?;
 
@@ -38,7 +42,7 @@ pub async fn handle_blob_put_request(
     debug!("Resolved target path: {}", target_path.display());
 
     // 1. Fetch the blob(s) from the client.
-    let stats = shell_state
+    let fetch_stats = shell_state
         .blobs
         .remote()
         .fetch(
@@ -49,13 +53,13 @@ pub async fn handle_blob_put_request(
         .map_err(|e| ServerError::TransferFailed {
             failure: crate::transport::transfer::TransferFailure::new(
                 crate::transport::transfer::TransferFailureCode::Internal,
-                format!("blob fetch failed: {}", e),
+                format!("blob fetch failed: {e}"),
             ),
         })?;
 
     info!(
         "Blob download complete: {} bytes in {:?}",
-        stats.payload_bytes_read, stats.elapsed
+        fetch_stats.payload_bytes_read, fetch_stats.elapsed
     );
 
     // 2. Export the blob(s) to the target file system path.
@@ -90,7 +94,7 @@ pub async fn handle_blob_put_request(
             .map_err(|e| ServerError::TransferFailed {
                 failure: crate::transport::transfer::TransferFailure::new(
                     crate::transport::transfer::TransferFailureCode::Internal,
-                    format!("failed to get blob status: {}", e),
+                    format!("failed to get blob status: {e}"),
                 ),
             })?;
 
@@ -106,7 +110,7 @@ pub async fn handle_blob_put_request(
             ServerError::TransferFailed {
                 failure: crate::transport::transfer::TransferFailure::new(
                     crate::transport::transfer::TransferFailureCode::Internal,
-                    format!("failed to send completion: {}", e),
+                    format!("failed to send completion: {e}"),
                 ),
             }
             .into()
@@ -145,7 +149,6 @@ pub async fn handle_blob_get_request(
     }
 
     // 1. Add file or directory to server's local blobs store so it can be served
-    use futures_util::StreamExt;
     let is_dir = context.is_dir(&request.path).await.unwrap_or(false);
     let format = if is_dir {
         BlobFormat::HashSeq
@@ -181,7 +184,7 @@ pub async fn handle_blob_get_request(
                 return Err(ServerError::TransferFailed {
                     failure: crate::transport::transfer::TransferFailure::new(
                         crate::transport::transfer::TransferFailureCode::Internal,
-                        format!("failed to add file to server blobs: {}", e),
+                        format!("failed to add file to server blobs: {e}"),
                     ),
                 }
                 .into());
@@ -198,7 +201,6 @@ pub async fn handle_blob_get_request(
     })?;
 
     // 2. Respond with the hash, format, and size
-    use crate::transport::transfer::{BlobGetReady, write_blob_get_ready};
     write_blob_get_ready(
         stream,
         &BlobGetReady {
@@ -224,16 +226,15 @@ async fn export_collection(
     tokio::fs::create_dir_all(target_path).await?;
 
     // Load collection
-    use tokio::io::AsyncReadExt;
     let mut reader = shell_state.blobs.blobs().reader(hash);
-    let mut bytes = Vec::new();
+    let mut bytes = Vec::with_capacity(65536);
     reader
         .read_to_end(&mut bytes)
         .await
         .map_err(|e| ServerError::TransferFailed {
             failure: crate::transport::transfer::TransferFailure::new(
                 crate::transport::transfer::TransferFailureCode::Internal,
-                format!("failed to read collection blob {}: {}", hash, e),
+                format!("failed to read collection blob {hash}: {e}"),
             ),
         })?;
 
@@ -243,7 +244,7 @@ async fn export_collection(
         .map_err(|e| ServerError::TransferFailed {
             failure: crate::transport::transfer::TransferFailure::new(
                 crate::transport::transfer::TransferFailureCode::Internal,
-                format!("failed to load collection {}: {}", hash, e),
+                format!("failed to load collection {hash}: {e}"),
             ),
         })?;
 
@@ -262,7 +263,7 @@ async fn export_collection(
             return Err(ServerError::TransferFailed {
                 failure: crate::transport::transfer::TransferFailure::new(
                     crate::transport::transfer::TransferFailureCode::Internal,
-                    format!("failed to export collection item {}: {}", name, e),
+                    format!("failed to export collection item {name}: {e}"),
                 ),
             }
             .into());

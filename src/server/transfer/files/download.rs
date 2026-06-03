@@ -1,16 +1,18 @@
+//! Server file download.
 use crate::error::{Result, ServerError, TransportError};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
     MAX_CHUNK_BYTES, TransferComplete, TransferFailure, TransferFailureCode, TransferReady,
     write_get_chunk, write_get_complete, write_get_ready, write_transfer_error,
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::server::transfer::ShellContext;
 use crate::server::transfer::helpers::{
     DownloadSource, probe_download_size, spawn_download_helper,
 };
 
+#[tracing::instrument(skip(stream, context, shell_state))]
 pub(crate) async fn handle_get_request(
     stream: &mut IrohDuplex,
     request: crate::transport::transfer::GetRequest,
@@ -133,6 +135,7 @@ async fn handle_recursive_get_request(
 
     let mut total_sent = 0u64;
 
+    // Reason: `use_native_walk` is only mutated on Linux.
     #[allow(unused_mut)]
     let mut use_native_walk = true;
     #[cfg(target_os = "linux")]
@@ -228,7 +231,6 @@ async fn handle_recursive_get_request(
                     ),
                 })?;
 
-            use tokio::io::{AsyncBufReadExt, BufReader};
             let mut reader = BufReader::new(stdout);
 
             loop {

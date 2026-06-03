@@ -47,6 +47,7 @@ impl fmt::Debug for EndpointIdentity {
 
 impl EndpointIdentity {
     /// Returns the public Endpoint ID for this identity.
+    #[must_use] 
     pub fn endpoint_id(&self) -> String {
         self.secret_key.public().to_string()
     }
@@ -63,6 +64,7 @@ const SECRET_KEY_FILE: &str = "keys/endpoint.secret";
 ///
 /// Returns an error if the key directory cannot be created, if the persisted
 /// secret cannot be read or parsed, or if a generated secret cannot be written.
+#[must_use]
 pub async fn load_or_generate_identity(state: &StateConfig) -> Result<EndpointIdentity> {
     let state = state.clone();
     task::spawn_blocking(move || load_or_generate_identity_blocking(&state))
@@ -80,6 +82,7 @@ pub async fn load_or_generate_identity(state: &StateConfig) -> Result<EndpointId
 /// # Errors
 ///
 /// Returns an error if the secret file does not exist or is invalid.
+#[must_use]
 pub fn load_secret_key(state: &StateConfig) -> Result<SecretKey> {
     let path = state.root().join(SECRET_KEY_FILE);
     if !path.exists() {
@@ -122,8 +125,11 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<EndpointIde
         let hex = secret_key
             .to_bytes()
             .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>();
+            .fold(String::with_capacity(64), |mut acc, b| {
+                use std::fmt::Write;
+                let _ = write!(acc, "{b:02x}");
+                acc
+            });
         crate::storage::utils::atomic_write_secure(&path, hex.as_bytes())?;
         secret_key
     };
@@ -142,6 +148,12 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<EndpointIde
 ///
 /// This is used to "rotate" the endpoint identity. Returns `true` if a file was deleted,
 /// `false` if it didn't exist.
+///
+/// # Errors
+///
+/// Returns an error if the secret key file exists but cannot be removed
+/// due to a file system error (permissions, read-only, etc.).
+#[must_use]
 pub fn delete_secret_key(state: &StateConfig) -> Result<bool> {
     let path = state.root().join(SECRET_KEY_FILE);
     if path.exists() {
@@ -156,14 +168,23 @@ pub fn delete_secret_key(state: &StateConfig) -> Result<bool> {
 }
 
 /// Saves the local Iroh secret key to storage.
+///
+/// # Errors
+///
+/// Returns an error if the key directory cannot be created or if the
+/// secret key file cannot be written atomically.
+#[must_use]
 pub fn save_secret_key(state: &StateConfig, key: &SecretKey) -> Result<()> {
     ensure_key_dir(state)?;
     let path = state.root().join(SECRET_KEY_FILE);
     let hex = key
         .to_bytes()
         .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>();
+        .fold(String::with_capacity(64), |mut acc, b| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{b:02x}");
+            acc
+        });
     crate::storage::utils::atomic_write_secure(&path, hex.as_bytes())
 }
 

@@ -1,3 +1,4 @@
+//! Client file upload implementation.
 use tokio::io::AsyncReadExt;
 
 use crate::client::{Session, TransferProgress};
@@ -13,6 +14,10 @@ impl Session {
     /// Uploads one local file or directory to the remote peer.
     ///
     /// If `local` is a directory, it will be uploaded recursively.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn upload(
         &mut self,
         local: impl AsRef<std::path::Path>,
@@ -67,6 +72,10 @@ impl Session {
     }
 
     /// Uploads a file using content-addressed blobs with progress reporting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn upload_blob<F>(
         &self,
         local: impl AsRef<std::path::Path>,
@@ -81,8 +90,7 @@ impl Session {
         // 1. Detect if it's a directory to choose correct format
         let is_dir = tokio::fs::metadata(local)
             .await
-            .map(|m| m.is_dir())
-            .unwrap_or(false);
+            .is_ok_and(|m| m.is_dir());
         let target_format = if is_dir {
             BlobFormat::HashSeq
         } else {
@@ -119,7 +127,7 @@ impl Session {
                 }
                 iroh_blobs::api::blobs::AddProgressItem::Error(e) => {
                     return Err(ClientError::UploadFailed {
-                        details: format!("failed to add file to blobs store: {}", e),
+                        details: format!("failed to add file to blobs store: {e}"),
                     }
                     .into());
                 }
@@ -164,6 +172,10 @@ impl Session {
     }
 
     /// Uploads one local file to the remote peer on a separate authenticated stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn upload_file(
         &mut self,
         local: impl AsRef<std::path::Path>,
@@ -173,6 +185,10 @@ impl Session {
     }
 
     /// Uploads one local file and reports progress synchronously through the callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn upload_file_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,
@@ -308,6 +324,10 @@ impl Session {
     }
 
     /// Uploads a directory recursively to the remote peer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer fails or is rejected by the remote peer.
     pub async fn upload_dir_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,

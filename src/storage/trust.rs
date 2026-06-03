@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// The specific occurrence in the trust layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TrustEventKind {
     /// A new server host key was permanently saved.
     ServerKeyLearned,
@@ -68,7 +69,7 @@ fn server_key_path(state: &StateConfig, node_id: &str) -> PathBuf {
         .root()
         .join("trust")
         .join("servers")
-        .join(format!("{}.pub", safe_id))
+        .join(format!("{safe_id}.pub"))
 }
 
 fn client_key_path(state: &StateConfig, node_id: &str) -> PathBuf {
@@ -77,7 +78,7 @@ fn client_key_path(state: &StateConfig, node_id: &str) -> PathBuf {
         .root()
         .join("trust")
         .join("clients")
-        .join(format!("{}.pub", safe_id))
+        .join(format!("{safe_id}.pub"))
 }
 
 fn write_public_key(path: &Path, key: &PublicKey) -> Result<()> {
@@ -95,6 +96,7 @@ fn write_public_key(path: &Path, key: &PublicKey) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if a trust file exists but cannot be read or parsed.
+#[must_use]
 pub fn load_known_server(state: &StateConfig, node_id: &str) -> Result<Option<PublicKey>> {
     let path = server_key_path(state, node_id);
     if path.exists() {
@@ -134,6 +136,7 @@ pub fn load_known_server(state: &StateConfig, node_id: &str) -> Result<Option<Pu
 /// # Errors
 ///
 /// Returns an error if a trust file exists but cannot be read or parsed.
+#[must_use]
 pub fn load_authorized_client(state: &StateConfig, node_id: &str) -> Result<Option<PublicKey>> {
     let path = client_key_path(state, node_id);
     if path.exists() {
@@ -173,6 +176,7 @@ pub fn load_authorized_client(state: &StateConfig, node_id: &str) -> Result<Opti
 ///
 /// Returns an error if the trust directory itself cannot be read.
 /// Loads all previously authorized client public keys along with their Node IDs.
+#[must_use]
 pub fn load_all_authorized_clients(state: &StateConfig) -> Result<Vec<(String, PublicKey)>> {
     let mut keys = Vec::new();
 
@@ -217,6 +221,7 @@ pub fn load_all_authorized_clients(state: &StateConfig) -> Result<Vec<(String, P
 ///
 /// Returns an error if the trust directories cannot be created or if the key
 /// cannot be written in OpenSSH format.
+#[must_use]
 pub fn write_known_server(
     state: &StateConfig,
     node_id: &str,
@@ -237,6 +242,7 @@ pub fn write_known_server(
 ///
 /// Returns an error if the trust directories cannot be created or if the key
 /// cannot be written in OpenSSH format.
+#[must_use]
 pub fn write_authorized_client(
     state: &StateConfig,
     node_id: &str,
@@ -258,6 +264,7 @@ pub fn write_authorized_client(
 /// # Errors
 ///
 /// Returns an error if removing an existing record fails.
+#[must_use]
 pub fn reset_known_server(state: &StateConfig, node_id: &str) -> Result<bool> {
     remove_if_exists(&server_key_path(state, node_id))
 }
@@ -269,6 +276,7 @@ pub fn reset_known_server(state: &StateConfig, node_id: &str) -> Result<bool> {
 /// # Errors
 ///
 /// Returns an error if removing an existing record fails.
+#[must_use]
 pub fn reset_authorized_client(state: &StateConfig, node_id: &str) -> Result<bool> {
     remove_if_exists(&client_key_path(state, node_id))
 }
@@ -293,6 +301,7 @@ fn remove_if_exists(path: &Path) -> Result<bool> {
 /// # Errors
 ///
 /// Returns an error if trust directories or trust files cannot be inspected.
+#[must_use]
 pub fn inspect_trust(state: &StateConfig) -> Result<TrustSummary> {
     let servers_dir = state.root().join("trust").join("servers");
     let clients_dir = state.root().join("trust").join("clients");

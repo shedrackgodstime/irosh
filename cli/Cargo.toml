@@ -1,6 +1,6 @@
 [package]
 name = "irosh-cli"
-version = "0.5.1"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Shedrack Godstime <shedrackgodstime@gmail.com>"]

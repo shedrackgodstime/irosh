@@ -1,3 +1,4 @@
+//! Transfer control message handling.
 use crate::error::{Result, TransportError};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
@@ -53,7 +54,7 @@ pub(super) async fn handle_completion_request(
 
     // Determine the search directory and the prefix
     let (search_dir, prefix) = if request.path.ends_with('/') || (request.path.is_empty()) {
-        (resolved.clone(), "".to_string())
+        (resolved.clone(), String::new())
     } else {
         let parent = resolved.parent().unwrap_or(&resolved);
         let name = resolved
@@ -90,7 +91,7 @@ pub(super) async fn handle_completion_request(
             // %y is type (f, d, etc.)
             let find_script = format!(
                 "find . -maxdepth 1 -name '{}*' -printf '%P:%y\\n'",
-                prefix.replace("'", "'\\''")
+                prefix.replace('\'', "'\\''")
             );
             cmd.arg("-c")
                 .arg(find_script)

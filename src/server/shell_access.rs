@@ -1,3 +1,4 @@
+//! Shell process access and namespace handling.
 use std::path::PathBuf;
 
 use tokio::process::Command;
@@ -5,6 +6,10 @@ use tokio::task;
 
 use crate::error::{IroshError, Result, ServerError};
 
+/// # Errors
+///
+/// Returns [`IroshError::Server`] wrapping [`ServerError::BlockingTaskFailed`] if the
+/// blocking task panics.
 pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Result<PathBuf> {
     task::spawn_blocking(move || {
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -24,6 +29,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
             };
 
             #[repr(C)]
+            // Reason: Windows FFI struct field names match the Win32 API naming convention.
             #[allow(non_snake_case)]
             struct PROCESS_BASIC_INFORMATION {
                 ExitStatus: NTSTATUS,
@@ -146,7 +152,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
     })?
 }
 
-pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {
+pub(crate) fn configure_live_shell_context(command: &mut Command, pid: u32) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: `pre_exec` is unsafe because it runs in the child process after `fork` but
@@ -154,13 +160,13 @@ pub(crate) fn configure_live_shell_context(_command: &mut Command, _pid: u32) {
         // `libc::open`, and `libc::close` (used by `File`) are generally considered safe
         // in this context on Linux.
         // We pre-format the paths to avoid allocation inside the `pre_exec` closure.
-        let mnt_ns = format!("/proc/{_pid}/ns/mnt");
-        let user_ns = format!("/proc/{_pid}/ns/user");
+        let mnt_ns = format!("/proc/{pid}/ns/mnt");
+        let user_ns = format!("/proc/{pid}/ns/user");
 
         // SAFETY: `pre_exec` is used to configure the child process before it starts.
         // We only use async-signal-safe operations (joining namespaces) inside the closure.
         unsafe {
-            _command.pre_exec(move || {
+            command.pre_exec(move || {
                 join_linux_namespace(&mnt_ns, "/proc/self/ns/mnt", libc::CLONE_NEWNS)?;
                 join_linux_namespace(&user_ns, "/proc/self/ns/user", libc::CLONE_NEWUSER)?;
                 Ok(())

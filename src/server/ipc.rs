@@ -11,6 +11,7 @@ use tracing::{debug, info, warn};
 
 /// Commands that can be sent to the irosh daemon via IPC.
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IpcCommand {
     /// Enable a wormhole pairing session.
     EnableWormhole {
@@ -30,6 +31,7 @@ pub enum IpcCommand {
 }
 
 /// Internal version of IpcCommand that includes a response channel.
+#[non_exhaustive]
 pub enum InternalCommand {
     /// Enable the wormhole pairing mechanism with the given code and optional password.
     EnableWormhole {
@@ -91,6 +93,7 @@ pub struct DaemonStatus {
 
 /// Responses sent by the irosh daemon back to the IPC client.
 #[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IpcResponse {
     /// Command was accepted and executed successfully.
     Ok,
@@ -102,6 +105,7 @@ pub enum IpcResponse {
 
 /// Errors specific to the IPC subsystem.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum IpcError {
     /// Failed to bind the IPC socket.
     #[error("failed to bind ipc socket at {path}")]
@@ -130,6 +134,7 @@ pub struct IpcServer {
 
 impl IpcServer {
     /// Creates a new IPC server using the provided state directory for the socket path.
+    #[must_use] 
     pub fn new(state_dir: PathBuf, control_tx: tokio::sync::mpsc::Sender<InternalCommand>) -> Self {
         Self {
             state_dir,
@@ -150,6 +155,10 @@ impl IpcServer {
     }
 
     /// Starts the IPC listener loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the IPC socket cannot be bound or if a critical I/O error occurs.
     pub async fn run(
         self,
         mut shutdown_rx: tokio::sync::mpsc::Receiver<()>,
@@ -160,7 +169,7 @@ impl IpcServer {
         {
             // Remove existing socket file if it exists.
             if path.exists() {
-                let _ = std::fs::remove_file(&path);
+                let _ = tokio::fs::remove_file(&path).await;
             }
 
             let listener =
@@ -195,7 +204,7 @@ impl IpcServer {
                 }
             }
 
-            let _ = std::fs::remove_file(&path);
+            let _ = tokio::fs::remove_file(&path).await;
             Ok(())
         }
 
@@ -212,7 +221,7 @@ impl IpcServer {
                 path: path.clone(),
                 source: e,
             })?;
-            let _ = std::fs::write(&path, local_addr.port().to_string());
+            let _ = tokio::fs::write(&path, local_addr.port().to_string()).await;
 
             info!("IPC listener active on {}", local_addr);
 
@@ -240,7 +249,7 @@ impl IpcServer {
                 }
             }
 
-            let _ = std::fs::remove_file(&path);
+            let _ = tokio::fs::remove_file(&path).await;
             Ok(())
         }
     }
@@ -254,8 +263,8 @@ async fn handle_ipc_connection<S>(
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
-    let mut buf = Vec::new();
     // Use a reasonable limit for IPC messages to prevent DoS.
+    let mut buf = Vec::with_capacity(4096);
     stream.take(1024 * 64).read_to_end(&mut buf).await?;
 
     let command: IpcCommand = serde_json::from_slice(&buf)?;

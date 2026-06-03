@@ -14,7 +14,7 @@ pub async fn exec(
     let state_root = ctx.server_state_root()?;
     let state = ctx.server_state()?;
 
-    let ipc_client = IpcClient::new(state_root.clone());
+    let ipc_client = IpcClient::new(&state_root);
 
     // Check if daemon is running. On slow machines (like Windows services starting up),
     // we retry a few times if the service is known to be active but IPC fails.
@@ -48,7 +48,7 @@ pub async fn exec(
             }
             return handle_status(&ipc_client).await;
         }
-        Some("disable") | Some("stop") => {
+        Some("disable" | "stop") => {
             if !daemon_running {
                 anyhow::bail!("Daemon is not running.");
             }
@@ -179,7 +179,7 @@ async fn handle_disable(client: &IpcClient) -> Result<()> {
                 crate::output::print_error(&e, "disable_failed");
                 return Ok(());
             }
-            Ui::error(&format!("failed to disable wormhole: {}", e), None);
+            Ui::error(&format!("failed to disable wormhole: {e}"), None);
         }
         _ => anyhow::bail!("Unexpected response from daemon"),
     }
@@ -233,7 +233,7 @@ async fn handle_enable_daemon(
                 return Ok(());
             }
             Ui::error(
-                &format!("daemon rejected wormhole request: {}", e),
+                &format!("daemon rejected wormhole request: {e}"),
                 Some("run 'irosh system status' for daemon health details"),
             );
         }

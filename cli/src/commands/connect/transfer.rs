@@ -1,7 +1,7 @@
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use irosh::Session;
-use irosh::error::ClientError;
+use irosh::error::{ClientError, IroshError};
 use irosh::sys::TerminalEvent;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -82,6 +82,7 @@ fn auto_rename_download_target(path: PathBuf) -> PathBuf {
     unreachable!("infinite candidate iterator should always find a free path")
 }
 
+#[must_use]
 pub async fn resolve_remote_source_path(session: &mut Session, raw: &str) -> Result<PathBuf> {
     resolve_remote_path(session, Some(raw), None).await
 }
@@ -144,8 +145,7 @@ async fn resolve_remote_path(
 
     let is_windows = session
         .remote_metadata()
-        .map(|m| m.os.to_lowercase().contains("windows"))
-        .unwrap_or(false);
+        .is_some_and(|m| m.os.to_lowercase().contains("windows"));
 
     // OS-aware path joiner for remote paths
     let remote_join = |base: &Path, parts: &str, is_win: bool| -> PathBuf {
@@ -288,10 +288,10 @@ pub async fn handle_put_command(
                 pb.finish_with_message("Done");
             }
             stdout
-                .write_all(format!("Uploaded {}\r\n", local_name).as_bytes())
+                .write_all(format!("Uploaded {local_name}\r\n").as_bytes())
                 .await?;
             stdout
-                .write_all(format!("BLAKE3:  {}\r\n", hash).as_bytes())
+                .write_all(format!("BLAKE3:  {hash}\r\n").as_bytes())
                 .await?;
         }
         Err(err) => {
@@ -299,7 +299,6 @@ pub async fn handle_put_command(
                 pb.finish_with_message("Failed");
             }
 
-            use irosh::error::{ClientError, IroshError};
             let mut handled = false;
 
             if let Some(IroshError::Client(client_err)) = err.downcast_ref::<IroshError>() {
@@ -310,8 +309,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "Upload failed. Error: '{}' is a directory (use -r for recursive)\r\n",
-                                    local_name
+                                    "Upload failed. Error: '{local_name}' is a directory (use -r for recursive)\r\n"
                                 )
                                 .as_bytes(),
                             )
@@ -339,8 +337,7 @@ pub async fn handle_put_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "Upload failed. Error: '{}' not found on local\r\n",
-                                    local_name
+                                    "Upload failed. Error: '{local_name}' not found on local\r\n"
                                 )
                                 .as_bytes(),
                             )
@@ -352,9 +349,9 @@ pub async fn handle_put_command(
             }
 
             if !handled {
-                let msg = format!("{:#}", err);
+                let msg = format!("{err:#}");
                 stdout
-                    .write_all(format!("Upload failed. Error: {}\r\n", msg).as_bytes())
+                    .write_all(format!("Upload failed. Error: {msg}\r\n").as_bytes())
                     .await?;
             }
         }
@@ -444,10 +441,10 @@ pub async fn handle_get_command(
                 pb.finish_with_message("Done");
             }
             stdout
-                .write_all(format!("Downloaded {}\r\n", remote_name).as_bytes())
+                .write_all(format!("Downloaded {remote_name}\r\n").as_bytes())
                 .await?;
             stdout
-                .write_all(format!("BLAKE3:    {}\r\n", hash).as_bytes())
+                .write_all(format!("BLAKE3:    {hash}\r\n").as_bytes())
                 .await?;
         }
         Err(err) => {
@@ -455,7 +452,6 @@ pub async fn handle_get_command(
                 pb.finish_with_message("Failed");
             }
 
-            use irosh::error::{ClientError, IroshError};
             let mut handled = false;
 
             if let Some(IroshError::Client(client_err)) = err.downcast_ref::<IroshError>() {
@@ -466,8 +462,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "Download failed. Error: '{}' is a directory (use -r for recursive)\r\n",
-                                    remote_name
+                                    "Download failed. Error: '{remote_name}' is a directory (use -r for recursive)\r\n"
                                 )
                                 .as_bytes(),
                             )
@@ -481,8 +476,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "Download failed. Error: '{}' is a directory on remote (use -r for recursive)\r\n",
-                                    remote_name
+                                    "Download failed. Error: '{remote_name}' is a directory on remote (use -r for recursive)\r\n"
                                 )
                                 .as_bytes(),
                             )
@@ -496,8 +490,7 @@ pub async fn handle_get_command(
                         stdout
                             .write_all(
                                 format!(
-                                    "Download failed. Error: '{}' not found on remote\r\n",
-                                    remote_name
+                                    "Download failed. Error: '{remote_name}' not found on remote\r\n"
                                 )
                                 .as_bytes(),
                             )
@@ -509,9 +502,9 @@ pub async fn handle_get_command(
             }
 
             if !handled {
-                let msg = format!("{:#}", err);
+                let msg = format!("{err:#}");
                 stdout
-                    .write_all(format!("Download failed. Error: {}\r\n", msg).as_bytes())
+                    .write_all(format!("Download failed. Error: {msg}\r\n").as_bytes())
                     .await?;
             }
         }

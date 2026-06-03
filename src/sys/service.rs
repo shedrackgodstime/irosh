@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 /// The current state of the irosh background service.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ServiceStatus {
     /// The service is installed and currently running.
     Active(String),
@@ -17,6 +18,7 @@ pub enum ServiceStatus {
 }
 
 /// Actions that can be performed on the background service.
+#[non_exhaustive]
 pub enum ServiceAction {
     /// Install the service for automatic startup.
     Install,
@@ -29,6 +31,11 @@ pub enum ServiceAction {
 }
 
 /// Performs a service management action.
+///
+/// # Errors
+///
+/// Returns `PlatformNotSupported` on platforms that are not Unix or Windows.
+#[must_use]
 pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Result<()> {
     #[cfg(unix)]
     return crate::sys::unix::service::handle_service(action, state).await;
@@ -44,6 +51,11 @@ pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Re
 }
 
 /// Displays the service logs.
+///
+/// # Errors
+///
+/// Returns `PlatformNotSupported` on platforms that are not Unix or Windows.
+#[must_use]
 pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     #[cfg(unix)]
     return crate::sys::unix::service::view_logs(follow, state).await;
@@ -59,6 +71,7 @@ pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
 }
 
 /// Queries the OS service manager for the service status.
+#[must_use]
 pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     #[cfg(unix)]
     return crate::sys::unix::service::query_service_status(state).await;

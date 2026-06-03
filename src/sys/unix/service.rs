@@ -12,6 +12,7 @@ use tracing::info;
 /// Queries whether the irosh service is installed and running.
 ///
 /// On Linux this checks systemd; on macOS it checks launchd.
+#[must_use]
 pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     #[cfg(target_os = "linux")]
     return query_status_linux(state).await;
@@ -32,9 +33,17 @@ async fn query_status_linux(_state: Option<PathBuf>) -> ServiceStatus {
     let service_file = user_home.join(".config/systemd/user/irosh.service");
     let exists = service_file.exists();
 
-    let output = std::process::Command::new("systemctl")
-        .args(["--user", "is-active", "irosh"])
-        .output();
+    let Ok(output) = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("systemctl")
+            .args(["--user", "is-active", "irosh"])
+            .output()
+    }).await else {
+        return if exists {
+            ServiceStatus::Inactive
+        } else {
+            ServiceStatus::Unknown
+        };
+    };
 
     match output {
         Ok(out) => {
@@ -63,15 +72,22 @@ async fn query_status_linux(_state: Option<PathBuf>) -> ServiceStatus {
 
 #[cfg(target_os = "macos")]
 async fn query_status_macos(_state: Option<PathBuf>) -> ServiceStatus {
-    let uid = match std::process::Command::new("id").arg("-u").output() {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        Err(_) => return ServiceStatus::Unknown,
+    let uid = match tokio::task::spawn_blocking(|| {
+        std::process::Command::new("id").arg("-u").output()
+    }).await {
+        Ok(Ok(o)) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => return ServiceStatus::Unknown,
     };
     let target = format!("gui/{}/dev.irosh.server", uid);
 
-    let output = std::process::Command::new("launchctl")
-        .args(["print", &target])
-        .output();
+    let output = match tokio::task::spawn_blocking(move || {
+        std::process::Command::new("launchctl")
+            .args(["print", &target])
+            .output()
+    }).await {
+        Ok(result) => result,
+        Err(_) => return ServiceStatus::Unknown,
+    };
 
     match output {
         Ok(out) if out.status.success() => ServiceStatus::Active("launchd".to_string()),
@@ -92,6 +108,13 @@ async fn query_status_macos(_state: Option<PathBuf>) -> ServiceStatus {
 /// Installs, removes, starts, or stops the irosh system service.
 ///
 /// Delegates to platform-specific implementations (systemd / launchd).
+///
+/// # Errors
+///
+/// Returns an error if file system operations (creating directories, writing
+/// service files) fail, or if external commands (`systemctl`, `launchctl`)
+/// cannot be executed. Returns `PlatformNotSupported` on unsupported platforms.
+#[must_use]
 pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Result<()> {
     #[cfg(target_os = "linux")]
     return handle_service_linux(action, state).await;
@@ -111,7 +134,7 @@ pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Re
 #[cfg(target_os = "linux")]
 async fn handle_service_linux(action: ServiceAction, state: Option<PathBuf>) -> Result<()> {
     let exe = std::env::current_exe().map_err(|e| ServerError::ServiceManagement {
-        details: format!("failed to get current exe path: {}", e),
+        details: format!("failed to get current exe path: {e}"),
     })?;
     let user_home = dirs::home_dir().ok_or_else(|| ServerError::ServiceManagement {
         details: "could not find home directory".to_string(),
@@ -121,18 +144,18 @@ async fn handle_service_linux(action: ServiceAction, state: Option<PathBuf>) -> 
 
     match action {
         ServiceAction::Install => {
-            std::fs::create_dir_all(&service_dir).map_err(|e| ServerError::ServiceManagement {
-                details: format!("failed to create service directory: {}", e),
+            tokio::fs::create_dir_all(&service_dir).await.map_err(|e| ServerError::ServiceManagement {
+                details: format!("failed to create service directory: {e}"),
             })?;
 
             let state_arg = if let Some(p) = state {
                 format!(" --state {}", p.display())
             } else {
-                "".to_string()
+                String::new()
             };
 
             let unit = format!(
-                r#"[Unit]
+                r"[Unit]
 Description=irosh P2P SSH Server
 After=network.target
 
@@ -143,68 +166,97 @@ RestartSec=5
 
 [Install]
 WantedBy=default.target
-"#,
+",
                 exe.display(),
                 state_arg
             );
 
-            std::fs::write(&service_file, unit).map_err(|e| ServerError::ServiceManagement {
-                details: format!("failed to write service file: {}", e),
+            tokio::fs::write(&service_file, unit).await.map_err(|e| ServerError::ServiceManagement {
+                details: format!("failed to write service file: {e}"),
             })?;
             info!("Service unit installed to {}", service_file.display());
 
-            std::process::Command::new("systemctl")
-                .args(["--user", "daemon-reload"])
-                .status()
+            tokio::task::spawn_blocking(|| {
+                std::process::Command::new("systemctl")
+                    .args(["--user", "daemon-reload"])
+                    .status()
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("systemctl daemon-reload failed: {}", e),
+                    details: format!("systemctl daemon-reload failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("systemctl daemon-reload failed: {e}"),
                 })?;
-            std::process::Command::new("systemctl")
-                .args(["--user", "enable", "irosh"])
-                .status()
+            tokio::task::spawn_blocking(|| {
+                std::process::Command::new("systemctl")
+                    .args(["--user", "enable", "irosh"])
+                    .status()
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("systemctl enable failed: {}", e),
+                    details: format!("systemctl enable failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("systemctl enable failed: {e}"),
                 })?;
-            std::process::Command::new("systemctl")
-                .args(["--user", "restart", "irosh"])
-                .status()
+            tokio::task::spawn_blocking(|| {
+                std::process::Command::new("systemctl")
+                    .args(["--user", "restart", "irosh"])
+                    .status()
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("systemctl restart failed: {}", e),
+                    details: format!("systemctl restart failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("systemctl restart failed: {e}"),
                 })?;
 
             info!("Service enabled and started in the background.");
         }
         ServiceAction::Uninstall => {
-            let _ = std::process::Command::new("systemctl")
-                .args(["--user", "stop", "irosh"])
-                .status();
-            let _ = std::process::Command::new("systemctl")
-                .args(["--user", "disable", "irosh"])
-                .status();
+            let _ = tokio::task::spawn_blocking(|| {
+                std::process::Command::new("systemctl")
+                    .args(["--user", "stop", "irosh"])
+                    .status()
+            }).await;
+            let _ = tokio::task::spawn_blocking(|| {
+                std::process::Command::new("systemctl")
+                    .args(["--user", "disable", "irosh"])
+                    .status()
+            }).await;
             if service_file.exists() {
-                std::fs::remove_file(&service_file).map_err(|e| {
+                tokio::fs::remove_file(&service_file).await.map_err(|e| {
                     ServerError::ServiceManagement {
-                        details: format!("failed to remove service file: {}", e),
+                        details: format!("failed to remove service file: {e}"),
                     }
                 })?;
                 info!("Service uninstalled.");
             }
         }
         ServiceAction::Start => {
-            std::process::Command::new("systemctl")
-                .args(["--user", "start", "irosh"])
-                .status()
+            tokio::task::spawn_blocking(|| {
+                std::process::Command::new("systemctl")
+                    .args(["--user", "start", "irosh"])
+                    .status()
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("systemctl start failed: {}", e),
+                    details: format!("systemctl start failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("systemctl start failed: {e}"),
                 })?;
             info!("Service started.");
         }
         ServiceAction::Stop => {
-            std::process::Command::new("systemctl")
-                .args(["--user", "stop", "irosh"])
-                .status()
+            tokio::task::spawn_blocking(|| {
+                std::process::Command::new("systemctl")
+                    .args(["--user", "stop", "irosh"])
+                    .status()
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("systemctl stop failed: {}", e),
+                    details: format!("systemctl stop failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("systemctl stop failed: {e}"),
                 })?;
             info!("Service stopped.");
         }
@@ -224,47 +276,63 @@ async fn handle_service_macos(action: ServiceAction, state: Option<PathBuf>) -> 
     let service_dir = user_home.join("Library/LaunchAgents");
     let label = "dev.irosh.server";
     let service_file = service_dir.join(format!("{}.plist", label));
-    let uid = current_uid().map_err(|e| ServerError::ServiceManagement {
-        details: format!("failed to get current uid: {}", e),
+    let uid = current_uid().await.map_err(|e| ServerError::ServiceManagement {
+        details: format!("failed to get current uid: {e}"),
     })?;
     let domain = format!("gui/{uid}");
     let service_target = format!("{domain}/{label}");
 
     match action {
         ServiceAction::Install => {
-            std::fs::create_dir_all(&service_dir).map_err(|e| ServerError::ServiceManagement {
+            tokio::fs::create_dir_all(&service_dir).await.map_err(|e| ServerError::ServiceManagement {
                 details: format!("failed to create LaunchAgents directory: {}", e),
             })?;
-            std::fs::create_dir_all(user_home.join("Library/Logs")).map_err(|e| {
+            tokio::fs::create_dir_all(user_home.join("Library/Logs")).await.map_err(|e| {
                 ServerError::ServiceManagement {
                     details: format!("failed to create Logs directory: {}", e),
                 }
             })?;
             let plist = build_launchd_plist(&exe, &state, &user_home);
-            std::fs::write(&service_file, plist).map_err(|e| ServerError::ServiceManagement {
+            tokio::fs::write(&service_file, plist).await.map_err(|e| ServerError::ServiceManagement {
                 details: format!("failed to write plist file: {}", e),
             })?;
 
-            let _ = std::process::Command::new("launchctl")
-                .args(["bootout", &service_target])
-                .status();
+            let _ = tokio::task::spawn_blocking({
+                let service_target = service_target.clone();
+                move || {
+                    std::process::Command::new("launchctl")
+                        .args(["bootout", &service_target])
+                        .status()
+                }
+            }).await;
 
-            std::process::Command::new("launchctl")
-                .args(["bootstrap", &domain, &service_file.display().to_string()])
-                .status()
+            tokio::task::spawn_blocking({
+                let domain = domain.clone();
+                let service_file = service_file.clone();
+                move || {
+                    std::process::Command::new("launchctl")
+                        .args(["bootstrap", &domain, &service_file.display().to_string()])
+                        .status()
+                }
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("launchctl bootstrap failed: {}", e),
+                    details: format!("launchctl bootstrap failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("launchctl bootstrap failed: {e}"),
                 })?;
 
             info!("LaunchAgent installed to {}", service_file.display());
             info!("Service loaded and started with launchd.");
         }
         ServiceAction::Uninstall => {
-            let _ = std::process::Command::new("launchctl")
-                .args(["bootout", &service_target])
-                .status();
+            let _ = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("launchctl")
+                    .args(["bootout", &service_target])
+                    .status()
+            }).await;
             if service_file.exists() {
-                std::fs::remove_file(&service_file).map_err(|e| {
+                tokio::fs::remove_file(&service_file).await.map_err(|e| {
                     ServerError::ServiceManagement {
                         details: format!("failed to remove plist file: {}", e),
                     }
@@ -279,25 +347,44 @@ async fn handle_service_macos(action: ServiceAction, state: Option<PathBuf>) -> 
                 }));
             }
 
-            let _ = std::process::Command::new("launchctl")
-                .args(["bootstrap", &domain, &service_file.display().to_string()])
-                .status();
+            let _ = tokio::task::spawn_blocking({
+                let domain = domain.clone();
+                let service_file = service_file.clone();
+                move || {
+                    std::process::Command::new("launchctl")
+                        .args(["bootstrap", &domain, &service_file.display().to_string()])
+                        .status()
+                }
+            }).await;
 
-            std::process::Command::new("launchctl")
-                .args(["kickstart", "-k", &service_target])
-                .status()
+            tokio::task::spawn_blocking({
+                let service_target = service_target.clone();
+                move || {
+                    std::process::Command::new("launchctl")
+                        .args(["kickstart", "-k", &service_target])
+                        .status()
+                }
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("launchctl kickstart failed: {}", e),
+                    details: format!("launchctl kickstart failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("launchctl kickstart failed: {e}"),
                 })?;
 
             info!("LaunchAgent started.");
         }
         ServiceAction::Stop => {
-            std::process::Command::new("launchctl")
-                .args(["bootout", &service_target])
-                .status()
+            tokio::task::spawn_blocking(move || {
+                std::process::Command::new("launchctl")
+                    .args(["bootout", &service_target])
+                    .status()
+            }).await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("launchctl bootout failed: {}", e),
+                    details: format!("launchctl bootout failed: {e}"),
+                })?
+                .map_err(|e| ServerError::ServiceManagement {
+                    details: format!("launchctl bootout failed: {e}"),
                 })?;
             info!("LaunchAgent stopped.");
         }
@@ -317,10 +404,12 @@ fn build_launchd_plist(
         xml_escape(exe.to_string_lossy().as_ref())
     );
     if let Some(state_dir) = state {
-        args_xml.push_str(&format!(
+        use std::fmt::Write;
+        let _ = write!(
+            args_xml,
             "\n    <string>--state</string>\n    <string>{}</string>",
             xml_escape(state_dir.to_string_lossy().as_ref())
-        ));
+        );
     }
     args_xml.push_str("\n    <string>host</string>");
 
@@ -370,12 +459,17 @@ fn xml_escape(value: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn current_uid() -> Result<String> {
-    let output = std::process::Command::new("id")
-        .arg("-u")
-        .output()
+async fn current_uid() -> Result<String> {
+    let output = tokio::task::spawn_blocking(|| {
+        std::process::Command::new("id")
+            .arg("-u")
+            .output()
+    }).await
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to run id command: {}", e),
+            details: format!("failed to run id command: {e}"),
+        })?
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to run id command: {e}"),
         })?;
     if !output.status.success() {
         return Err(IroshError::Server(ServerError::ServiceManagement {
@@ -388,6 +482,12 @@ fn current_uid() -> Result<String> {
 /// Displays the irosh service logs.
 ///
 /// Uses platform-specific tools: `journalctl` on Linux, `log show` on macOS.
+///
+/// # Errors
+///
+/// Returns an error if `journalctl`, `tail`, or `cat` cannot be executed, if
+/// the log file does not exist on macOS, or if the platform is unsupported.
+#[must_use]
 pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     #[cfg(target_os = "linux")]
     return view_logs_linux(follow, state).await;
@@ -411,11 +511,16 @@ async fn view_logs_linux(follow: bool, _state: Option<PathBuf>) -> Result<()> {
         args.push("-f");
     }
 
-    let status = std::process::Command::new("journalctl")
-        .args(&args)
-        .status()
+    let status = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("journalctl")
+            .args(&args)
+            .status()
+    }).await
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to run journalctl: {}", e),
+            details: format!("failed to run journalctl: {e}"),
+        })?
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to run journalctl: {e}"),
         })?;
 
     if !status.success() {
@@ -440,23 +545,27 @@ async fn view_logs_macos(follow: bool, _state: Option<PathBuf>) -> Result<()> {
     }
 
     let mut args = vec![log_file.to_string_lossy().to_string()];
-    let cmd = if follow {
+    if follow {
         args.insert(0, "-f".to_string());
-        "tail"
-    } else {
-        "cat"
-    };
+    }
 
-    let status = std::process::Command::new(cmd)
-        .args(&args)
-        .status()
+    let cmd = if follow { "tail" } else { "cat" };
+
+    let status = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(cmd)
+            .args(&args)
+            .status()
+    }).await
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to run {}: {}", cmd, e),
+            details: format!("failed to run {cmd}: {e}"),
+        })?
+        .map_err(|e| ServerError::ServiceManagement {
+            details: format!("failed to run {cmd}: {e}"),
         })?;
 
     if !status.success() {
         return Err(IroshError::Server(ServerError::ServiceManagement {
-            details: format!("{} failed", cmd),
+            details: format!("{cmd} failed"),
         }));
     }
     Ok(())

@@ -10,6 +10,12 @@ const CONFIG_FILE: &str = "irosh.json";
 /// Loads the persistent application configuration from disk.
 ///
 /// If the configuration file does not exist, returns the default configuration.
+///
+/// # Errors
+///
+/// Returns an error if the configuration file exists but cannot be read,
+/// or if its contents cannot be parsed as valid JSON.
+#[must_use]
 pub fn load_config(state: &StateConfig) -> Result<AppConfig> {
     let path = state.root().join(CONFIG_FILE);
     if !path.exists() {
@@ -27,6 +33,12 @@ pub fn load_config(state: &StateConfig) -> Result<AppConfig> {
 }
 
 /// Saves the persistent application configuration to disk atomically.
+///
+/// # Errors
+///
+/// Returns an error if the configuration data cannot be serialized to JSON,
+/// or if the atomic write to disk fails.
+#[must_use]
 pub fn save_config(state: &StateConfig, config: &AppConfig) -> Result<()> {
     let path = state.root().join(CONFIG_FILE);
     let data = serde_json::to_vec_pretty(config)

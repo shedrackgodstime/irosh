@@ -10,22 +10,31 @@ use russh::{MethodKind, MethodSet};
 use tracing::{debug, info, warn};
 
 use crate::auth::{AuthMethod, Authenticator};
+use crate::metrics::Metrics;
 use crate::server::ConnectionShellState;
 
 use self::pty::ChannelState;
 
+/// SSH server handler that manages interactive terminal sessions.
+///
+/// This handler implements [`russh::server::Handler`] to accept SSH connections,
+/// authenticate clients, manage channels, and route data between the SSH layer
+/// and the irosh transfer protocol.
 #[derive(Clone)]
-pub(crate) struct ServerHandler {
+pub struct ServerHandler {
     channels: Arc<StdMutex<HashMap<ChannelId, ChannelState>>>,
     /// Tracks which channels are being handled via streams (e.g. port forwarding)
     /// to avoid double-processing in the data() handler.
     streamed_channels: Arc<StdMutex<std::collections::HashSet<ChannelId>>>,
     authenticator: Arc<dyn Authenticator>,
     shell_state: ConnectionShellState,
+    metrics: Metrics,
 }
 
 impl ServerHandler {
-    pub(crate) fn new(
+    /// Creates a new server handler with the given authenticator and shell state.
+    #[must_use]
+    pub fn new(
         authenticator: Arc<dyn Authenticator>,
         shell_state: ConnectionShellState,
     ) -> Self {
@@ -34,6 +43,23 @@ impl ServerHandler {
             streamed_channels: Arc::new(StdMutex::new(std::collections::HashSet::new())),
             authenticator,
             shell_state,
+            metrics: Metrics::new(),
+        }
+    }
+
+    /// Creates a new handler with the given metrics collector.
+    #[must_use]
+    pub fn with_metrics(
+        authenticator: Arc<dyn Authenticator>,
+        shell_state: ConnectionShellState,
+        metrics: Metrics,
+    ) -> Self {
+        Self {
+            channels: Arc::new(StdMutex::new(HashMap::new())),
+            streamed_channels: Arc::new(StdMutex::new(std::collections::HashSet::new())),
+            authenticator,
+            shell_state,
+            metrics,
         }
     }
 
@@ -75,12 +101,14 @@ impl server::Handler for ServerHandler {
         key: &russh::keys::ssh_key::PublicKey,
     ) -> std::result::Result<server::Auth, Self::Error> {
         debug!("auth_publickey request for user '{}'", user);
-        match self.authenticator.check_public_key(user, key)? {
-            true => Ok(server::Auth::Accept),
-            false => Ok(server::Auth::Reject {
+        if self.authenticator.check_public_key(user, key)? {
+            Ok(server::Auth::Accept)
+        } else {
+            self.metrics.record_error();
+            Ok(server::Auth::Reject {
                 proceed_with_methods: self.remaining_methods(AuthMethod::PublicKey),
                 partial_success: false,
-            }),
+            })
         }
     }
 
@@ -90,12 +118,14 @@ impl server::Handler for ServerHandler {
         password: &str,
     ) -> std::result::Result<server::Auth, Self::Error> {
         debug!("auth_password request for user '{}'", user);
-        match self.authenticator.check_password(user, password)? {
-            true => Ok(server::Auth::Accept),
-            false => Ok(server::Auth::Reject {
+        if self.authenticator.check_password(user, password)? {
+            Ok(server::Auth::Accept)
+        } else {
+            self.metrics.record_error();
+            Ok(server::Auth::Reject {
                 proceed_with_methods: self.remaining_methods(AuthMethod::Password),
                 partial_success: false,
-            }),
+            })
         }
     }
 
@@ -119,14 +149,14 @@ impl server::Handler for ServerHandler {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
-        _session: &mut server::Session,
+        session: &mut server::Session,
     ) -> std::result::Result<bool, Self::Error> {
         info!(
             "Incoming direct-tcpip request for {}:{}",
             host_to_connect, port_to_connect
         );
 
-        let target = format!("{}:{}", host_to_connect, port_to_connect);
+        let target = format!("{host_to_connect}:{port_to_connect}");
         let mut stream = match tokio::net::TcpStream::connect(&target).await {
             Ok(stream) => stream,
             Err(err) => {
@@ -139,7 +169,7 @@ impl server::Handler for ServerHandler {
         };
 
         let channel_id = channel.id();
-        let handle = _session.handle();
+        let handle = session.handle();
         {
             if let Ok(mut streamed) = self.streamed_channels.lock() {
                 streamed.insert(channel_id);
@@ -286,7 +316,19 @@ impl server::Handler for ServerHandler {
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
         debug!("signal request for channel {:?}: {:?}", channel, signal);
-        self.forward_signal(channel, signal);
+        self.forward_signal(channel, &signal);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod send_sync_tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn server_handler_is_send_sync() {
+        assert_send_sync::<ServerHandler>();
     }
 }

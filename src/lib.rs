@@ -1,5 +1,17 @@
 #![doc = include_str!("README.md")]
-#![warn(missing_docs)]
+#![deny(unused_lifetimes)]
+#![deny(missing_docs)]
+#![warn(clippy::pedantic)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::double_must_use)]
+#![warn(clippy::missing_errors_doc)]
+#![warn(clippy::must_use_candidate)]
+#![warn(clippy::suspicious)]
+#![warn(clippy::undocumented_unsafe_blocks)]
+#![warn(trivial_casts)]
+#![warn(trivial_numeric_casts)]
 //!
 //! # Examples
 //!
@@ -42,6 +54,7 @@ pub mod client;
 pub mod config;
 pub mod diagnostic;
 pub mod error;
+pub mod metrics;
 pub mod server;
 pub mod session;
 pub mod storage;
@@ -50,6 +63,8 @@ pub mod transport;
 
 pub use config::{SecurityConfig, StateConfig};
 pub use error::{IroshError, Result};
+
+pub use metrics::{Metrics, MetricsSnapshot};
 
 pub use auth::{
     AuthMethod, AuthMode, Authenticator, CombinedAuth, ConfirmationCallback, Credentials,

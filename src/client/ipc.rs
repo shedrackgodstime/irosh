@@ -15,16 +15,22 @@ pub struct IpcClient {
 
 impl IpcClient {
     /// Creates a new IPC client targeting the daemon in the specified state directory.
-    pub fn new(_state_dir: PathBuf) -> Self {
+    #[must_use] 
+    pub fn new(state_dir: &std::path::Path) -> Self {
         #[cfg(unix)]
-        let socket_path = _state_dir.join("irosh.sock");
+        let socket_path = state_dir.join("irosh.sock");
         #[cfg(windows)]
-        let socket_path = _state_dir.join("ipc.port");
+        let socket_path = state_dir.join("ipc.port");
 
         Self { socket_path }
     }
 
     /// Sends a command to the daemon and waits for a response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection to the daemon fails or the response cannot be deserialized.
+    #[must_use]
     pub async fn send(&self, command: IpcCommand) -> Result<IpcResponse> {
         let mut stream = self.connect().await?;
 
@@ -36,7 +42,7 @@ impl IpcClient {
         // Shutdown writing so the server knows the command is complete.
         stream.shutdown().await?;
 
-        let mut res_buf = Vec::new();
+        let mut res_buf = Vec::with_capacity(4096);
         stream.read_to_end(&mut res_buf).await?;
 
         let response: IpcResponse = serde_json::from_slice(&res_buf).map_err(|e| {
@@ -56,7 +62,7 @@ impl IpcClient {
     #[cfg(windows)]
     async fn connect(&self) -> Result<tokio::net::TcpStream> {
         let port_str =
-            std::fs::read_to_string(&self.socket_path).map_err(crate::error::IroshError::Io)?;
+            tokio::fs::read_to_string(&self.socket_path).await.map_err(crate::error::IroshError::Io)?;
         let port: u16 = port_str.trim().parse().map_err(|_| {
             crate::error::IroshError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

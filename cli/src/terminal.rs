@@ -13,6 +13,7 @@ pub struct TerminalGuard {
 
 impl TerminalGuard {
     /// Create a new guard and enter raw mode.
+    #[must_use]
     pub fn new() -> Result<Self> {
         #[cfg(windows)]
         Self::ensure_windows_vt()?;
@@ -23,7 +24,8 @@ impl TerminalGuard {
 
     /// Reset the terminal to a clean state: reset colors, show cursor, and clear line.
     /// This is the "Nuclear Cleanup" defined in the permanent terminal solution.
-    pub fn nuclear_cleanup(&self) -> Result<()> {
+    #[must_use]
+    fn nuclear_cleanup() -> Result<()> {
         let mut out = stdout();
         // \x1b[0m   - Reset styles
         // \x1b[?25h - Show cursor
@@ -62,6 +64,6 @@ impl Drop for TerminalGuard {
             let _ = disable_raw_mode();
         }
         // Final safety cleanup
-        let _ = self.nuclear_cleanup();
+        let _ = Self::nuclear_cleanup();
     }
 }

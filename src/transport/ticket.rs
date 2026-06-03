@@ -8,10 +8,11 @@ use std::str::FromStr;
 
 /// Errors that can occur when parsing or manipulating connection tickets.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TicketError {
     /// The ticket string format is invalid.
-    #[error("invalid connection ticket format")]
-    InvalidFormat,
+    #[error("invalid connection ticket format: {0}")]
+    InvalidFormat(String),
 }
 
 /// A high-level representation of an irosh connection ticket.
@@ -63,6 +64,7 @@ impl<'de> Deserialize<'de> for Ticket {
 
 impl Ticket {
     /// Creates a new ticket from an Iroh EndpointAddr.
+    #[must_use] 
     pub fn new(addr: EndpointAddr) -> Self {
         Self {
             inner: EndpointTicket::new(addr),
@@ -70,6 +72,7 @@ impl Ticket {
     }
 
     /// Returns a cloned copy of the underlying endpoint address.
+    #[must_use] 
     pub fn to_addr(&self) -> EndpointAddr {
         self.inner.endpoint_addr().clone()
     }
@@ -114,7 +117,9 @@ impl FromStr for Ticket {
             }
         }
 
-        Err(TicketError::InvalidFormat)
+        Err(TicketError::InvalidFormat(format!(
+            "could not parse as ticket or JSON: {s}"
+        )))
     }
 }
 

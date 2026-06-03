@@ -30,6 +30,10 @@ pub(super) async fn prepare_put_destination(
         .create_dir_all(dest_path.parent().unwrap_or(Path::new(".")))
         .await?
     {
+        tracing::error!(
+            "Failed to create destination directory: {}",
+            dest_path.parent().unwrap_or(Path::new(".")).display()
+        );
         return Err(ServerError::TransferFailed {
             failure: TransferFailure::new(
                 TransferFailureCode::CreateDirectoryFailed,
@@ -79,6 +83,9 @@ pub(super) enum UploadSink {
 }
 
 impl UploadSink {
+    // Reason: unsizing coercion from Box<&mut T> to Box<dyn Trait> needs explicit cast here
+    // because the compiler cannot infer the target type through `Box::new`.
+    #[allow(trivial_casts)]
     pub(super) fn stdin(&mut self) -> Option<Box<dyn tokio::io::AsyncWrite + Unpin + Send + '_>> {
         match self {
             Self::Process(child) => child
@@ -98,17 +105,22 @@ impl UploadSink {
                     child
                         .wait_with_output()
                         .await
-                        .map_err(|e| ServerError::TransferFailed {
-                            failure: TransferFailure::new(
-                                TransferFailureCode::Internal,
-                                format!("waiting for upload helper failed: {e}"),
-                            ),
+                        .map_err(|e| {
+                            tracing::error!("Waiting for upload helper failed: {e}");
+                            ServerError::TransferFailed {
+                                failure: TransferFailure::new(
+                                    TransferFailureCode::Internal,
+                                    format!("waiting for upload helper failed: {e}"),
+                                ),
+                            }
                         })?;
                 if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    tracing::error!("Upload helper failed: {stderr}");
                     return Err(ServerError::TransferFailed {
                         failure: TransferFailure::new(
                             TransferFailureCode::HelperFailed,
-                            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                            stderr,
                         ),
                     }
                     .into());
@@ -118,11 +130,14 @@ impl UploadSink {
             Self::File(mut file) => {
                 file.flush()
                     .await
-                    .map_err(|e| ServerError::TransferFailed {
-                        failure: TransferFailure::new(
-                            TransferFailureCode::Internal,
-                            format!("failed to flush upload file: {e}"),
-                        ),
+                    .map_err(|e| {
+                        tracing::error!("Failed to flush upload file: {e}");
+                        ServerError::TransferFailed {
+                            failure: TransferFailure::new(
+                                TransferFailureCode::Internal,
+                                format!("failed to flush upload file: {e}"),
+                            ),
+                        }
                     })?;
                 Ok(())
             }
@@ -145,6 +160,7 @@ pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Re
         context.configure(&mut upload_cmd);
 
         return Ok(UploadSink::Process(upload_cmd.spawn().map_err(|e| {
+            tracing::error!("Failed to spawn upload helper: {e}");
             ServerError::TransferFailed {
                 failure: TransferFailure::new(
                     TransferFailureCode::Internal,
@@ -156,11 +172,14 @@ pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Re
 
     let file = tokio::fs::File::create(dest)
         .await
-        .map_err(|e| ServerError::TransferFailed {
-            failure: TransferFailure::new(
-                TransferFailureCode::Internal,
-                format!("failed to create upload file: {e}"),
-            ),
+        .map_err(|e| {
+            tracing::error!("Failed to create upload file: {e}");
+            ServerError::TransferFailed {
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("failed to create upload file: {e}"),
+                ),
+            }
         })?;
     Ok(UploadSink::File(file))
 }
@@ -186,11 +205,14 @@ pub(super) async fn probe_download_size(
             size_probe_cmd
                 .output()
                 .await
-                .map_err(|e| ServerError::TransferFailed {
-                    failure: TransferFailure::new(
-                        TransferFailureCode::Internal,
-                        format!("failed to probe download source size: {e}"),
-                    ),
+                .map_err(|e| {
+                    tracing::error!("Failed to probe download source size: {e}");
+                    ServerError::TransferFailed {
+                        failure: TransferFailure::new(
+                            TransferFailureCode::Internal,
+                            format!("failed to probe download source size: {e}"),
+                        ),
+                    }
                 })?;
         if !size_probe.status.success() {
             let details = String::from_utf8_lossy(&size_probe.stderr)
@@ -203,6 +225,7 @@ pub(super) async fn probe_download_size(
                     TransferFailureCode::HelperFailed
                 };
 
+            tracing::error!("Download size probe failed: {details}");
             return Ok(Err(TransferFailure::new(
                 code,
                 format!(
@@ -216,14 +239,17 @@ pub(super) async fn probe_download_size(
         }
 
         let raw_stdout = String::from_utf8_lossy(&size_probe.stdout);
-        let cleaned: String = raw_stdout.chars().filter(|c| c.is_ascii_digit()).collect();
+        let cleaned: String = raw_stdout.chars().filter(char::is_ascii_digit).collect();
         let expected_size = cleaned
             .parse::<u64>()
-            .map_err(|e| ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::Internal,
-                    format!("failed to parse download source size: {e}"),
-                ),
+            .map_err(|e| {
+                tracing::error!("Failed to parse download source size: {e}");
+                ServerError::TransferFailed {
+                    failure: TransferFailure::new(
+                        TransferFailureCode::Internal,
+                        format!("failed to parse download source size: {e}"),
+                    ),
+                }
             })?;
         return Ok(Ok(expected_size));
     }
@@ -252,6 +278,7 @@ pub(super) async fn probe_download_size(
     };
 
     if metadata.is_dir() {
+        tracing::error!("Download source is a directory: {}", source_path.display());
         return Ok(Err(TransferFailure::new(
             TransferFailureCode::IsDirectory,
             source_path.display().to_string(),
@@ -271,6 +298,9 @@ pub(super) enum DownloadSource {
 }
 
 impl DownloadSource {
+    // Reason: unsizing coercion from Box<&mut T> to Box<dyn Trait> needs explicit cast here
+    // because the compiler cannot infer the target type through `Box::new`.
+    #[allow(trivial_casts)]
     pub(super) fn stdout(&mut self) -> Option<Box<dyn tokio::io::AsyncRead + Unpin + Send + '_>> {
         match self {
             Self::Process(child) => child
@@ -302,16 +332,20 @@ pub(super) async fn spawn_download_helper(
 
         let child = download_cmd
             .spawn()
-            .map_err(|e| ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::Internal,
-                    format!("failed to spawn download helper: {e}"),
-                ),
+            .map_err(|e| {
+                tracing::error!("Failed to spawn download helper: {e}");
+                ServerError::TransferFailed {
+                    failure: TransferFailure::new(
+                        TransferFailureCode::Internal,
+                        format!("failed to spawn download helper: {e}"),
+                    ),
+                }
             })?;
         return Ok((DownloadSource::Process(child), helper_source));
     }
 
     let file = tokio::fs::File::open(source_path).await.map_err(|e| {
+        tracing::error!("Failed to open download file {}: {e}", source_path.display());
         if e.kind() == std::io::ErrorKind::NotFound {
             ServerError::TransferFailed {
                 failure: TransferFailure::new(

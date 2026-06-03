@@ -1,6 +1,7 @@
 use crate::output::JSON_MODE;
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::fmt::Write;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -40,7 +41,7 @@ pub fn warn(title: &str, message: &str) {
     }
     eprintln!("{}: {}", style("warning").yellow().bold(), title);
     for line in message.lines() {
-        eprintln!("    {}", line);
+        eprintln!("    {line}");
     }
 }
 
@@ -86,9 +87,9 @@ pub fn status(label: &str, value: &str, subtext: Option<&str>) {
     if !JSON_MODE.load(Ordering::SeqCst) {
         let mut line = format!("  {:<16}: {}", style(label).dim(), style(value).bold());
         if let Some(s) = subtext {
-            line.push_str(&format!(" ({})", style(s).dim()));
+            let _ = std::write!(line, " ({})", style(s).dim());
         }
-        eprintln!("{}", line);
+        eprintln!("{line}");
     }
 }
 

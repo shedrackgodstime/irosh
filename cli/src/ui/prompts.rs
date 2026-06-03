@@ -11,8 +11,8 @@ pub fn danger_confirm(message: &str, expected: &str) -> bool {
         return false;
     }
 
-    eprintln!("\nwarning: {}", message);
-    let prompt = format!("Type '{}' to confirm, or press Ctrl+C to cancel", expected);
+    eprintln!("\nwarning: {message}");
+    let prompt = format!("Type '{expected}' to confirm, or press Ctrl+C to cancel");
 
     match Input::<String>::with_theme(&irosh_theme())
         .with_prompt(prompt)
@@ -33,7 +33,7 @@ pub fn soft_confirm(message: &str) -> bool {
     }
 
     Confirm::with_theme(&irosh_theme())
-        .with_prompt(format!("warning: {}", message))
+        .with_prompt(format!("warning: {message}"))
         .default(false)
         .interact()
         .unwrap_or(false)
@@ -105,7 +105,7 @@ pub fn select<T: std::fmt::Display>(prompt: &str, items: &[T]) -> Option<usize> 
 /// [C6] Text Input Prompt (visible).
 pub fn input(prompt: &str, default: Option<&str>) -> Option<String> {
     if !std::io::stdin().is_terminal() {
-        return default.map(|s| s.to_string());
+        return default.map(std::string::ToString::to_string);
     }
 
     let theme = irosh_theme();

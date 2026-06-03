@@ -124,8 +124,7 @@ fn trim_bytes(s: &[u8]) -> &[u8] {
     let end = s
         .iter()
         .rposition(|b| !b.is_ascii_whitespace())
-        .map(|i| i + 1)
-        .unwrap_or(0);
+        .map_or(0, |i| i + 1);
     if start >= end { &[] } else { &s[start..end] }
 }
 
@@ -188,15 +187,13 @@ impl InputEngine {
         } else {
             // In LocalEdit mode, we parse bytes into EditorEvents using a stateless ANSI machine.
             for &byte in data {
-                let mut line = if let Some(l) = self.active_line.take() {
-                    l
-                } else {
+                let Some(mut line) = self.active_line.take() else {
                     self.mode = InputMode::Remote;
                     break;
                 };
 
                 let event = if line.control_state != ControlSequenceState::None {
-                    self.consume_local_ansi(&mut line.control_state, byte)
+                    Self::consume_local_ansi(&mut line.control_state, byte)
                 } else if byte == 27 {
                     line.control_state = ControlSequenceState::Escape;
                     None
@@ -274,30 +271,27 @@ impl InputEngine {
                 let line_str = String::from_utf8_lossy(&bytes);
                 self.escape_history.add(&line_str);
 
-                match parse_escape(&bytes) {
-                    Some(action) => {
-                        if action == EscapeAction::CommandPrompt {
-                            finalize_submitted_line(to_local, line);
-                            self.mode = InputMode::LocalEdit;
-                            line.editor = LineEditor::new_prompt();
-                            line.display_cursor = 0;
-                            line.control_state = ControlSequenceState::None;
-                            to_local.extend_from_slice(b"\r\nirosh> ");
-                        } else {
-                            finalize_submitted_line(to_local, line);
-                            self.exit_local_prompt(to_remote);
-                        }
-                        actions.push(action);
-                    }
-                    None => {
+                if let Some(action) = parse_escape(&bytes) {
+                    if action == EscapeAction::CommandPrompt {
+                        finalize_submitted_line(to_local, line);
+                        self.mode = InputMode::LocalEdit;
+                        line.editor = LineEditor::new_prompt();
+                        line.display_cursor = 0;
+                        line.control_state = ControlSequenceState::None;
+                        to_local.extend_from_slice(b"\r\nirosh> ");
+                    } else {
                         finalize_submitted_line(to_local, line);
                         self.exit_local_prompt(to_remote);
-                        let mut r_bytes = Vec::with_capacity(bytes.len() + 2);
-                        r_bytes.push(b'~');
-                        r_bytes.extend_from_slice(&bytes);
-                        r_bytes.push(b'\r');
-                        to_remote.extend_from_slice(&r_bytes);
                     }
+                    actions.push(action);
+                } else {
+                    finalize_submitted_line(to_local, line);
+                    self.exit_local_prompt(to_remote);
+                    let mut r_bytes = Vec::with_capacity(bytes.len() + 2);
+                    r_bytes.push(b'~');
+                    r_bytes.extend_from_slice(&bytes);
+                    r_bytes.push(b'\r');
+                    to_remote.extend_from_slice(&r_bytes);
                 }
                 self.at_start_of_line = true;
                 self.local_line_len = 0;
@@ -331,7 +325,6 @@ impl InputEngine {
     }
 
     fn consume_local_ansi(
-        &self,
         state: &mut ControlSequenceState,
         byte: u8,
     ) -> Option<EditorEvent> {
@@ -354,12 +347,11 @@ impl InputEngine {
                     b'D' => Some(EditorEvent::MoveLeft),
                     b'H' => Some(EditorEvent::MoveHome),
                     b'F' => Some(EditorEvent::MoveEnd),
-                    b'3' => None, // Part of Delete sequence, usually \x1b[3~
                     b'~' => Some(EditorEvent::Delete), // Assuming \x1b[3~
                     _ => None,
                 }
             }
-            _ => None,
+            ControlSequenceState::None => None,
         }
     }
 
@@ -534,7 +526,7 @@ fn render_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
     let cursor = line.editor.cursor();
     let tail_len = line.editor.line().len().saturating_sub(cursor);
     if tail_len > 0 {
-        to_local.extend_from_slice(format!("\x1b[{}D", tail_len).as_bytes());
+        to_local.extend_from_slice(format!("\x1b[{tail_len}D").as_bytes());
     }
 
     line.display_cursor = cursor;
@@ -578,7 +570,7 @@ fn finalize_submitted_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
     // Move cursor to the end of the line before adding newline.
     let tail_len = line.editor.line().len().saturating_sub(line.display_cursor);
     if tail_len > 0 {
-        to_local.extend_from_slice(format!("\x1b[{}C", tail_len).as_bytes());
+        to_local.extend_from_slice(format!("\x1b[{tail_len}C").as_bytes());
     }
     to_local.extend_from_slice(b"\r\n");
     line.display_cursor = 0;
@@ -590,7 +582,7 @@ fn finalize_exit_line(to_local: &mut Vec<u8>, line: &mut LineSession) {
     // keypress being forwarded to the remote shell, causing spurious output.
     let tail_len = line.editor.line().len().saturating_sub(line.display_cursor);
     if tail_len > 0 {
-        to_local.extend_from_slice(format!("\x1b[{}C", tail_len).as_bytes());
+        to_local.extend_from_slice(format!("\x1b[{tail_len}C").as_bytes());
     }
     to_local.extend_from_slice(b"\r\n");
     line.display_cursor = 0;

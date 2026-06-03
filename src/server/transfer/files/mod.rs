@@ -1,3 +1,4 @@
+//! Server file transfer.
 mod blob;
 mod download;
 mod upload;

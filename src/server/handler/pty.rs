@@ -1,3 +1,4 @@
+//! SSH PTY session handler.
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -269,8 +270,7 @@ impl ServerHandler {
         #[cfg(unix)]
         let pgid = pair
             .master
-            .process_group_leader()
-            .map(|id| id as libc::pid_t);
+            .process_group_leader();
 
         let mut child = pair
             .slave
@@ -278,23 +278,24 @@ impl ServerHandler {
             .map_err(|e| ServerError::ShellError {
                 details: format!("failed to spawn command in PTY: {e}"),
             })?;
-        let pid = child.process_id();
+        let child_pid = child.process_id();
         info!(
             "Spawned PTY child for channel {:?}: command={:?}, pid={:?}",
-            channel, command, pid
+            channel, command, child_pid
         );
         if command.is_none() {
-            info!("Registering PRIMARY shell PID {:?} for session state", pid);
-            self.shell_state.set_shell_pid(pid);
+            info!("Registering PRIMARY shell PID {:?} for session state", child_pid);
+            self.shell_state.set_shell_pid(child_pid);
         } else {
             info!(
                 "Exec command PID {:?} started (not registering as primary session PID)",
-                pid
+                child_pid
             );
         }
 
         let killer = child.clone_killer();
 
+        // Reason: `reader` is mutated on some platforms (e.g. Windows) but not all.
         #[allow(unused_mut)]
         let mut reader = pair
             .master
@@ -319,11 +320,11 @@ impl ServerHandler {
             loop {
                 tokio::select! {
                     biased;
-                    _ = writer_done.cancelled() => break,
+                    () = writer_done.cancelled() => break,
                     data = pty_rx.recv() => {
                         let Some(data) = data else { break };
                         let res = tokio::task::spawn_blocking(move || {
-                            writer.write_all(&data).map(|_| {
+                            writer.write_all(&data).map(|()| {
                                 let _ = writer.flush();
                                 writer
                             })
@@ -379,7 +380,7 @@ impl ServerHandler {
             master: shared_master,
             pty_tx: Some(pty_tx),
             killer,
-            pid,
+            pid: child_pid,
             #[cfg(unix)]
             pgid,
             shutdown,
@@ -396,7 +397,7 @@ impl ServerHandler {
             debug!("PTY reader task started for channel {:?}", channel);
             let _guard = CleanupGuard {
                 channel,
-                pid: pid.unwrap_or(0),
+                pid: child_pid.unwrap_or(0),
                 shell_state,
                 channels: channels_ref,
             };
@@ -422,7 +423,7 @@ impl ServerHandler {
                         loop {
                             tokio::select! {
                                 biased;
-                                _ = task_shutdown.cancelled() => {
+                                () = task_shutdown.cancelled() => {
                                     debug!("PTY reader task cancelled for channel {:?}", channel);
                                     break;
                                 }
@@ -535,15 +536,15 @@ impl ServerHandler {
             let mut child_waiter = tokio::task::spawn_blocking(move || {
                 info!(
                     "Waiting for child process {:?} for channel {:?}",
-                    pid, channel
+                    child_pid, channel
                 );
-                let res = child.wait().map(|s| s.exit_code()).unwrap_or_else(|e| {
-                    warn!("Failed to wait for child process {pid:?}: {e}");
+                let res = child.wait().map_or_else(|e| {
+                    warn!("Failed to wait for child process {child_pid:?}: {e}");
                     255
-                });
+                }, |s| s.exit_code());
                 info!(
                     "Child process {:?} for channel {:?} exited with code {}",
-                    pid, channel, res
+                    child_pid, channel, res
                 );
                 res
             });
@@ -573,7 +574,7 @@ impl ServerHandler {
 
                     status
                 }
-                _ = &mut reader_future => {
+                () = &mut reader_future => {
                     // Reader finished (EOF). Wait for child to get exit status.
                     child_waiter.await.unwrap_or(255)
                 }
@@ -679,7 +680,7 @@ impl ServerHandler {
         }
     }
 
-    pub(super) fn forward_signal(&self, channel: ChannelId, signal: russh::Sig) {
+    pub(super) fn forward_signal(&self, channel: ChannelId, signal: &russh::Sig) {
         #[cfg(unix)]
         {
             let channels = self.lock_channels();

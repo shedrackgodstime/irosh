@@ -4,7 +4,10 @@ use crate::ui::Ui;
 use anyhow::Result;
 use irosh::storage;
 
-pub async fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
+#[must_use]
+// Reason: CLI dispatch pattern; value is moved into match.
+#[allow(clippy::needless_pass_by_value)]
+pub fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
     let state = ctx.server_state()?;
 
     match action {
@@ -30,11 +33,9 @@ pub async fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
                 Ui::info(
                     "New unknown devices will now be required to enter this password to pair.",
                 );
-            } else {
-                if ctx.args.json {
-                    crate::output::print_error("No password provided.", "missing_input");
-                    return Ok(());
-                }
+            } else if ctx.args.json {
+                crate::output::print_error("No password provided.", "missing_input");
+                return Ok(());
             }
         }
         PasswdAction::Remove => {

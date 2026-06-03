@@ -1,4 +1,6 @@
+//! Server-side transfer protocol.
 use crate::error::{Result, TransportError};
+use crate::metrics::Metrics;
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
     TransferFailure, TransferFailureCode, TransferFrame, read_next_frame, write_transfer_error,
@@ -10,15 +12,18 @@ mod files;
 mod helpers;
 mod state;
 
-pub(crate) use state::ConnectionShellState;
+pub use state::ConnectionShellState;
 pub(super) use state::ShellContext;
 
 pub(crate) async fn handle_transfer_stream(
     connection: iroh::endpoint::Connection,
     mut stream: IrohDuplex,
     shell_state: ConnectionShellState,
+    metrics: Metrics,
 ) -> Result<()> {
     let context = ShellContext::from_state(&shell_state);
+
+    metrics.record_transfer_initiated();
 
     match read_next_frame(&mut stream).await {
         Ok(TransferFrame::PutRequest(request)) => {
@@ -26,8 +31,11 @@ pub(crate) async fn handle_transfer_stream(
                 files::handle_put_request(&mut stream, request, context, &shell_state).await
             {
                 warn!("Put transfer handler failed: {}", err);
+                metrics.record_transfer_failed();
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
+            } else {
+                metrics.record_transfer_completed();
             }
             Ok(())
         }
@@ -42,8 +50,11 @@ pub(crate) async fn handle_transfer_stream(
             .await
             {
                 warn!("Blob Put transfer handler failed: {}", err);
+                metrics.record_transfer_failed();
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
+            } else {
+                metrics.record_transfer_completed();
             }
             Ok(())
         }
@@ -58,8 +69,11 @@ pub(crate) async fn handle_transfer_stream(
             .await
             {
                 warn!("Blob Get transfer handler failed: {}", err);
+                metrics.record_transfer_failed();
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
+            } else {
+                metrics.record_transfer_completed();
             }
             Ok(())
         }
@@ -68,8 +82,11 @@ pub(crate) async fn handle_transfer_stream(
                 files::handle_get_request(&mut stream, request, context, &shell_state).await
             {
                 warn!("Get transfer handler failed: {}", err);
+                metrics.record_transfer_failed();
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
+            } else {
+                metrics.record_transfer_completed();
             }
             Ok(())
         }
@@ -77,6 +94,7 @@ pub(crate) async fn handle_transfer_stream(
             if let Err(err) = control::handle_cwd_request(&mut stream, context, &shell_state).await
             {
                 warn!("Cwd request handler failed: {}", err);
+                metrics.record_error();
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
             }
@@ -87,6 +105,7 @@ pub(crate) async fn handle_transfer_stream(
                 control::handle_exists_request(&mut stream, req, context, &shell_state).await
             {
                 warn!("Exists request handler failed: {}", err);
+                metrics.record_error();
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
             }
@@ -97,12 +116,14 @@ pub(crate) async fn handle_transfer_stream(
                 control::handle_completion_request(&mut stream, req, context, &shell_state).await
             {
                 warn!("Completion request handler failed: {}", err);
+                metrics.record_error();
                 let failure = extract_transfer_failure(&err);
                 let _ = write_transfer_error(&mut stream, &failure).await;
             }
             Ok(())
         }
         Ok(other) => {
+            metrics.record_error();
             write_transfer_error(
                 &mut stream,
                 &TransferFailure::new(TransferFailureCode::UnexpectedFrame, format!("{other:?}")),
@@ -113,6 +134,7 @@ pub(crate) async fn handle_transfer_stream(
         }
         Err(err) => {
             warn!("Transfer frame decode failed: {}", err);
+            metrics.record_error();
             Ok(())
         }
     }

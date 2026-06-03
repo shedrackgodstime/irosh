@@ -1,0 +1,40 @@
+[graph]
+targets = []
+
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0089", # atomic-polyfill unmaintained — transitive via heapless/postcard, no replacement
+    "RUSTSEC-2024-0436", # paste unmaintained — transitive via netlink-packet-core, pinned by iroh deps
+    "RUSTSEC-2024-0370", # proc-macro-error unmaintained — transitive via genawaiter, pinned by iroh deps
+    "RUSTSEC-2025-0119", # number_prefix unmaintained — transitive via indicatif, pinned by iroh deps
+]
+
+[bans]
+multiple-versions = "warn"   # 40+ dupes from crypto crate splits; impractical to fix
+wildcards = "deny"
+highlight = "all"
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSL-1.0",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MPL-2.0",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"    # Allow git deps with warnings (iroh pre-release uses some)
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

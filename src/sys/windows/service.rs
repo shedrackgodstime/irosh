@@ -56,6 +56,13 @@ pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     }
 }
 
+/// Performs a service management action on Windows via the Service Control Manager.
+///
+/// # Errors
+///
+/// Returns an error if the SCM cannot be opened, the service cannot be
+/// created, started, stopped, or deleted, or if file system operations fail.
+#[must_use]
 pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Result<()> {
     match action {
         ServiceAction::Install => install_service(state).await,
@@ -191,7 +198,7 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
             .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
     });
 
-    let client = crate::IpcClient::new(state_dir);
+    let client = crate::IpcClient::new(&state_dir);
     if let Ok(res) = client.send(crate::server::ipc::IpcCommand::Shutdown).await {
         if matches!(res, crate::server::ipc::IpcResponse::Ok) {
             info!("Graceful shutdown requested via IPC.");
@@ -230,6 +237,12 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Displays the irosh service logs from the daemon log file.
+///
+/// # Errors
+///
+/// Returns an error if the daemon log file cannot be opened for reading.
+#[must_use]
 pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     let state_dir = state.unwrap_or_else(|| {
         dirs::home_dir()
@@ -281,6 +294,11 @@ define_windows_service!(ffi_service_main, irosh_service_main);
 ///
 /// Registers the main service entry point and blocks until the service
 /// receives a stop signal. Only relevant on Windows platforms.
+///
+/// # Errors
+///
+/// Returns a `windows_service::Error` if the service dispatcher fails to
+/// start or register the service entry point.
 pub fn run_service() -> std::result::Result<(), windows_service::Error> {
     windows_service::service_dispatcher::start(SERVICE_NAME, ffi_service_main)
 }
@@ -360,10 +378,11 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
 
         // Initialize file logging for the service in the user root for better visibility
         let log_path = state_root.join("daemon.log");
-        if let Ok(file) = std::fs::OpenOptions::new()
+        if let Ok(file) = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)
+            .await
         {
             let _ = tracing_subscriber::fmt()
                 .with_writer(file)

@@ -29,6 +29,12 @@ unsafe impl Sync for RawTerminal {}
 
 impl RawTerminal {
     /// Puts the standard input handle into raw mode and enables VT processing on stdout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the standard input or output handles cannot be
+    /// retrieved, or if their console modes cannot be read or modified.
+    #[must_use]
     pub fn new(_fd: i32) -> Result<Self> {
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 
@@ -141,6 +147,11 @@ pub struct AsyncStdin {
 
 impl AsyncStdin {
     /// Spawns the background input polling thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TerminalIo` error if the background input thread cannot be spawned.
+    #[must_use]
     pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let tx_resize = tx.clone();
@@ -158,6 +169,8 @@ impl AsyncStdin {
 
                 loop {
                     let mut read = 0;
+                    // SAFETY: `handle` is a valid stdin handle, `buf` is stack-allocated
+                    // with correct size, and this runs on a dedicated stdio thread.
                     if unsafe {
                         windows_sys::Win32::Storage::FileSystem::ReadFile(
                             handle,
@@ -233,7 +246,7 @@ impl AsyncStdin {
 /// Windows does not have a native POSIX signal model, so SSH signals
 /// (e.g., SIGINT, SIGTERM) are ignored here. The remote peer will not
 /// receive process-level signals through the SSH channel on Windows hosts.
-pub fn map_sig(_signal: russh::Sig) -> Option<i32> {
+pub fn map_sig(_signal: &russh::Sig) -> Option<i32> {
     None
 }
 
@@ -243,9 +256,9 @@ mod tests {
 
     #[test]
     fn map_sig_always_returns_none() {
-        assert_eq!(map_sig(russh::Sig::INT), None);
-        assert_eq!(map_sig(russh::Sig::TERM), None);
-        assert_eq!(map_sig(russh::Sig::KILL), None);
-        assert_eq!(map_sig(russh::Sig::Custom("test".into())), None);
+        assert_eq!(map_sig(&russh::Sig::INT), None);
+        assert_eq!(map_sig(&russh::Sig::TERM), None);
+        assert_eq!(map_sig(&russh::Sig::KILL), None);
+        assert_eq!(map_sig(&russh::Sig::Custom("test".into())), None);
     }
 }

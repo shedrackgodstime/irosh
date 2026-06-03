@@ -45,6 +45,7 @@ pub struct TransferProgress {
 
 /// A target for an irosh connection, which can be a direct ticket or a wormhole code.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ResolvedTarget {
     /// A direct Iroh connection ticket.
     Ticket(crate::transport::ticket::Ticket),
@@ -64,7 +65,11 @@ impl TransferProgress {
     }
 
     /// Returns the completion percentage clamped to `0..=100`.
+    #[must_use] 
     pub fn percent(&self) -> u8 {
+        if self.total == 0 {
+            return 0;
+        }
         self.transferred
             .saturating_mul(100)
             .checked_div(self.total)
@@ -90,7 +95,9 @@ impl fmt::Debug for Session {
         f.debug_struct("Session")
             .field("state", &self.state)
             .field("has_metadata", &self.remote_metadata.is_some())
-            .finish()
+            .field("has_connection", &self.connection.is_some())
+            .field("has_endpoint", &self.endpoint.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -116,6 +123,19 @@ impl Session {
         self.remote_metadata.as_ref()
     }
 
+    fn check_open(&self) -> Result<()> {
+        if self.state.is_terminal() {
+            let details = match self.state {
+                SessionState::AuthRejected => "session is rejected",
+                SessionState::TrustMismatch => "session is trust mismatch",
+                SessionState::Closed => "session is closed",
+                _ => "session is unavailable",
+            };
+            return Err(ClientError::TransportUnavailable { details }.into());
+        }
+        Ok(())
+    }
+
     /// Requests a PTY for the active session channel.
     ///
     /// This is typically called before [`Session::start_shell`] for an
@@ -124,36 +144,42 @@ impl Session {
     ///
     /// Returns an error if the request cannot be sent or the remote SSH server rejects
     /// the PTY request.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn request_pty(&self, options: PtyOptions) -> Result<()> {
+        self.check_open()?;
+        let guard = self.ensure_channel().await?;
+        let Some(ref channel) = *guard else {
+            return Err(ClientError::TransportUnavailable {
+                details: "no channel available",
+            }
+            .into());
+        };
         let size = options.size();
-        let mut guard = self.ensure_channel().await?;
-        let channel = guard
-            .as_mut()
-            .ok_or_else(|| ClientError::ChannelOpenFailed {
-                source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
-            })?;
         channel
             .request_pty(
-                true,
+                false,
                 options.term(),
-                size.cols as u32,
-                size.rows as u32,
-                size.pixel_width as u32,
-                size.pixel_height as u32,
+                u32::from(size.cols),
+                u32::from(size.rows),
+                u32::from(size.pixel_width),
+                u32::from(size.pixel_height),
                 options.modes_slice(),
             )
             .await
-            .map_err(|e| ClientError::PtyRequestFailed { source: e })?;
-        Ok(())
+            .map_err(|e| ClientError::PtyRequestFailed { source: e }.into())
     }
 
-    /// Transitions the session to a live interactive shell.
+    /// Starts an interactive shell session.
     ///
     /// # Errors
     ///
-    /// Returns an error if the shell request cannot be sent or is rejected by
-    /// the remote peer.
+    /// Returns an error if the remote server rejects the shell request or the session
+    /// is disconnected.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn start_shell(&mut self) -> Result<()> {
+        self.check_open()?;
         {
             let mut guard = self.ensure_channel().await?;
             let channel = guard
@@ -172,54 +198,49 @@ impl Session {
         Ok(())
     }
 
-    /// Requests execution of a single remote command.
+    /// Executes a single command on the remote server via the shell channel.
     ///
     /// # Errors
     ///
-    /// Returns an error if the command request cannot be sent or is rejected by
-    /// the remote side.
+    /// Returns an error if the remote server rejects the exec request or the session
+    /// is disconnected.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn exec(&mut self, command: &str) -> Result<()> {
-        {
-            let mut guard = self.ensure_channel().await?;
-            let channel = guard
-                .as_mut()
-                .ok_or_else(|| ClientError::ChannelOpenFailed {
-                    source: russh::Error::ChannelOpenFailure(
-                        russh::ChannelOpenFailure::ConnectFailed,
-                    ),
-                })?;
-            channel
-                .exec(true, command)
-                .await
-                .map_err(|e| ClientError::ExecFailed { source: e })?;
-        }
-        self.state = SessionState::ShellReady;
-        Ok(())
+        self.check_open()?;
+        let mut guard = self.ensure_channel().await?;
+        let channel = guard
+            .as_mut()
+            .ok_or_else(|| ClientError::ChannelOpenFailed {
+                source: russh::Error::ChannelOpenFailure(
+                    russh::ChannelOpenFailure::ConnectFailed,
+                ),
+            })?;
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|e| ClientError::ExecFailed { source: e }.into())
     }
 
+    /// Returns remote metadata if it was obtained during session setup.
     /// Ensures that the primary session channel is open, opening it if necessary.
-    ///
-    /// Uses double-checked locking so that the lock is not held during the
-    /// network round-trip of opening a new channel.
     pub(crate) async fn ensure_channel(
         &self,
     ) -> Result<tokio::sync::MutexGuard<'_, Option<russh::Channel<russh::client::Msg>>>> {
-        // Fast path: channel already exists.
-        {
-            let guard = self.channel.lock().await;
-            if guard.is_some() {
-                return Ok(guard);
-            }
+        let mut guard = self.channel.lock().await;
+        if guard.is_some() {
+            return Ok(guard);
         }
 
-        // Slow path: open a new channel (lock is released during the network call).
+        // Slow path: open a new channel while holding the lock.
+        // This blocks other callers during the network round-trip but avoids
+        // the TOCTOU race that double-checked locking would introduce.
         let handle = self.handle.read().await;
         let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| ClientError::ChannelOpenFailed { source: e })?;
 
-        let mut guard = self.channel.lock().await;
         *guard = Some(channel);
         Ok(guard)
     }
@@ -228,11 +249,19 @@ impl Session {
     ///
     /// This method will block until the command completes or the session is closed.
     ///
+    /// Note: This opens a **secondary** SSH channel to avoid conflicting with
+    /// the primary shell channel (used by [`start_shell`](Self::start_shell)).
+    /// The session state is not modified and continues to reflect the primary
+    /// channel.
+    ///
     /// # Errors
     ///
     /// Returns an error if the command fails to start or the session is lost.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn capture_exec(&mut self, command: &str) -> Result<ExecOutput> {
-        // This is standard SSH behavior and avoids conflicting with the shell channel.
+        self.check_open()?;
+        // Secondary channel — does not go through `ensure_channel`.
         let handle = self.handle.read().await;
         let mut channel = handle
             .channel_open_session()
@@ -279,16 +308,17 @@ impl Session {
         remote_host: String,
         remote_port: u32,
     ) -> Result<(tokio::task::JoinHandle<()>, SocketAddr)> {
+        self.check_open()?;
         let listener = tokio::net::TcpListener::bind(local_addr)
             .await
             .map_err(|e| ClientError::TunnelFailed {
-                details: format!("failed to bind local listener: {}", e),
+                details: format!("failed to bind local listener: {e}"),
             })?;
 
         let bound_addr = listener
             .local_addr()
             .map_err(|e| ClientError::TunnelFailed {
-                details: format!("failed to resolve bound local address: {}", e),
+                details: format!("failed to resolve bound local address: {e}"),
             })?;
 
         let handle = self.handle.clone();
@@ -314,7 +344,7 @@ impl Session {
                             &remote_host,
                             remote_port,
                             &addr.ip().to_string(),
-                            addr.port() as u32,
+                            u32::from(addr.port()),
                         )
                         .await
                     {
@@ -350,7 +380,10 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the SSH channel is closed or cannot accept more data.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn send(&self, data: &[u8]) -> Result<()> {
+        self.check_open()?;
         let mut guard = self.ensure_channel().await?;
         let channel = guard.as_mut().ok_or_else(|| ClientError::DataSendFailed {
             source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
@@ -366,7 +399,10 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the EOF signal cannot be sent on the current session channel.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn eof(&self) -> Result<()> {
+        self.check_open()?;
         let mut guard = self.ensure_channel().await?;
         let channel = guard.as_mut().ok_or_else(|| ClientError::EofSendFailed {
             source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
@@ -383,7 +419,10 @@ impl Session {
     ///
     /// Returns an error if the resize request cannot be sent or the remote side
     /// no longer accepts PTY changes.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn resize(&self, size: PtySize) -> Result<()> {
+        self.check_open()?;
         let mut guard = self.ensure_channel().await?;
         let channel = guard
             .as_mut()
@@ -392,10 +431,10 @@ impl Session {
             })?;
         channel
             .window_change(
-                size.cols as u32,
-                size.rows as u32,
-                size.pixel_width as u32,
-                size.pixel_height as u32,
+                u32::from(size.cols),
+                u32::from(size.rows),
+                u32::from(size.pixel_width),
+                u32::from(size.pixel_height),
             )
             .await
             .map_err(|e| ClientError::WindowChangeFailed { source: e }.into())
@@ -408,21 +447,19 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the underlying transport or SSH channel fails.
+    #[must_use]
     pub async fn next_event(&mut self) -> Result<Option<SessionEvent>> {
         let mut guard = self.channel.lock().await;
         let Some(channel) = guard.as_mut() else {
             return Ok(None);
         };
-        match channel.wait().await {
-            Some(msg) => {
-                tracing::debug!("Received low-level SSH message: {:?}", msg);
-                Ok(Some(SessionEvent::from(msg)))
-            }
-            None => {
-                tracing::debug!("Low-level SSH event stream ended (None)");
-                self.state = SessionState::Closed;
-                Ok(None)
-            }
+        if let Some(msg) = channel.wait().await {
+            tracing::debug!("Received low-level SSH message: {:?}", msg);
+            Ok(Some(SessionEvent::from(msg)))
+        } else {
+            tracing::debug!("Low-level SSH event stream ended (None)");
+            self.state = SessionState::Closed;
+            Ok(None)
         }
     }
 
@@ -431,7 +468,12 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the disconnect signal cannot be sent.
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn disconnect(&mut self) -> Result<()> {
+        if self.state.is_terminal() {
+            return Ok(());
+        }
         if let Some(channel) = self.channel.lock().await.take() {
             let _ = channel.close().await;
         }
@@ -467,12 +509,13 @@ impl Session {
         local_host: String,
         local_port: u16,
     ) -> Result<()> {
+        self.check_open()?;
         let handle = self.handle.write().await;
         handle
             .tcpip_forward(remote_host.clone(), remote_port)
             .await
             .map_err(|e| ClientError::TunnelFailed {
-                details: format!("server rejected remote forward request: {}", e),
+                details: format!("server rejected remote forward request: {e}"),
             })?;
 
         // Register the tunnel in the handler so we know where to route it
@@ -488,7 +531,9 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the connection fails or the server rejects the request.
+    #[must_use]
     pub async fn remote_completion(&mut self, path: &str) -> Result<Vec<String>> {
+        self.check_open()?;
         let mut stream = self.open_transfer_stream("completion unavailable").await?;
 
         crate::transport::transfer::write_completion_request(
@@ -520,6 +565,8 @@ impl Session {
     /// # Errors
     ///
     /// Returns any error produced by [`Session::disconnect`].
+    #[must_use]
+    #[tracing::instrument(skip(self))]
     pub async fn close(mut self) -> Result<()> {
         self.disconnect().await
     }
@@ -527,6 +574,7 @@ impl Session {
 
 /// Events that can occur during an active SSH session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SessionEvent {
     /// Raw data received from remote stdout.
     Data(Vec<u8>),
@@ -563,14 +611,25 @@ impl From<ChannelMsg> for SessionEvent {
                 error_message,
                 lang_tag,
             } => Self::ExitSignal {
-                signal: format!("{:?}", signal_name),
+                signal: format!("{signal_name:?}"),
                 core_dumped,
-                error_message: error_message.to_string(),
-                lang_tag: lang_tag.to_string(),
+                error_message: error_message.clone(),
+                lang_tag: lang_tag.clone(),
             },
-            ChannelMsg::Eof => Self::Ignore,
             ChannelMsg::Close => Self::Closed,
             _ => Self::Ignore,
         }
+    }
+}
+
+#[cfg(test)]
+mod send_sync_tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn client_handler_is_send_sync() {
+        assert_send_sync::<handler::ClientHandler>();
     }
 }

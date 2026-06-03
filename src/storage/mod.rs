@@ -29,6 +29,10 @@ pub use trust::{
 };
 
 /// Fully resets the node's trust and configuration state.
+///
+/// # Errors
+///
+/// Returns an error if the filesystem operations fail.
 pub fn reset_vault(state: &crate::config::StateConfig) -> crate::error::Result<()> {
     let trust_dir = state.root().join("trust");
     if trust_dir.exists() {
@@ -38,7 +42,11 @@ pub fn reset_vault(state: &crate::config::StateConfig) -> crate::error::Result<(
     Ok(())
 }
 
-/// Rotates the node's identity by deleting the existing secret key.
+/// Rotates the node's identity by deleting the existing secret key and generating a new one.
+///
+/// # Errors
+///
+/// Returns an error if the key deletion or generation fails.
 pub async fn rotate_identity(
     state: &crate::config::StateConfig,
 ) -> crate::error::Result<EndpointIdentity> {

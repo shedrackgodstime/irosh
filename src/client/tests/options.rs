@@ -1,6 +1,5 @@
 use super::*;
 use crate::config::HostKeyPolicy;
-use crate::error::ClientError;
 use crate::storage::{PeerProfile, save_peer};
 use crate::transport::ticket::Ticket;
 
@@ -22,27 +21,6 @@ fn parse_target_resolves_saved_peer_alias() {
     let resolved = Client::parse_target(&state, "local-server").unwrap();
     let expected: Ticket = ticket_text.parse().unwrap();
     assert_eq!(resolved, ResolvedTarget::Ticket(expected));
-}
-
-#[test]
-fn classify_connect_error_maps_security_failures_to_terminal_states() {
-    assert_eq!(
-        Client::classify_connect_error(&IroshError::AuthenticationFailed),
-        SessionState::AuthRejected
-    );
-    assert_eq!(
-        Client::classify_connect_error(&IroshError::ServerKeyMismatch {
-            expected: "a".to_string(),
-            actual: "b".to_string(),
-        }),
-        SessionState::TrustMismatch
-    );
-    assert_eq!(
-        Client::classify_connect_error(&IroshError::Client(ClientError::TransportUnavailable {
-            details: "connection dropped"
-        })),
-        SessionState::Closed
-    );
 }
 
 #[test]

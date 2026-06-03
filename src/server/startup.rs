@@ -1,5 +1,6 @@
+//! Server startup/inspection.
 use crate::auth::AuthMethod;
-use crate::error::{Result, ServerError};
+use crate::error::{IroshError, Result, ServerError};
 use crate::server::{Server, ServerOptions, ServerReady};
 use crate::storage::{load_all_authorized_clients, load_or_generate_identity};
 use crate::transport::iroh::bind_server_endpoint;
@@ -7,6 +8,7 @@ use russh::server;
 use russh::{MethodKind, MethodSet};
 use std::sync::Arc;
 
+#[tracing::instrument(skip(options))]
 pub(crate) async fn inspect_server(options: &ServerOptions) -> Result<ServerReady> {
     let identity = load_or_generate_identity(options.state()).await?;
     let server_pub = identity.ssh_key.public_key();
@@ -31,15 +33,15 @@ pub(crate) async fn inspect_server(options: &ServerOptions) -> Result<ServerRead
         }
     }
 
-    Ok(ServerReady {
-        endpoint_id: node_id.to_string(),
-        ticket: crate::transport::ticket::Ticket::new(addr),
-        relay_urls: vec![],
-        direct_addresses: vec![],
-        host_key_openssh: server_pub
+    Ok(ServerReady::new(
+        node_id.to_string(),
+        crate::transport::ticket::Ticket::new(addr),
+        vec![],
+        vec![],
+        server_pub
             .to_openssh()
             .map_err(|source| ServerError::FormatHostKey { source })?,
-    })
+    ))
 }
 
 /// Converts our [`AuthMethod`] flags into russh's [`MethodSet`].
@@ -54,6 +56,7 @@ fn build_method_set(methods: &[AuthMethod]) -> MethodSet {
     set
 }
 
+#[tracing::instrument(skip(options))]
 pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, Server)> {
     let identity = load_or_generate_identity(options.state()).await?;
     let server_key = identity.ssh_key;
@@ -67,7 +70,12 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     } else {
         match options.auth_mode {
             crate::auth::AuthMode::Key => {
-                let vault = load_all_authorized_clients(options.state())?;
+                let vault = {
+                    let state = options.state().clone();
+                    tokio::task::spawn_blocking(move || load_all_authorized_clients(&state))
+                        .await
+                        .map_err(|e| IroshError::Io(std::io::Error::other(e)))?
+                }?;
                 let keys = vault.into_iter().map(|(_, k)| k).collect();
                 Arc::new(crate::auth::KeyOnlyAuth::new(
                     options.security_config(),
@@ -76,7 +84,12 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
                 ))
             }
             crate::auth::AuthMode::Password => {
-                let hash = crate::storage::load_shadow_file(options.state())?;
+                let hash = {
+                    let state = options.state().clone();
+                    tokio::task::spawn_blocking(move || crate::storage::load_shadow_file(&state))
+                        .await
+                        .map_err(|e| IroshError::Io(std::io::Error::other(e)))?
+                }?;
                 if let Some(hash) = hash {
                     Arc::new(crate::auth::PasswordAuth::new(hash))
                 } else {
@@ -88,14 +101,24 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
                 }
             }
             crate::auth::AuthMode::Combined => {
-                let vault = load_all_authorized_clients(options.state())?;
+                let vault = {
+                    let state = options.state().clone();
+                    tokio::task::spawn_blocking(move || load_all_authorized_clients(&state))
+                        .await
+                        .map_err(|e| IroshError::Io(std::io::Error::other(e)))?
+                }?;
                 let keys = vault.into_iter().map(|(_, k)| k).collect();
                 let key_auth = crate::auth::KeyOnlyAuth::new(
                     options.security_config(),
                     keys,
                     options.state().clone(),
                 );
-                let hash = crate::storage::load_shadow_file(options.state())?;
+                let hash = {
+                    let state = options.state().clone();
+                    tokio::task::spawn_blocking(move || crate::storage::load_shadow_file(&state))
+                        .await
+                        .map_err(|e| IroshError::Io(std::io::Error::other(e)))?
+                }?;
                 if let Some(hash) = hash {
                     let pass_auth = crate::auth::PasswordAuth::new(hash);
                     Arc::new(crate::auth::CombinedAuth::new(key_auth, pass_auth))
@@ -108,7 +131,12 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
                 }
             }
             crate::auth::AuthMode::Unified => {
-                let vault = load_all_authorized_clients(options.state())?;
+                let vault = {
+                    let state = options.state().clone();
+                    tokio::task::spawn_blocking(move || load_all_authorized_clients(&state))
+                        .await
+                        .map_err(|e| IroshError::Io(std::io::Error::other(e)))?
+                }?;
                 let keys = vault.into_iter().map(|(_, k)| k).collect();
 
                 Arc::new(crate::auth::UnifiedAuthenticator::new(
@@ -168,15 +196,15 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
         }
     }
 
-    let startup = ServerReady {
-        endpoint_id: transport.endpoint_id,
-        ticket: crate::transport::ticket::Ticket::new(stable_addr),
-        relay_urls: transport.relay_urls,
-        direct_addresses: transport.direct_addresses,
-        host_key_openssh: server_pub
+    let startup = ServerReady::new(
+        transport.endpoint_id,
+        crate::transport::ticket::Ticket::new(stable_addr),
+        transport.relay_urls,
+        transport.direct_addresses,
+        server_pub
             .to_openssh()
             .map_err(|source| ServerError::FormatHostKey { source })?,
-    };
+    );
 
     let config = Arc::new(server::Config {
         auth_rejection_time: std::time::Duration::from_secs(1),
@@ -196,7 +224,7 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
             blobs: iroh_blobs::store::fs::FsStore::load(options.state().blobs_path())
                 .await
                 .map_err(|e| ServerError::AuthConfiguration {
-                    reason: format!("Failed to load blobs store: {}", e),
+                    reason: format!("Failed to load blobs store: {e}"),
                 })?,
             endpoint: transport.endpoint,
             ipc_enabled: options.ipc_enabled,
@@ -212,6 +240,7 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
             ticket,
             shutdown_on_wormhole_success: options.shutdown_on_wormhole_success,
             session_tracker: crate::server::SessionTracker::new(),
+            metrics: crate::metrics::Metrics::new(),
         },
     ))
 }

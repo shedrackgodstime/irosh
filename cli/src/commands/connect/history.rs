@@ -19,7 +19,7 @@ impl CommandHistory {
         if let Some(ref p) = path {
             if let Ok(content) = fs::read_to_string(p) {
                 // Load last 1000 entries
-                let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+                let lines: Vec<String> = content.lines().map(std::string::ToString::to_string).collect();
                 let start = lines.len().saturating_sub(MAX_HISTORY_ENTRIES);
                 entries = lines[start..].to_vec();
             }
@@ -41,7 +41,7 @@ impl CommandHistory {
         }
 
         // Avoid duplicate consecutive entries.
-        if self.entries.last().map(|s| s.as_str()) == Some(trimmed) {
+        if self.entries.last().map(std::string::String::as_str) == Some(trimmed) {
             self.index = None;
             self.pending.clear();
             return;
@@ -101,7 +101,7 @@ impl CommandHistory {
             }
 
             if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(p) {
-                let _ = writeln!(file, "{}", entry);
+                let _ = writeln!(file, "{entry}");
             }
         }
     }

@@ -4,6 +4,7 @@ use crate::ui::Ui;
 use anyhow::Result;
 use irosh::sys::service::{self, ServiceAction, ServiceStatus};
 
+#[must_use]
 pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
     let state_root = ctx.server_state_root()?;
 
@@ -42,7 +43,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                 // Try to get live info from the daemon via IPC if it might be running
                 let mut daemon_info = None;
                 if matches!(status, ServiceStatus::Active(_) | ServiceStatus::Unknown) {
-                    let client = irosh::client::ipc::IpcClient::new(state_root.clone());
+                    let client = irosh::client::ipc::IpcClient::new(&state_root);
                     if let Ok(irosh::server::ipc::IpcResponse::Status(info)) =
                         client.send(irosh::server::ipc::IpcCommand::GetStatus).await
                     {
@@ -84,6 +85,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                             daemon: daemon_info,
                             message: "Service status is unknown.",
                         },
+                        _ => unreachable!(),
                     };
                     crate::output::print_success(response);
                     return Ok(());
@@ -128,6 +130,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                     ServiceStatus::Unknown => {
                         Ui::status("Service", "UNKNOWN", None);
                     }
+                    _ => unreachable!(),
                 }
                 println!();
             }
@@ -159,24 +162,26 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
 
             let args_str = args
                 .iter()
-                .map(|a| format!("'{}'", a))
+                .map(|a| format!("'{a}'"))
                 .collect::<Vec<_>>()
                 .join(", ");
 
-            let mut cmd = std::process::Command::new("powershell");
-            // Pass the environment variable to the elevated process
-            cmd.env("IROSH_AUTO_ELEVATED", "1")
-                .arg("-NoProfile")
-                .arg("-WindowStyle")
-                .arg("Hidden")
-                .arg("-Command")
-                .arg(format!(
-                    "Start-Process -FilePath '{}' -ArgumentList {} -Verb RunAs -Wait",
-                    exe.display(),
-                    args_str
-                ));
-
-            let status = cmd.status()?;
+            let status = tokio::task::spawn_blocking(move || {
+                let mut cmd = std::process::Command::new("powershell");
+                // Pass the environment variable to the elevated process
+                cmd.env("IROSH_AUTO_ELEVATED", "1")
+                    .arg("-NoProfile")
+                    .arg("-WindowStyle")
+                    .arg("Hidden")
+                    .arg("-Command")
+                    .arg(format!(
+                        "Start-Process -FilePath '{}' -ArgumentList {} -Verb RunAs -Wait",
+                        exe.display(),
+                        args_str
+                    ));
+                cmd.status()
+            }).await.map_err(|e| anyhow::anyhow!("Blocking task failed: {e}"))?
+            .map_err(|e| anyhow::anyhow!("Command failed: {e}"))?;
             if !status.success() {
                 anyhow::bail!("Elevated action was cancelled or failed.");
             }

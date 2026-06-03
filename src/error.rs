@@ -5,6 +5,7 @@ use std::path::PathBuf;
 /// Transport-layer errors.
 #[cfg(feature = "transport")]
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TransportError {
     /// Binding a local endpoint failed.
     #[error("failed to bind transport endpoint")]
@@ -52,6 +53,7 @@ pub enum TransportError {
 /// Storage and persistence errors.
 #[cfg(feature = "storage")]
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum StorageError {
     /// Failed to create a directory at the given path.
     #[error("failed to create directory at {path}")]
@@ -230,6 +232,7 @@ pub enum StorageError {
 
 /// Authentication and credential errors.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum AuthError {
     /// Password verification failed due to an incorrect password.
     #[error("invalid password provided")]
@@ -256,6 +259,7 @@ pub enum AuthError {
 
 /// Client-side session and lifecycle errors.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ClientError {
     /// The P2P connection to the target peer failed.
     #[error("failed to connect to P2P endpoint")]
@@ -431,6 +435,7 @@ pub enum ClientError {
 
 /// Server-side orchestration errors.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ServerError {
     /// The Iroh endpoint failed to bind.
     #[error("failed to bind server endpoint")]
@@ -533,6 +538,7 @@ pub enum ServerError {
 
 /// Top-level crate error unifying all subsystem failures.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum IroshError {
     /// The current platform is not supported by this feature.
     #[error("platform not supported: {0}")]

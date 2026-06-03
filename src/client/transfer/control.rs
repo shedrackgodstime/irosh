@@ -1,3 +1,4 @@
+//! Transfer control messages.
 use crate::client::Session;
 use crate::error::{ClientError, Result, TransportError};
 use crate::transport::stream::IrohDuplex;
@@ -8,6 +9,13 @@ use crate::transport::transfer::{
 
 impl Session {
     /// Queries the current working directory of the live remote shell process for this session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer stream cannot be opened, the request
+    /// or response frames cannot be exchanged, or the remote side rejects the
+    /// request.
+    #[must_use]
     pub async fn remote_cwd(&self) -> Result<std::path::PathBuf> {
         let mut stream = self.open_transfer_stream("remote cwd unavailable").await?;
 
@@ -31,6 +39,13 @@ impl Session {
     }
 
     /// Checks if a file or directory exists on the remote system.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transfer stream cannot be opened, the request
+    /// or response frames cannot be exchanged, or the remote side rejects the
+    /// request.
+    #[must_use]
     pub async fn remote_exists(&self, path: &std::path::Path) -> Result<bool> {
         let mut stream = self
             .open_transfer_stream("remote exists unavailable")
