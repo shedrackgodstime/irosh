@@ -18,7 +18,7 @@ const WORMHOLE_PKARR_SALT: &[u8] = b"irosh-wormhole-v1";
 pub const PAIRING_ALPN: &[u8] = b"irosh/pairing/v1";
 
 /// Derives a Pkarr Keypair from a human-readable wormhole code.
-#[must_use] 
+#[must_use]
 pub fn derive_keypair(code: &str) -> Keypair {
     let mut hasher = Sha256::new();
     hasher.update(WORMHOLE_PKARR_SALT);

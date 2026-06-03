@@ -150,7 +150,7 @@ impl ServerOptions {
     }
 
     /// Returns a reference to the [`StateConfig`] this server was configured with.
-    #[must_use] 
+    #[must_use]
     pub fn state(&self) -> &StateConfig {
         &self.state
     }
@@ -160,7 +160,7 @@ impl ServerOptions {
     }
 
     /// Returns the optional shared secret for wormhole authentication.
-    #[must_use] 
+    #[must_use]
     pub fn secret_value(&self) -> Option<&str> {
         self.secret.as_deref()
     }
@@ -274,31 +274,31 @@ impl ServerReady {
     }
 
     /// Returns the unique Iroh node identifier.
-    #[must_use] 
+    #[must_use]
     pub fn endpoint_id(&self) -> &str {
         &self.endpoint_id
     }
 
     /// Returns the connection ticket for this server.
-    #[must_use] 
+    #[must_use]
     pub fn ticket(&self) -> &crate::transport::ticket::Ticket {
         &self.ticket
     }
 
     /// Returns the relay URLs the server is currently connected through.
-    #[must_use] 
+    #[must_use]
     pub fn relay_urls(&self) -> &[String] {
         &self.relay_urls
     }
 
     /// Returns directly reachable network addresses when available.
-    #[must_use] 
+    #[must_use]
     pub fn direct_addresses(&self) -> &[String] {
         &self.direct_addresses
     }
 
     /// Returns the OpenSSH-formatted host key.
-    #[must_use] 
+    #[must_use]
     pub fn host_key_openssh(&self) -> &str {
         &self.host_key_openssh
     }
@@ -336,7 +336,10 @@ impl fmt::Debug for Server {
             .field("state", &self.state)
             .field("has_secret", &self.secret.is_some())
             .field("ipc_enabled", &self.ipc_enabled)
-            .field("shutdown_on_wormhole_success", &self.shutdown_on_wormhole_success)
+            .field(
+                "shutdown_on_wormhole_success",
+                &self.shutdown_on_wormhole_success,
+            )
             .finish_non_exhaustive()
     }
 }
@@ -474,7 +477,9 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
                 let vault = match tokio::task::spawn_blocking({
                     let state = self.state.clone();
                     move || crate::storage::load_all_authorized_clients(&state)
-                }).await {
+                })
+                .await
+                {
                     Ok(Ok(vault)) => vault,
                     _ => Vec::new(),
                 };
@@ -574,7 +579,7 @@ impl Server {
     }
 
     /// Returns an explicit shutdown handle for the running server.
-    #[must_use] 
+    #[must_use]
     pub fn shutdown_handle(&self) -> ServerShutdown {
         ServerShutdown {
             endpoint: self.endpoint.clone(),
@@ -583,7 +588,7 @@ impl Server {
     }
 
     /// Returns a channel to send control commands to the server loop.
-    #[must_use] 
+    #[must_use]
     pub fn control_handle(&self) -> tokio::sync::mpsc::Sender<ipc::InternalCommand> {
         self.control_tx.clone()
     }

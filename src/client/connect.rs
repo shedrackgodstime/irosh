@@ -83,7 +83,7 @@ impl ClientOptions {
     }
 
     /// Returns a reference to the [`StateConfig`] this client was configured with.
-    #[must_use] 
+    #[must_use]
     pub fn state(&self) -> &StateConfig {
         &self.state
     }
@@ -289,9 +289,9 @@ impl Client {
         } else {
             let state = options.state().clone();
             let eid = endpoint_id.clone();
-            let inner = tokio::task::spawn_blocking(move || {
-                load_known_server(&state, &eid)
-            }).await.map_err(|e| IroshError::Io(std::io::Error::other(e)))?;
+            let inner = tokio::task::spawn_blocking(move || load_known_server(&state, &eid))
+                .await
+                .map_err(|e| IroshError::Io(std::io::Error::other(e)))?;
             inner?
         };
 
@@ -399,13 +399,10 @@ impl Client {
             Ok(handle) => {
                 let remote_metadata =
                     match tokio::time::timeout(Self::METADATA_OPEN_TIMEOUT, async {
-                        let (send, recv) = connection
-                            .open_bi()
-                            .await
-                            .map_err(|e| {
-                                tracing::error!("Failed to open metadata stream: {e}");
-                                ClientError::StreamOpenFailed { source: e }
-                            })?;
+                        let (send, recv) = connection.open_bi().await.map_err(|e| {
+                            tracing::error!("Failed to open metadata stream: {e}");
+                            ClientError::StreamOpenFailed { source: e }
+                        })?;
                         let mut stream = IrohDuplex::new(send, recv);
 
                         let metadata_res =

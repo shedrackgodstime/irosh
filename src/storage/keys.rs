@@ -47,7 +47,7 @@ impl fmt::Debug for EndpointIdentity {
 
 impl EndpointIdentity {
     /// Returns the public Endpoint ID for this identity.
-    #[must_use] 
+    #[must_use]
     pub fn endpoint_id(&self) -> String {
         self.secret_key.public().to_string()
     }

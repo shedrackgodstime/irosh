@@ -121,8 +121,8 @@ impl ShellContext {
                     }
                 }
 
-                let fallback_home = Self::home_dir(shell_state)
-                    .unwrap_or_else(|| PathBuf::from("."));
+                let fallback_home =
+                    Self::home_dir(shell_state).unwrap_or_else(|| PathBuf::from("."));
                 let path = resolve_process_cwd(pid, fallback_home).await?;
 
                 // Update cache
@@ -138,10 +138,9 @@ impl ShellContext {
                 Ok(path)
             }
             Self::Stateless => {
-                let home = Self::home_dir(shell_state)
-                    .ok_or_else(|| ServerError::ShellError {
-                        details: "could not determine server home directory".to_string(),
-                    })?;
+                let home = Self::home_dir(shell_state).ok_or_else(|| ServerError::ShellError {
+                    details: "could not determine server home directory".to_string(),
+                })?;
                 tracing::debug!("Resolved stateless CWD (home): {}", home.display());
                 Ok(home)
             }
@@ -345,7 +344,9 @@ impl ShellContext {
         }
 
         if let Some(home_relative) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
-            if home_relative.split(std::path::MAIN_SEPARATOR).any(|c| c == "..")
+            if home_relative
+                .split(std::path::MAIN_SEPARATOR)
+                .any(|c| c == "..")
                 || home_relative.split('/').any(|c| c == "..")
             {
                 return Err(ServerError::TransferFailed {
@@ -356,11 +357,9 @@ impl ShellContext {
                 }
                 .into());
             }
-            let home = Self::home_dir(shell_state)
-                .ok_or_else(|| ServerError::ShellError {
-                    details: "could not determine server home directory for ~/ expansion"
-                        .to_string(),
-                })?;
+            let home = Self::home_dir(shell_state).ok_or_else(|| ServerError::ShellError {
+                details: "could not determine server home directory for ~/ expansion".to_string(),
+            })?;
             return Ok(home.join(home_relative));
         }
 

@@ -3,8 +3,8 @@
 //! All counters use relaxed atomic ordering — they are intended for
 //! operators, not for synchronisation.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Snapshot of all counter values at a point in time.
 #[derive(Debug, Clone, Copy, Default)]
@@ -57,7 +57,10 @@ pub struct ConnectionGuard {
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        self.metrics.inner.active_connections.fetch_sub(1, Ordering::Relaxed);
+        self.metrics
+            .inner
+            .active_connections
+            .fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -72,7 +75,9 @@ impl Metrics {
     #[must_use]
     pub fn register_connection(&self) -> ConnectionGuard {
         self.inner.total_connections.fetch_add(1, Ordering::Relaxed);
-        self.inner.active_connections.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .active_connections
+            .fetch_add(1, Ordering::Relaxed);
         ConnectionGuard {
             metrics: self.clone(),
         }
@@ -90,12 +95,16 @@ impl Metrics {
 
     /// Records a transfer initiation.
     pub fn record_transfer_initiated(&self) {
-        self.inner.transfers_initiated.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .transfers_initiated
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Records a completed transfer.
     pub fn record_transfer_completed(&self) {
-        self.inner.transfers_completed.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .transfers_completed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Records a failed transfer.

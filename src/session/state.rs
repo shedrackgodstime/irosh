@@ -24,7 +24,7 @@ pub enum SessionState {
 
 impl SessionState {
     /// Returns whether this state terminates the current session lifecycle.
-    #[must_use] 
+    #[must_use]
     pub fn is_terminal(self) -> bool {
         matches!(
             self,

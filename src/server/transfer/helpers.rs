@@ -101,44 +101,35 @@ impl UploadSink {
     pub(super) async fn wait(self) -> Result<()> {
         match self {
             Self::Process(child) => {
-                let output =
-                    child
-                        .wait_with_output()
-                        .await
-                        .map_err(|e| {
-                            tracing::error!("Waiting for upload helper failed: {e}");
-                            ServerError::TransferFailed {
-                                failure: TransferFailure::new(
-                                    TransferFailureCode::Internal,
-                                    format!("waiting for upload helper failed: {e}"),
-                                ),
-                            }
-                        })?;
+                let output = child.wait_with_output().await.map_err(|e| {
+                    tracing::error!("Waiting for upload helper failed: {e}");
+                    ServerError::TransferFailed {
+                        failure: TransferFailure::new(
+                            TransferFailureCode::Internal,
+                            format!("waiting for upload helper failed: {e}"),
+                        ),
+                    }
+                })?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     tracing::error!("Upload helper failed: {stderr}");
                     return Err(ServerError::TransferFailed {
-                        failure: TransferFailure::new(
-                            TransferFailureCode::HelperFailed,
-                            stderr,
-                        ),
+                        failure: TransferFailure::new(TransferFailureCode::HelperFailed, stderr),
                     }
                     .into());
                 }
                 Ok(())
             }
             Self::File(mut file) => {
-                file.flush()
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Failed to flush upload file: {e}");
-                        ServerError::TransferFailed {
-                            failure: TransferFailure::new(
-                                TransferFailureCode::Internal,
-                                format!("failed to flush upload file: {e}"),
-                            ),
-                        }
-                    })?;
+                file.flush().await.map_err(|e| {
+                    tracing::error!("Failed to flush upload file: {e}");
+                    ServerError::TransferFailed {
+                        failure: TransferFailure::new(
+                            TransferFailureCode::Internal,
+                            format!("failed to flush upload file: {e}"),
+                        ),
+                    }
+                })?;
                 Ok(())
             }
         }
@@ -170,17 +161,15 @@ pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Re
         })?));
     }
 
-    let file = tokio::fs::File::create(dest)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to create upload file: {e}");
-            ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::Internal,
-                    format!("failed to create upload file: {e}"),
-                ),
-            }
-        })?;
+    let file = tokio::fs::File::create(dest).await.map_err(|e| {
+        tracing::error!("Failed to create upload file: {e}");
+        ServerError::TransferFailed {
+            failure: TransferFailure::new(
+                TransferFailureCode::Internal,
+                format!("failed to create upload file: {e}"),
+            ),
+        }
+    })?;
     Ok(UploadSink::File(file))
 }
 
@@ -201,19 +190,15 @@ pub(super) async fn probe_download_size(
             .stderr(std::process::Stdio::piped());
         context.configure(&mut size_probe_cmd);
 
-        let size_probe =
-            size_probe_cmd
-                .output()
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to probe download source size: {e}");
-                    ServerError::TransferFailed {
-                        failure: TransferFailure::new(
-                            TransferFailureCode::Internal,
-                            format!("failed to probe download source size: {e}"),
-                        ),
-                    }
-                })?;
+        let size_probe = size_probe_cmd.output().await.map_err(|e| {
+            tracing::error!("Failed to probe download source size: {e}");
+            ServerError::TransferFailed {
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("failed to probe download source size: {e}"),
+                ),
+            }
+        })?;
         if !size_probe.status.success() {
             let details = String::from_utf8_lossy(&size_probe.stderr)
                 .trim()
@@ -240,17 +225,15 @@ pub(super) async fn probe_download_size(
 
         let raw_stdout = String::from_utf8_lossy(&size_probe.stdout);
         let cleaned: String = raw_stdout.chars().filter(char::is_ascii_digit).collect();
-        let expected_size = cleaned
-            .parse::<u64>()
-            .map_err(|e| {
-                tracing::error!("Failed to parse download source size: {e}");
-                ServerError::TransferFailed {
-                    failure: TransferFailure::new(
-                        TransferFailureCode::Internal,
-                        format!("failed to parse download source size: {e}"),
-                    ),
-                }
-            })?;
+        let expected_size = cleaned.parse::<u64>().map_err(|e| {
+            tracing::error!("Failed to parse download source size: {e}");
+            ServerError::TransferFailed {
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("failed to parse download source size: {e}"),
+                ),
+            }
+        })?;
         return Ok(Ok(expected_size));
     }
 
@@ -330,22 +313,23 @@ pub(super) async fn spawn_download_helper(
             .stderr(std::process::Stdio::piped());
         context.configure(&mut download_cmd);
 
-        let child = download_cmd
-            .spawn()
-            .map_err(|e| {
-                tracing::error!("Failed to spawn download helper: {e}");
-                ServerError::TransferFailed {
-                    failure: TransferFailure::new(
-                        TransferFailureCode::Internal,
-                        format!("failed to spawn download helper: {e}"),
-                    ),
-                }
-            })?;
+        let child = download_cmd.spawn().map_err(|e| {
+            tracing::error!("Failed to spawn download helper: {e}");
+            ServerError::TransferFailed {
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    format!("failed to spawn download helper: {e}"),
+                ),
+            }
+        })?;
         return Ok((DownloadSource::Process(child), helper_source));
     }
 
     let file = tokio::fs::File::open(source_path).await.map_err(|e| {
-        tracing::error!("Failed to open download file {}: {e}", source_path.display());
+        tracing::error!(
+            "Failed to open download file {}: {e}",
+            source_path.display()
+        );
         if e.kind() == std::io::ErrorKind::NotFound {
             ServerError::TransferFailed {
                 failure: TransferFailure::new(

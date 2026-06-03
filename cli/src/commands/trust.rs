@@ -106,9 +106,7 @@ pub fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                         return Ok(());
                     }
 
-                    Ui::success(&format!(
-                        "Identity '{id}' has been removed from the vault."
-                    ));
+                    Ui::success(&format!("Identity '{id}' has been removed from the vault."));
                 }
             } else {
                 if ctx.args.json {

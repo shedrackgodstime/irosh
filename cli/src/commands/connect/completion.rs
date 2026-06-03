@@ -52,7 +52,9 @@ pub async fn complete_line(
 
     match classify_completion_target(mode, &parsed) {
         CompletionTarget::Keyword(token) => Ok(complete_keyword(mode, &parsed, token)),
-        CompletionTarget::PutLocalPath(raw) | CompletionTarget::ListLocalPath(raw) | CompletionTarget::ChangeLocalPath(raw) => {
+        CompletionTarget::PutLocalPath(raw)
+        | CompletionTarget::ListLocalPath(raw)
+        | CompletionTarget::ChangeLocalPath(raw) => {
             Ok(complete_local_path(&parsed, raw, transfer_context))
         }
         CompletionTarget::GetRemotePath(raw) => complete_remote_path(session, &parsed, raw).await,
@@ -186,9 +188,12 @@ fn complete_keyword(
                 replace_range(parsed, token.raw_start, token.raw_end, &replacement).into_bytes(),
             )
         }
-        matches => {
-            CompletionResult::Suggestions(matches.iter().map(std::string::ToString::to_string).collect())
-        }
+        matches => CompletionResult::Suggestions(
+            matches
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+        ),
     }
 }
 
@@ -315,7 +320,8 @@ fn local_completion_parts(raw: &str, resolved: &Path) -> (PathBuf, String, Strin
         .to_string();
 
     let search_dir = resolved
-        .parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        .parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 
     let base = match raw.rfind('/') {
         Some(index) => raw[..=index].to_string(),

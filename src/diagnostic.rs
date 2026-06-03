@@ -23,19 +23,19 @@ pub struct NetworkProbe {
 impl NetworkProbe {
     /// Returns `true` if the endpoint has at least one direct address,
     /// meaning hole-punching is likely available (Open/Restricted NAT).
-    #[must_use] 
+    #[must_use]
     pub fn has_direct_connectivity(&self) -> bool {
         !self.direct_addresses.is_empty()
     }
 
     /// Returns `true` if the endpoint is connected to at least one relay.
-    #[must_use] 
+    #[must_use]
     pub fn has_relay_connectivity(&self) -> bool {
         !self.relay_urls.is_empty()
     }
 
     /// Returns a human-readable NAT description.
-    #[must_use] 
+    #[must_use]
     pub fn nat_description(&self) -> &'static str {
         match (
             self.has_direct_connectivity(),
@@ -75,9 +75,15 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
     let addr = endpoint.addr();
     let endpoint_id = endpoint.id().to_string();
 
-    let relay_urls = addr.relay_urls().map(std::string::ToString::to_string).collect::<Vec<_>>();
+    let relay_urls = addr
+        .relay_urls()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>();
 
-    let direct_addresses = addr.ip_addrs().map(std::string::ToString::to_string).collect::<Vec<_>>();
+    let direct_addresses = addr
+        .ip_addrs()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>();
 
     // Cleanly shut down the transient endpoint before returning.
     endpoint.close().await;
@@ -121,7 +127,7 @@ pub struct SystemReport {
 }
 
 /// Checks the permissions of the state directory and identity keys.
-#[must_use] 
+#[must_use]
 pub fn check_security(state: &StateConfig) -> SecurityReport {
     let root_path = state.root().to_path_buf();
     let key_path = state.root().join("keys").join("endpoint.secret");
@@ -159,7 +165,7 @@ pub fn check_security(state: &StateConfig) -> SecurityReport {
 }
 
 /// Checks the local system environment for required dependencies.
-#[must_use] 
+#[must_use]
 pub fn check_system() -> SystemReport {
     let ssh_version = std::process::Command::new("ssh")
         .arg("-V")

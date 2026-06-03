@@ -84,7 +84,9 @@ async fn exec_internal(
         Ui::info(&format!("Connecting via explicit wormhole: {c}"));
         irosh::ResolvedTarget::WormholeCode(c)
     } else {
-        let raw_target = if let Some(t) = target_str { t } else {
+        let raw_target = if let Some(t) = target_str {
+            t
+        } else {
             let peers = irosh::storage::list_peers(&state)?;
             if peers.is_empty() {
                 Ui::warn("Address book is empty", "You haven't saved any peers yet.");
@@ -246,9 +248,7 @@ async fn exec_internal(
             // CONFLICT: Name is taken, ask for a new one.
             let fallback = format!("{}-{}", display_name, &ticket.to_addr().id.to_string()[..4]);
             Ui::input(
-                &format!(
-                    "A peer named '{display_name}' already exists. Enter a new alias"
-                ),
+                &format!("A peer named '{display_name}' already exists. Enter a new alias"),
                 Some(&fallback),
             )
         } else {

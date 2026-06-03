@@ -64,7 +64,7 @@ impl Drop for RawTerminal {
 
 /// Probes the physical terminal size utilizing the `TIOCGWINSZ` syscall.
 /// Returns the current terminal size using standard OS queries.
-#[must_use] 
+#[must_use]
 pub fn current_terminal_size() -> PtySize {
     // SAFETY: Querying terminal size via `ioctl` (TIOCGWINSZ).
     unsafe {
@@ -147,7 +147,10 @@ impl AsyncStdin {
     /// Reads the next terminal event (Data or Resize).
     ///
     /// Races between raw stdin bytes and `SIGWINCH`. Returns `None` on EOF.
-    #[allow(clippy::cast_precision_loss, reason = "POSIX struct fields are fixed-width")]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "POSIX struct fields are fixed-width"
+    )]
     pub async fn next_event(&mut self) -> Option<TerminalEvent> {
         use std::io::Read;
         let mut buf = [0u8; 4096];
@@ -175,7 +178,7 @@ impl AsyncStdin {
         loop {
             match self.next_event().await? {
                 TerminalEvent::Data(data) => return Some(data),
-                TerminalEvent::Resize(_) => {},
+                TerminalEvent::Resize(_) => {}
             }
         }
     }
@@ -219,7 +222,7 @@ impl Drop for AsyncStdin {
 }
 
 /// Maps a russh protocol signal representation into the local libc signal ID.
-#[must_use] 
+#[must_use]
 pub fn map_sig(signal: &russh::Sig) -> Option<libc::c_int> {
     match signal {
         russh::Sig::ABRT => Some(libc::SIGABRT),

@@ -1,6 +1,6 @@
 //! Peer metadata types.
-use tracing::warn;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// Maximum length for any single metadata field.
 const MAX_FIELD_LEN: usize = 255;

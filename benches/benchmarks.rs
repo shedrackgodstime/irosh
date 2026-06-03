@@ -65,14 +65,12 @@ fn bench_ssh_handshake(c: &mut Criterion) {
                 let server_state = state.clone();
                 let client_state = state;
 
-                let server_identity =
-                    irosh::storage::load_or_generate_identity(&server_state)
-                        .await
-                        .unwrap();
-                let client_identity =
-                    irosh::storage::load_or_generate_identity(&client_state)
-                        .await
-                        .unwrap();
+                let server_identity = irosh::storage::load_or_generate_identity(&server_state)
+                    .await
+                    .unwrap();
+                let client_identity = irosh::storage::load_or_generate_identity(&client_state)
+                    .await
+                    .unwrap();
 
                 let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
 
@@ -89,10 +87,9 @@ fn bench_ssh_handshake(c: &mut Criterion) {
                         Vec::new(),
                         server_state.clone(),
                     ));
-                let server_blobs =
-                    iroh_blobs::store::fs::FsStore::load(server_state.blobs_path())
-                        .await
-                        .unwrap();
+                let server_blobs = iroh_blobs::store::fs::FsStore::load(server_state.blobs_path())
+                    .await
+                    .unwrap();
                 let server_handler = irosh::server::handler::ServerHandler::new(
                     authenticator,
                     irosh::server::ConnectionShellState::new(
@@ -243,9 +240,7 @@ fn bench_transfer_full_pipeline_4mb(c: &mut Criterion) {
     c.bench_function("transfer/full_pipeline_4mb", |b| {
         b.to_async(&rt).iter_batched(
             || {
-                let chunks: Vec<Vec<u8>> = (0..64)
-                    .map(|_| vec![0u8; 64 * 1024])
-                    .collect();
+                let chunks: Vec<Vec<u8>> = (0..64).map(|_| vec![0u8; 64 * 1024]).collect();
                 (chunks, 64u64 * 64 * 1024)
             },
             |(chunks, total_size)| async move {

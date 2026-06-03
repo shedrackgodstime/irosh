@@ -2,10 +2,7 @@ use super::*;
 use proptest::prelude::*;
 
 fn arb_path() -> impl Strategy<Value = String> {
-    prop_oneof![
-        Just("/".to_string()),
-        "[a-zA-Z0-9/._-]{1,64}",
-    ]
+    prop_oneof![Just("/".to_string()), "[a-zA-Z0-9/._-]{1,64}",]
 }
 
 fn arb_mode() -> impl Strategy<Value = Option<u32>> {

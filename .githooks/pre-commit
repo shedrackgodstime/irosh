@@ -1,0 +1,34 @@
+#!/bin/sh
+# irosh pre-commit hook
+# Runs quality gates before every commit.
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+echo "[pre-commit] Checking code quality..."
+
+# Stage 1: Formatting
+echo "[pre-commit] cargo fmt --check..."
+cargo fmt --check 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "FAIL: cargo fmt --check found unformatted code. Run 'cargo fmt' to fix."
+    exit 1
+fi
+
+# Stage 2: Clippy
+echo "[pre-commit] cargo clippy..."
+cargo clippy --workspace --all-features -- -D warnings 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "FAIL: clippy found warnings/errors. Fix before committing."
+    exit 1
+fi
+
+# Stage 3: Quick unit tests (lib only, fast)
+echo "[pre-commit] cargo test --lib (quick)..."
+cargo test --workspace --all-features --lib 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "FAIL: unit tests failed. Fix before committing."
+    exit 1
+fi
+
+echo "[pre-commit] All checks passed."

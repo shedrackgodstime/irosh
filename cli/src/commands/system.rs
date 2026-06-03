@@ -180,7 +180,9 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                         args_str
                     ));
                 cmd.status()
-            }).await.map_err(|e| anyhow::anyhow!("Blocking task failed: {e}"))?
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Blocking task failed: {e}"))?
             .map_err(|e| anyhow::anyhow!("Command failed: {e}"))?;
             if !status.success() {
                 anyhow::bail!("Elevated action was cancelled or failed.");

@@ -130,7 +130,9 @@ impl client::Handler for ClientHandler {
                 let key_for_blocking = PublicKey::clone(key);
                 let event = tokio::task::spawn_blocking(move || {
                     write_known_server(&state, &node_id, &key_for_blocking)
-                }).await.map_err(|e| IroshError::Io(std::io::Error::other(e)))??;
+                })
+                .await
+                .map_err(|e| IroshError::Io(std::io::Error::other(e)))??;
                 info!(
                     "Trusted first server key and saved it to {}",
                     event.path.display()

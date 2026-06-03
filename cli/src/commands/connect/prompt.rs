@@ -190,12 +190,11 @@ pub async fn execute_local_command(
                 if let Ok(mut dir) = tokio::fs::read_dir(&target).await {
                     while let Ok(Some(entry)) = dir.next_entry().await {
                         if let Ok(name) = entry.file_name().into_string() {
-                            let prefix =
-                                if entry.file_type().await.is_ok_and(|t| t.is_dir()) {
-                                    "[DIR] "
-                                } else {
-                                    "      "
-                                };
+                            let prefix = if entry.file_type().await.is_ok_and(|t| t.is_dir()) {
+                                "[DIR] "
+                            } else {
+                                "      "
+                            };
                             entries.push(format!("{prefix}{name}"));
                         }
                     }
@@ -227,17 +226,19 @@ pub async fn execute_local_command(
             let local = transfer_context.local_root.display();
             let remote =
                 tokio::time::timeout(std::time::Duration::from_secs(30), session.remote_cwd())
-                    .await.map_or_else(|_| "unknown (timeout)".to_string(), |res| match res {
-                        Ok(p) => p.display().to_string(),
-                        Err(_) => "unknown (error)".to_string(),
-                    });
+                    .await
+                    .map_or_else(
+                        |_| "unknown (timeout)".to_string(),
+                        |res| match res {
+                            Ok(p) => p.display().to_string(),
+                            Err(_) => "unknown (error)".to_string(),
+                        },
+                    );
 
             stdout
                 .write_all(
-                    format!(
-                        "Local transfer root: {local}\r\nRemote transfer root: {remote}\r\n"
-                    )
-                    .as_bytes(),
+                    format!("Local transfer root: {local}\r\nRemote transfer root: {remote}\r\n")
+                        .as_bytes(),
                 )
                 .await?;
             print_prompt!();
@@ -289,10 +290,8 @@ pub async fn execute_local_command(
         LocalCommand::Unknown(cmd) => {
             stdout
                 .write_all(
-                    format!(
-                        "Unknown command: '{cmd}'. Type 'help' for available commands.\r\n"
-                    )
-                    .as_bytes(),
+                    format!("Unknown command: '{cmd}'. Type 'help' for available commands.\r\n")
+                        .as_bytes(),
                 )
                 .await?;
             print_prompt!();

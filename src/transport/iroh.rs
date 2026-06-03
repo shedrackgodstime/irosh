@@ -9,7 +9,7 @@ pub(crate) const BASE_ALPN: &[u8] = b"irosh/1";
 /// Derives a unique ALPN for this session based on an optional shared secret.
 /// If no secret is provided, the standard "irosh/1" protocol is used.
 /// If a secret is provided, it is hashed to create a private stealth protocol.
-#[must_use] 
+#[must_use]
 pub fn derive_alpn(secret: Option<&str>) -> Vec<u8> {
     match secret {
         None => BASE_ALPN.to_vec(),

@@ -3,9 +3,9 @@
 pub(crate) mod codec;
 mod helpers;
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod proptests;
+#[cfg(test)]
+mod tests;
 mod types;
 
 #[cfg(test)]

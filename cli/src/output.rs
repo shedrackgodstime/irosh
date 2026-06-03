@@ -42,7 +42,7 @@ impl<T: Serialize> JsonEnvelope<T> {
     }
 
     /// Creates an error envelope with the given message and code.
-    #[must_use] 
+    #[must_use]
     pub fn error(message: &str, code: &str) -> Self {
         Self {
             success: false,

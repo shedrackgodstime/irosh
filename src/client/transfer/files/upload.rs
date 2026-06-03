@@ -88,9 +88,7 @@ impl Session {
         let local = local.as_ref();
         let remote = remote.as_ref();
         // 1. Detect if it's a directory to choose correct format
-        let is_dir = tokio::fs::metadata(local)
-            .await
-            .is_ok_and(|m| m.is_dir());
+        let is_dir = tokio::fs::metadata(local).await.is_ok_and(|m| m.is_dir());
         let target_format = if is_dir {
             BlobFormat::HashSeq
         } else {

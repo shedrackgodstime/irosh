@@ -134,7 +134,7 @@ pub struct IpcServer {
 
 impl IpcServer {
     /// Creates a new IPC server using the provided state directory for the socket path.
-    #[must_use] 
+    #[must_use]
     pub fn new(state_dir: PathBuf, control_tx: tokio::sync::mpsc::Sender<InternalCommand>) -> Self {
         Self {
             state_dir,

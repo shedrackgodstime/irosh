@@ -178,12 +178,9 @@ async fn handle_recursive_put_request(
                     }
                 } else {
                     // Use atomic rename pattern for each file in the recursive stream
-                    let Some(prepared) = prepare_put_destination(
-                        context,
-                        &full_path_str,
-                        shell_state,
-                    )
-                    .await? else {
+                    let Some(prepared) =
+                        prepare_put_destination(context, &full_path_str, shell_state).await?
+                    else {
                         write_transfer_error(stream, &target_exists_failure(&full_path))
                             .await
                             .map_err(TransportError::from)?;

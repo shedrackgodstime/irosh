@@ -268,9 +268,7 @@ impl ServerHandler {
         }
 
         #[cfg(unix)]
-        let pgid = pair
-            .master
-            .process_group_leader();
+        let pgid = pair.master.process_group_leader();
 
         let mut child = pair
             .slave
@@ -284,7 +282,10 @@ impl ServerHandler {
             channel, command, child_pid
         );
         if command.is_none() {
-            info!("Registering PRIMARY shell PID {:?} for session state", child_pid);
+            info!(
+                "Registering PRIMARY shell PID {:?} for session state",
+                child_pid
+            );
             self.shell_state.set_shell_pid(child_pid);
         } else {
             info!(
@@ -538,10 +539,13 @@ impl ServerHandler {
                     "Waiting for child process {:?} for channel {:?}",
                     child_pid, channel
                 );
-                let res = child.wait().map_or_else(|e| {
-                    warn!("Failed to wait for child process {child_pid:?}: {e}");
-                    255
-                }, |s| s.exit_code());
+                let res = child.wait().map_or_else(
+                    |e| {
+                        warn!("Failed to wait for child process {child_pid:?}: {e}");
+                        255
+                    },
+                    |s| s.exit_code(),
+                );
                 info!(
                     "Child process {:?} for channel {:?} exited with code {}",
                     child_pid, channel, res

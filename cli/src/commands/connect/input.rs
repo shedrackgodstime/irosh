@@ -161,7 +161,7 @@ impl InputEngine {
         let mut actions = Vec::new();
 
         if self.mode == InputMode::Remote {
-            for &byte in data {
+            for (i, &byte) in data.iter().enumerate() {
                 // Swallow \r\n or \n\r pairs from local terminal.
                 if let Some(pair) = self.swallow_next_enter_pair {
                     if byte == pair {
@@ -180,6 +180,16 @@ impl InputEngine {
                     };
                     to_local.push(b'~');
                     self.active_line = Some(new_line);
+                    // Process any remaining bytes in this buffer in LocalEdit
+                    // mode instead of leaking them to remote (arrow keys, etc.).
+                    if i + 1 < data.len() {
+                        let remaining = &data[i + 1..];
+                        let (r, l, a) = self.process_local(remaining);
+                        to_remote.extend(r);
+                        to_local.extend(l);
+                        actions.extend(a);
+                    }
+                    break;
                 } else {
                     self.handle_remote_byte(byte, &mut to_remote);
                 }
@@ -324,10 +334,7 @@ impl InputEngine {
         }
     }
 
-    fn consume_local_ansi(
-        state: &mut ControlSequenceState,
-        byte: u8,
-    ) -> Option<EditorEvent> {
+    fn consume_local_ansi(state: &mut ControlSequenceState, byte: u8) -> Option<EditorEvent> {
         match state {
             ControlSequenceState::Escape => {
                 if byte == b'[' {
@@ -339,6 +346,11 @@ impl InputEngine {
                 }
             }
             ControlSequenceState::Csi => {
+                // Parameter bytes (0x20-0x3F: digits, `;`, `<`, `=`, `>`, `?`)
+                // stay in CSI state. Only final bytes (0x40-0x7E) produce events.
+                if (0x20..=0x3F).contains(&byte) {
+                    return None; // stay in CSI, consume parameter
+                }
                 *state = ControlSequenceState::None;
                 match byte {
                     b'A' => Some(EditorEvent::HistoryUp),
@@ -347,7 +359,7 @@ impl InputEngine {
                     b'D' => Some(EditorEvent::MoveLeft),
                     b'H' => Some(EditorEvent::MoveHome),
                     b'F' => Some(EditorEvent::MoveEnd),
-                    b'~' => Some(EditorEvent::Delete), // Assuming \x1b[3~
+                    b'~' => Some(EditorEvent::Delete), // \x1b[3~ etc.
                     _ => None,
                 }
             }
@@ -703,6 +715,87 @@ mod tests {
         let (_, _, actions) = engine.process_local(b"\r");
         assert_eq!(actions, vec![EscapeAction::CommandPrompt]);
         assert_eq!(engine.mode, InputMode::LocalEdit);
+    }
+
+    #[test]
+    fn test_arrow_keys_in_same_buffer_as_tilde_do_not_leak_to_remote() {
+        let (mut engine, _dir) = setup_engine();
+        // Simulate pressing ~ then right-arrow in one OS read buffer.
+        let (remote, local, actions) = engine.process_local(b"~\x1b[C");
+        assert!(
+            remote.is_empty(),
+            "arrow key bytes must not leak to remote: {remote:?}"
+        );
+        assert_eq!(engine.mode, InputMode::LocalEdit);
+        assert!(local.contains(&b'~'), "local must show tilde");
+        // Right arrow after tilde should move cursor right (no-op since cursor already at end)
+        assert!(
+            actions.is_empty(),
+            "movement alone should not produce actions"
+        );
+    }
+
+    #[test]
+    fn test_up_arrow_in_escape_mode_shows_history() {
+        let (mut engine, _dir) = setup_engine();
+        // ~ then up-arrow in one buffer
+        let (remote, _, _) = engine.process_local(b"~\x1b[A");
+        assert!(
+            remote.is_empty(),
+            "up arrow must not leak to remote: {remote:?}"
+        );
+        assert_eq!(engine.mode, InputMode::LocalEdit);
+    }
+
+    #[test]
+    fn test_left_arrow_in_escape_mode_does_not_corrupt_line() {
+        let (mut engine, _dir) = setup_engine();
+        engine.process_local(b"~");
+        engine.process_local(b"\x1b[D");
+        let (remote, _, _) = engine.process_local(b"\r");
+        // The escape line ("~") is submitted to remote as an unknown command.
+        // The important thing: raw \x1b[D bytes must NOT appear in remote.
+        assert!(
+            !remote.contains(&0x1b),
+            "escape sequences must not leak to remote: {remote:?}"
+        );
+        assert!(
+            remote.contains(&b'~'),
+            "tilde should be sent to remote as fallback"
+        );
+    }
+
+    #[test]
+    fn test_multi_byte_csi_delete_in_escape_mode() {
+        let (mut engine, _dir) = setup_engine();
+        engine.process_local(b"~");
+        engine.process_local(b"a");
+        engine.process_local(b"b");
+        engine.process_local(b"c");
+        // Move cursor left one position (before 'c')
+        engine.process_local(b"\x1b[D");
+        // Now press Delete (\x1b[3~) to remove 'c'
+        engine.process_local(b"\x1b[3~");
+        // Verify editor state (not visible output, which is cursor positioning)
+        let line = engine.active_line.as_ref().expect("active line exists");
+        assert_eq!(
+            line.editor.line(),
+            b"~ab",
+            "Delete should remove char after cursor"
+        );
+        assert_eq!(line.editor.cursor(), 3, "cursor should stay after removal");
+
+        // Submit — remote should contain CR only (fallback goes via RunLocal action)
+        let (remote, _, actions) = engine.process_local(b"\r");
+        assert!(
+            !remote.contains(&0x1b),
+            "no raw escape bytes should leak to remote: {remote:?}"
+        );
+        assert_eq!(
+            actions,
+            vec![EscapeAction::RunLocal(LocalCommand::Unknown("ab".into()))],
+            "unknown escape should produce RunLocal action"
+        );
     }
 
     #[test]

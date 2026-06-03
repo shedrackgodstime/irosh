@@ -64,7 +64,7 @@ impl<'de> Deserialize<'de> for Ticket {
 
 impl Ticket {
     /// Creates a new ticket from an Iroh EndpointAddr.
-    #[must_use] 
+    #[must_use]
     pub fn new(addr: EndpointAddr) -> Self {
         Self {
             inner: EndpointTicket::new(addr),
@@ -72,7 +72,7 @@ impl Ticket {
     }
 
     /// Returns a cloned copy of the underlying endpoint address.
-    #[must_use] 
+    #[must_use]
     pub fn to_addr(&self) -> EndpointAddr {
         self.inner.endpoint_addr().clone()
     }

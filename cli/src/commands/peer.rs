@@ -55,12 +55,11 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             println!("  ----------------------------------------------------\n");
         }
         PeerAction::Add { name, ticket } => {
-            let target_ticket = if let Some(t) = ticket { t } else {
+            let target_ticket = if let Some(t) = ticket {
+                t
+            } else {
                 if ctx.args.json {
-                    crate::output::print_error(
-                        "Missing required argument: ticket",
-                        "missing_args",
-                    );
+                    crate::output::print_error("Missing required argument: ticket", "missing_args");
                     return Ok(());
                 }
                 match Ui::input("Enter the peer connection ticket", None) {
@@ -148,14 +147,18 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             ));
         }
         PeerAction::Remove { name } => {
-            let target_name = if let Some(n) = name { n } else {
+            let target_name = if let Some(n) = name {
+                n
+            } else {
                 let peers = storage::list_peers(state)?;
                 if peers.is_empty() {
                     Ui::info("No peers to remove.");
                     return Ok(());
                 }
                 let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
-                if let Some(idx) = Ui::select("Select a peer to remove", &items) { peers[idx].name.clone() } else {
+                if let Some(idx) = Ui::select("Select a peer to remove", &items) {
+                    peers[idx].name.clone()
+                } else {
                     Ui::info("Cancelled.");
                     return Ok(());
                 }
@@ -178,14 +181,18 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             }
         }
         PeerAction::Info { name } => {
-            let target_name = if let Some(n) = name { n } else {
+            let target_name = if let Some(n) = name {
+                n
+            } else {
                 let peers = storage::list_peers(state)?;
                 if peers.is_empty() {
                     Ui::info("Your address book is empty.");
                     return Ok(());
                 }
                 let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
-                if let Some(idx) = Ui::select("Select a peer to inspect", &items) { peers[idx].name.clone() } else {
+                if let Some(idx) = Ui::select("Select a peer to inspect", &items) {
+                    peers[idx].name.clone()
+                } else {
                     Ui::info("Cancelled.");
                     return Ok(());
                 }
@@ -193,7 +200,10 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
 
             if let Some(p) = storage::load_peer(state, &target_name)? {
                 let addr = p.ticket.to_addr();
-                let relay = addr.relay_urls().next().map(std::string::ToString::to_string);
+                let relay = addr
+                    .relay_urls()
+                    .next()
+                    .map(std::string::ToString::to_string);
 
                 if ctx.args.json {
                     #[derive(serde::Serialize)]
@@ -238,14 +248,18 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
         }
 
         PeerAction::Rename { old_name, new_name } => {
-            let target_old = if let Some(n) = old_name { n } else {
+            let target_old = if let Some(n) = old_name {
+                n
+            } else {
                 let peers = storage::list_peers(state)?;
                 if peers.is_empty() {
                     Ui::info("No peers to rename.");
                     return Ok(());
                 }
                 let items: Vec<String> = peers.iter().map(|p| p.name.clone()).collect();
-                if let Some(idx) = Ui::select("Select a peer to rename", &items) { peers[idx].name.clone() } else {
+                if let Some(idx) = Ui::select("Select a peer to rename", &items) {
+                    peers[idx].name.clone()
+                } else {
                     Ui::info("Cancelled.");
                     return Ok(());
                 }
@@ -272,9 +286,7 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             }
 
             if storage::rename_peer(state, &target_old, &target_new)? {
-                Ui::success(&format!(
-                    "Peer renamed: '{target_old}' -> '{target_new}'"
-                ));
+                Ui::success(&format!("Peer renamed: '{target_old}' -> '{target_new}'"));
                 Ui::info(&format!("Connect with: irosh connect {target_new}"));
             } else {
                 Ui::error(

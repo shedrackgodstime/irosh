@@ -15,7 +15,7 @@ pub struct IpcClient {
 
 impl IpcClient {
     /// Creates a new IPC client targeting the daemon in the specified state directory.
-    #[must_use] 
+    #[must_use]
     pub fn new(state_dir: &std::path::Path) -> Self {
         #[cfg(unix)]
         let socket_path = state_dir.join("irosh.sock");
@@ -61,8 +61,9 @@ impl IpcClient {
 
     #[cfg(windows)]
     async fn connect(&self) -> Result<tokio::net::TcpStream> {
-        let port_str =
-            tokio::fs::read_to_string(&self.socket_path).await.map_err(crate::error::IroshError::Io)?;
+        let port_str = tokio::fs::read_to_string(&self.socket_path)
+            .await
+            .map_err(crate::error::IroshError::Io)?;
         let port: u16 = port_str.trim().parse().map_err(|_| {
             crate::error::IroshError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

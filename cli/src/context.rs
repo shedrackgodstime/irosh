@@ -9,13 +9,53 @@ pub struct CliContext {
     pub state: StateConfig,
 }
 
+/// Returns true when `dirs::home_dir()` returned the SYSTEM profile on Windows.
+fn is_system_profile(home: &std::path::Path) -> bool {
+    home.to_string_lossy()
+        .to_lowercase()
+        .contains("system32\\config\\systemprofile")
+}
+
+/// Finds the best state directory, handling Windows SYSTEM context.
+fn resolve_state_dir(subdir: &str) -> Option<PathBuf> {
+    if let Some(state) = std::env::var_os("IROSH_STATE") {
+        return Some(PathBuf::from(state));
+    }
+    let home = dirs::home_dir()?;
+    if !is_system_profile(&home) {
+        return Some(home.join(".irosh").join(subdir));
+    }
+    // Running as SYSTEM on Windows — try common user profile paths.
+    #[cfg(windows)]
+    {
+        let base = PathBuf::from("C:\\Users");
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                let path = entry
+                    .path()
+                    .join("AppData")
+                    .join("Local")
+                    .join("irosh")
+                    .join(subdir);
+                if path.join("ipc.port").exists()
+                    || path.join("config").exists()
+                    || path.join("keys").exists()
+                {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    Some(PathBuf::from("C:\\Users\\Default\\AppData\\Local\\irosh").join(subdir))
+}
+
 impl CliContext {
     #[must_use]
     pub fn new(args: Args) -> Result<Self> {
         let state_root = args
             .state
             .clone()
-            .or_else(|| dirs::home_dir().map(|h| h.join(".irosh").join("client")))
+            .or_else(|| resolve_state_dir("client"))
             .context("could not determine state directory")?;
 
         let state = StateConfig::new(state_root.clone());
@@ -29,7 +69,7 @@ impl CliContext {
         self.args
             .state
             .clone()
-            .or_else(|| dirs::home_dir().map(|h| h.join(".irosh").join("server")))
+            .or_else(|| resolve_state_dir("server"))
             .context("could not determine server state directory")
     }
 

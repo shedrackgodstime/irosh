@@ -65,7 +65,7 @@ impl TransferProgress {
     }
 
     /// Returns the completion percentage clamped to `0..=100`.
-    #[must_use] 
+    #[must_use]
     pub fn percent(&self) -> u8 {
         if self.total == 0 {
             return 0;
@@ -212,9 +212,7 @@ impl Session {
         let channel = guard
             .as_mut()
             .ok_or_else(|| ClientError::ChannelOpenFailed {
-                source: russh::Error::ChannelOpenFailure(
-                    russh::ChannelOpenFailure::ConnectFailed,
-                ),
+                source: russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed),
             })?;
         channel
             .exec(true, command)

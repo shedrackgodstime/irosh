@@ -136,7 +136,7 @@ pub struct KeyOnlyAuth {
 
 impl KeyOnlyAuth {
     /// Creates a new key-only authenticator with the given policy and initial keys.
-    #[must_use] 
+    #[must_use]
     pub fn new(
         security: SecurityConfig,
         authorized_keys: Vec<PublicKey>,
@@ -303,7 +303,7 @@ pub struct CombinedAuth {
 
 impl CombinedAuth {
     /// Creates a combined authenticator from a key backend and a password backend.
-    #[must_use] 
+    #[must_use]
     pub fn new(key_auth: KeyOnlyAuth, password_auth: PasswordAuth) -> Self {
         Self {
             key_auth,
@@ -416,7 +416,7 @@ pub struct UnifiedAuthenticator {
 
 impl UnifiedAuthenticator {
     /// Creates a new unified authenticator.
-    #[must_use] 
+    #[must_use]
     pub fn new(
         state: StateConfig,
         policy: HostKeyPolicy,
@@ -438,7 +438,7 @@ impl UnifiedAuthenticator {
 
     /// Creates a new unified authenticator that shares its success and failure tracking
     /// with an external monitor (used by the Server for wormhole auto-burn).
-    #[must_use] 
+    #[must_use]
     pub fn with_tracking(
         state: StateConfig,
         policy: HostKeyPolicy,
@@ -460,13 +460,13 @@ impl UnifiedAuthenticator {
     }
 
     /// Returns the success flag, which is set to true when a NEW device is successfully added to the vault.
-    #[must_use] 
+    #[must_use]
     pub fn was_successful(&self) -> bool {
         self.success_flag.load(Ordering::Relaxed)
     }
 
     /// Returns the number of failed password attempts.
-    #[must_use] 
+    #[must_use]
     pub fn failed_attempts(&self) -> u32 {
         self.failed_attempts.load(Ordering::Relaxed)
     }
@@ -557,7 +557,9 @@ impl UnifiedAuthenticator {
 impl Authenticator for UnifiedAuthenticator {
     fn supported_methods(&self) -> Vec<AuthMethod> {
         let mut methods = vec![AuthMethod::PublicKey];
-        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) { hash.is_some() } else {
+        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) {
+            hash.is_some()
+        } else {
             warn!("Failed to read shadow file, assuming password exists (fail-closed)");
             true
         };
@@ -600,7 +602,9 @@ impl Authenticator for UnifiedAuthenticator {
         }
 
         // 3. If any password exists, we MUST reject the public key and force a password challenge.
-        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) { hash.is_some() } else {
+        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) {
+            hash.is_some()
+        } else {
             warn!("Failed to read shadow file, assuming password exists (fail-closed)");
             true
         };

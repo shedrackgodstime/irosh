@@ -19,7 +19,10 @@ impl CommandHistory {
         if let Some(ref p) = path {
             if let Ok(content) = fs::read_to_string(p) {
                 // Load last 1000 entries
-                let lines: Vec<String> = content.lines().map(std::string::ToString::to_string).collect();
+                let lines: Vec<String> = content
+                    .lines()
+                    .map(std::string::ToString::to_string)
+                    .collect();
                 let start = lines.len().saturating_sub(MAX_HISTORY_ENTRIES);
                 entries = lines[start..].to_vec();
             }

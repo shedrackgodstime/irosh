@@ -33,19 +33,19 @@ impl StateConfig {
     ///
     /// The directory does not need to exist prior to initialization;
     /// the relevant storage modules will create subdirectories as needed.
-    #[must_use] 
+    #[must_use]
     pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
 
     /// Returns the root directory used for state storage.
-    #[must_use] 
+    #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     /// Returns the directory where iroh blobs are stored.
-    #[must_use] 
+    #[must_use]
     pub fn blobs_path(&self) -> PathBuf {
         self.root.join("blobs")
     }

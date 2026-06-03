@@ -271,7 +271,10 @@ impl Session {
             }
             other => {
                 return Err(ClientError::DownloadFailed {
-                    details: format!("unexpected preflight frame for {}: {other:?}", remote.display()),
+                    details: format!(
+                        "unexpected preflight frame for {}: {other:?}",
+                        remote.display()
+                    ),
                 }
                 .into());
             }
@@ -331,7 +334,8 @@ impl Session {
                     let _ = tokio::fs::remove_file(&temp_path).await;
                     return Err(ClientError::DownloadFailed {
                         details: format!(
-                            "unexpected data stream frame for {}: {other:?}", remote.display()
+                            "unexpected data stream frame for {}: {other:?}",
+                            remote.display()
                         ),
                     }
                     .into());

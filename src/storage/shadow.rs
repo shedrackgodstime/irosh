@@ -6,7 +6,7 @@ use crate::storage::utils::atomic_write_secure;
 use std::path::PathBuf;
 
 /// Returns the path to the server's shadow file.
-#[must_use] 
+#[must_use]
 pub fn shadow_file_path(state: &StateConfig) -> PathBuf {
     state.root().join("shadow")
 }

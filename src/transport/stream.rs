@@ -31,7 +31,7 @@ impl std::fmt::Debug for IrohDuplex {
 
 impl IrohDuplex {
     /// Creates a new `IrohDuplex` from an Iroh send/recv stream pair.
-    #[must_use] 
+    #[must_use]
     pub fn new(send: SendStream, recv: RecvStream) -> Self {
         Self {
             send,
@@ -58,7 +58,7 @@ impl IrohDuplex {
 
     /// Creates a new `IrohDuplex` with a pre-read prefix buffer.
     /// This is useful for stream dispatching based on magic headers.
-    #[must_use] 
+    #[must_use]
     pub fn with_prefix(send: SendStream, recv: RecvStream, prefix: Vec<u8>) -> Self {
         let chained = tokio::io::AsyncReadExt::chain(std::io::Cursor::new(prefix), recv);
         Self {

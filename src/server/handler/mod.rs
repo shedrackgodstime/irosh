@@ -34,10 +34,7 @@ pub struct ServerHandler {
 impl ServerHandler {
     /// Creates a new server handler with the given authenticator and shell state.
     #[must_use]
-    pub fn new(
-        authenticator: Arc<dyn Authenticator>,
-        shell_state: ConnectionShellState,
-    ) -> Self {
+    pub fn new(authenticator: Arc<dyn Authenticator>, shell_state: ConnectionShellState) -> Self {
         Self {
             channels: Arc::new(StdMutex::new(HashMap::new())),
             streamed_channels: Arc::new(StdMutex::new(std::collections::HashSet::new())),
