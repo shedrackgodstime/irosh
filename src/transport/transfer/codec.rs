@@ -112,6 +112,7 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
             | KIND_COMPLETION_RESPONSE
             | KIND_BLOB_PUT_REQUEST
             | KIND_BLOB_GET_REQUEST
+            | KIND_BLOB_GET_READY
     ) {
         return Err(TransferError::UnsupportedKind(kind));
     }

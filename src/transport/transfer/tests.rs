@@ -353,3 +353,24 @@ async fn old_decoder_rejects_unknown_transfer_kind() {
     let err = read_next_frame(&mut server).await.unwrap_err();
     assert!(matches!(err, TransferError::UnsupportedKind(k) if k == unknown_kind));
 }
+
+#[tokio::test]
+async fn blob_get_ready_round_trip_succeeds() {
+    let ready = BlobGetReady {
+        hash: "sha256:abc123".to_string(),
+        format: "raw".to_string(),
+        size: 4096,
+    };
+
+    let (mut client, mut server) = tokio::io::duplex(1024);
+    let write = tokio::spawn(async move { write_blob_get_ready(&mut client, &ready).await });
+    let read = tokio::spawn(async move { read_next_frame(&mut server).await });
+
+    write.await.unwrap().unwrap();
+    let decoded = read.await.unwrap().unwrap();
+    assert_eq!(decoded, TransferFrame::BlobGetReady(BlobGetReady {
+        hash: "sha256:abc123".to_string(),
+        format: "raw".to_string(),
+        size: 4096,
+    }));
+}
