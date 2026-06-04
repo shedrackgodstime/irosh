@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::types::{
-    BlobGetReady, BlobGetRequest, BlobPutRequest, CwdRequest, CwdResponse, ExistsRequest,
-    ExistsResponse, GetRequest, MAX_CHUNK_BYTES, MAX_CONTROL_BYTES, PutRequest, TransferComplete,
-    TransferError, TransferFailure, TransferFrame, TransferReady,
+    BlobGetReady, BlobGetRequest, BlobPutRequest, Capability, CwdRequest, CwdResponse,
+    ExistsRequest, ExistsResponse, GetRequest, MAX_CHUNK_BYTES, MAX_CONTROL_BYTES, PutRequest,
+    TransferComplete, TransferError, TransferFailure, TransferFrame, TransferReady,
 };
 
 /// Magic header for transfer frames.
@@ -19,6 +19,10 @@ pub(crate) const MAGIC: [u8; 4] = *b"IRFT";
 /// Current transfer protocol version.
 pub(crate) const VERSION: u8 = 1;
 
+#[cfg(test)]
+pub(crate) const KIND_CAPABILITY: u8 = 0;
+#[cfg(not(test))]
+const KIND_CAPABILITY: u8 = 0;
 #[cfg(test)]
 pub(crate) const KIND_PUT_REQUEST: u8 = 1;
 #[cfg(not(test))]
@@ -93,7 +97,8 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
     let kind = reader.read_u8().await?;
     if !matches!(
         kind,
-        KIND_PUT_REQUEST
+        KIND_CAPABILITY
+            | KIND_PUT_REQUEST
             | KIND_PUT_READY
             | KIND_PUT_CHUNK
             | KIND_PUT_COMPLETE
@@ -550,6 +555,31 @@ pub async fn write_blob_get_ready<W: AsyncWrite + Unpin>(
     write_json_frame(writer, KIND_BLOB_GET_READY, ready).await
 }
 
+/// Writes a capability negotiation frame to the stream.
+///
+/// # Errors
+///
+/// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[inline]
+pub async fn write_capability<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    cap: &Capability,
+) -> Result<(), TransferError> {
+    write_json_frame(writer, KIND_CAPABILITY, cap).await
+}
+
+/// Reads a capability negotiation frame from the stream.
+///
+/// # Errors
+///
+/// Returns an error if the frame is not a capability or if decoding fails.
+#[inline]
+pub async fn read_capability<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<Capability, TransferError> {
+    read_json_frame(reader, KIND_CAPABILITY).await
+}
+
 /// Reads and decodes the next transfer frame from the stream.
 ///
 /// # Errors
@@ -561,6 +591,7 @@ pub async fn read_next_frame<R: AsyncRead + Unpin>(
 ) -> Result<TransferFrame, TransferError> {
     let (kind, payload) = read_frame(reader).await?;
     match kind {
+        KIND_CAPABILITY => Ok(TransferFrame::Capability(serde_json::from_slice(&payload)?)),
         KIND_PUT_REQUEST => Ok(TransferFrame::PutRequest(serde_json::from_slice(&payload)?)),
         KIND_PUT_READY => Ok(TransferFrame::PutReady(serde_json::from_slice(&payload)?)),
         KIND_PUT_CHUNK => Ok(TransferFrame::PutChunk(payload)),

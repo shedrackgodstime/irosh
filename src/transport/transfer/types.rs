@@ -8,6 +8,11 @@ pub(crate) const MAX_CONTROL_BYTES: usize = 8 * 1024;
 /// Maximum chunk payload size.
 pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 
+/// Highest kind supported by v0.3.0 and earlier (pre-blob era).
+pub(crate) const LEGACY_MAX_KIND: u8 = 17;
+/// Highest kind supported by the current version.
+pub(crate) const CURRENT_MAX_KIND: u8 = 20;
+
 /// An upload request from client to server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PutRequest {
@@ -223,10 +228,21 @@ pub struct CompletionResponse {
     pub matches: Vec<String>,
 }
 
+/// Capability advertisement sent as the first frame on a new transfer stream.
+///
+/// Used to negotiate the set of frame kinds both peers support.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Capability {
+    /// The highest frame kind this peer supports.
+    pub max_kind: u8,
+}
+
 /// A decoded transfer frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransferFrame {
+    /// Capability negotiation frame (sent first on new streams).
+    Capability(Capability),
     /// The client wishes to upload a file.
     PutRequest(PutRequest),
     /// The server is ready to accept upload data.

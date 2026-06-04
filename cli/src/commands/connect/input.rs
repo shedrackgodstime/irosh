@@ -190,9 +190,8 @@ impl InputEngine {
                         actions.extend(a);
                     }
                     break;
-                } else {
-                    self.handle_remote_byte(byte, &mut to_remote);
                 }
+                self.handle_remote_byte(byte, &mut to_remote);
             }
         } else {
             // In LocalEdit mode, we parse bytes into EditorEvents using a stateless ANSI machine.

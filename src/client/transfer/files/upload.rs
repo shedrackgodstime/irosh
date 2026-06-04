@@ -137,8 +137,18 @@ impl Session {
             details: "add_path finished without hash".to_string(),
         })?;
 
-        // 2. Open transfer stream and send BlobPutRequest
-        let mut stream = self.open_transfer_stream("blob upload unavailable").await?;
+        // 2. Open transfer stream and negotiate capabilities
+        let (mut stream, max_kind) = self
+            .open_negotiated_stream("blob upload unavailable")
+            .await?;
+
+        if max_kind < 18 {
+            return Err(ClientError::UploadFailed {
+                details: "remote peer does not support blob transfers; use upload() instead"
+                    .to_string(),
+            }
+            .into());
+        }
 
         write_blob_put_request(
             &mut stream,
@@ -205,7 +215,7 @@ impl Session {
             .into());
         }
 
-        let mut stream = self.open_transfer_stream("upload unavailable").await?;
+        let (mut stream, _max_kind) = self.open_negotiated_stream("upload unavailable").await?;
 
         let mut file =
             tokio::fs::File::open(local)
@@ -338,8 +348,8 @@ impl Session {
         let local_root = local.as_ref();
         let remote_root = remote.as_ref();
 
-        let mut stream = self
-            .open_transfer_stream("recursive upload unavailable")
+        let (mut stream, _max_kind) = self
+            .open_negotiated_stream("recursive upload unavailable")
             .await?;
 
         // 1. Send recursive PutRequest
