@@ -105,15 +105,14 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
     }
 
     for i in 0..3 {
-        let client_options =
-            ClientOptions::new(temp_state_dir(&format!("client-rate-limit-{}", i)))
-                .security(crate::config::SecurityConfig {
-                    host_key_policy: HostKeyPolicy::AcceptAll,
-                })
-                .credentials(Credentials {
-                    user: "irosh".to_string(),
-                    password: SecretString::new("wrong-password".to_string()),
-                });
+        let client_options = ClientOptions::new(temp_state_dir(&format!("client-rate-limit-{i}")))
+            .security(crate::config::SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .credentials(Credentials {
+                user: "irosh".to_string(),
+                password: SecretString::new("wrong-password".to_string()),
+            });
         let connection_info = Client::dial_p2p(&client_options, ready.ticket().clone(), true)
             .await
             .unwrap();

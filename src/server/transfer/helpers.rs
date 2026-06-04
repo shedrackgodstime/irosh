@@ -76,6 +76,8 @@ pub(super) fn atomic_rename_failure(path: &str) -> TransferFailure {
 /// A destination for upload data that can be either a helper process or a file.
 pub(super) enum UploadSink {
     /// Data is piped to a spawned helper process.
+    // Reason: Process variant exists for the Linux helper-pipe upload path
+    // which is conditionally compiled. On non-Linux targets this variant is dead code.
     #[allow(dead_code)]
     Process(tokio::process::Child),
     /// Data is written directly to a local file.
@@ -136,6 +138,7 @@ impl UploadSink {
     }
 }
 
+// Reason: `context` is only used on Linux for the helper-pipe upload path.
 #[allow(unused_variables)]
 pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Result<UploadSink> {
     #[cfg(target_os = "linux")]
@@ -173,6 +176,7 @@ pub(super) async fn spawn_upload_helper(context: ShellContext, dest: &str) -> Re
     Ok(UploadSink::File(file))
 }
 
+// Reason: `context` is only used on Linux for the helper-pipe download path.
 #[allow(unused_variables)]
 pub(super) async fn probe_download_size(
     context: ShellContext,
@@ -274,6 +278,8 @@ pub(super) async fn probe_download_size(
 /// A source for download data that can be either a helper process or a file.
 pub(super) enum DownloadSource {
     /// Data is read from a spawned helper process.
+    // Reason: Process variant exists for the Linux helper-pipe download path
+    // which is conditionally compiled. On non-Linux targets this variant is dead code.
     #[allow(dead_code)]
     Process(tokio::process::Child),
     /// Data is read directly from a local file.
@@ -297,6 +303,7 @@ impl DownloadSource {
     }
 }
 
+// Reason: `context` is only used on Linux for the helper-pipe download path.
 #[allow(unused_variables)]
 pub(super) async fn spawn_download_helper(
     context: ShellContext,

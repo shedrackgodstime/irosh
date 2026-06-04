@@ -94,32 +94,13 @@ impl fmt::Display for Ticket {
 impl FromStr for Ticket {
     type Err = TicketError;
 
-    /// Parses an irosh ticket from either the native endpoint ticket string
-    /// format or a legacy JSON endpoint-address form.
-    ///
-    /// The JSON fallback exists for backward compatibility with older
-    /// management flows and should not be treated as the preferred external
-    /// representation.
+    /// Parses an irosh ticket from the native endpoint ticket string format.
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let s = s.trim();
 
-        // Try to parse using Iroh's native EndpointTicket format.
-        if let Ok(endpoint_ticket) = s.parse::<EndpointTicket>() {
-            return Ok(Self {
-                inner: endpoint_ticket,
-            });
-        }
-
-        // Fallback to JSON (legacy management - maybe remove later?)
-        if s.starts_with('{') {
-            if let Ok(addr) = serde_json::from_str::<EndpointAddr>(s) {
-                return Ok(Self::new(addr));
-            }
-        }
-
-        Err(TicketError::InvalidFormat(format!(
-            "could not parse as ticket or JSON: {s}"
-        )))
+        s.parse::<EndpointTicket>()
+            .map(|inner| Self { inner })
+            .map_err(|_| TicketError::InvalidFormat(format!("could not parse as ticket: {s}")))
     }
 }
 

@@ -141,9 +141,7 @@ impl client::Handler for ClientHandler {
                 *known = Some(key.clone());
                 Ok(true)
             }
-            HostKeyPolicy::AcceptAll => {
-                unreachable!("AcceptAll already handled at top of function")
-            }
+            HostKeyPolicy::AcceptAll => Ok(true),
         }
     }
 

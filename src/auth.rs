@@ -576,6 +576,11 @@ impl Authenticator for UnifiedAuthenticator {
         }
         let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
 
+        // 0. AcceptAll: accept every key without tracking.
+        if self.policy == HostKeyPolicy::AcceptAll {
+            return Ok(true);
+        }
+
         {
             let authorized = self.lock_keys();
             // 1. Established trust (Vault) always wins.
@@ -738,11 +743,10 @@ mod tests {
 
     #[test]
     fn unified_auth_tofu_works_with_no_passwords() -> crate::Result<()> {
+        use russh::keys::ssh_key::{PrivateKey, private::Ed25519Keypair};
+
         let state = temp_state("unified-tofu");
         let auth = UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], None);
-
-        use russh::keys::ssh_key::PrivateKey;
-        use russh::keys::ssh_key::private::Ed25519Keypair;
 
         let keypair = Ed25519Keypair::from_seed(&[0u8; 32]);
         let key = PrivateKey::from(keypair).public_key().clone();

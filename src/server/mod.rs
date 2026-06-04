@@ -708,12 +708,10 @@ impl Server {
                                     });
                                 }
 
-                                let gossip = self.gossip.clone();
                                 let ticket = self.ticket.clone();
                                 let code_clone = code.clone();
                                 let task = tokio::spawn(async move {
                                     if let Err(e) = crate::transport::wormhole::broadcast_ticket_loop(
-                                        &gossip,
                                         &code_clone,
                                         ticket,
                                     )

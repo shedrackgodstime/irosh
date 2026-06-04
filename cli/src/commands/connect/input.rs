@@ -816,7 +816,7 @@ mod tests {
         assert_eq!(engine.mode, InputMode::Remote);
         match &actions[0] {
             EscapeAction::RunLocal(cmd) => {
-                assert!(matches!(cmd, super::super::prompt::LocalCommand::Exit))
+                assert!(matches!(cmd, super::super::prompt::LocalCommand::Exit));
             }
             _ => panic!("Expected RunLocal(Exit)"),
         }

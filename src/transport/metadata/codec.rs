@@ -10,9 +10,9 @@ pub(crate) const MAGIC: [u8; 4] = *b"IRMD";
 pub(crate) const MAGIC: [u8; 4] = *b"IRMD";
 /// Current metadata protocol version.
 #[cfg(test)]
-pub(crate) const VERSION: u8 = 1;
+pub(crate) const VERSION: u8 = 2;
 #[cfg(not(test))]
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 /// Client request asking the peer to send metadata.
 const KIND_METADATA_REQUEST: u8 = 1;
 /// Server response containing peer metadata.

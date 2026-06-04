@@ -274,7 +274,7 @@ pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
             Ok(_) => {
-                print!("{}", line);
+                tracing::info!("{}", line);
             }
             Err(e) => {
                 warn!("Error reading logs: {}", e);
@@ -299,6 +299,7 @@ define_windows_service!(ffi_service_main, irosh_service_main);
 ///
 /// Returns a `windows_service::Error` if the service dispatcher fails to
 /// start or register the service entry point.
+#[must_use]
 pub fn run_service() -> std::result::Result<(), windows_service::Error> {
     windows_service::service_dispatcher::start(SERVICE_NAME, ffi_service_main)
 }

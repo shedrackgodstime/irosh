@@ -111,6 +111,7 @@ impl AsyncStdin {
     /// # Errors
     ///
     /// Returns an error if the underlying terminal I/O operation fails.
+    #[must_use]
     pub fn new() -> Result<Self> {
         use std::os::unix::io::AsRawFd;
         let fd = std::io::stdin().as_raw_fd();

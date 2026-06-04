@@ -224,7 +224,7 @@ async fn transfer_rejects_oversized_control_payload() {
         client.write_u8(VERSION).await.unwrap();
         client.write_u8(KIND_PUT_REQUEST).await.unwrap();
         client
-            .write_u32((MAX_CONTROL_BYTES as u32) + 1)
+            .write_u32(u32::try_from(MAX_CONTROL_BYTES).unwrap() + 1)
             .await
             .unwrap();
     });
@@ -242,7 +242,7 @@ async fn transfer_rejects_oversized_chunk_payload() {
         client.write_u8(VERSION).await.unwrap();
         client.write_u8(KIND_GET_CHUNK).await.unwrap();
         client
-            .write_u32((MAX_CHUNK_BYTES as u32) + 1)
+            .write_u32(u32::try_from(MAX_CHUNK_BYTES).unwrap() + 1)
             .await
             .unwrap();
     });
@@ -376,89 +376,4 @@ async fn blob_get_ready_round_trip_succeeds() {
             size: 4096,
         })
     );
-}
-
-#[tokio::test]
-async fn capability_round_trip_succeeds() {
-    let (mut client, mut server) = tokio::io::duplex(256);
-    let write =
-        tokio::spawn(
-            async move { write_capability(&mut client, &Capability { max_kind: 20 }).await },
-        );
-    let read = tokio::spawn(async move { read_capability(&mut server).await });
-
-    write.await.unwrap().unwrap();
-    let decoded = read.await.unwrap().unwrap();
-    assert_eq!(decoded, Capability { max_kind: 20 });
-}
-
-#[tokio::test]
-async fn capability_is_recognized_by_read_next_frame() {
-    let (mut client, mut server) = tokio::io::duplex(256);
-    let write = tokio::spawn(async move {
-        write_capability(&mut client, &Capability { max_kind: 20 })
-            .await
-            .unwrap();
-    });
-    let read = tokio::spawn(async move { read_next_frame(&mut server).await });
-
-    write.await.unwrap();
-    let decoded = read.await.unwrap().unwrap();
-    assert_eq!(
-        decoded,
-        TransferFrame::Capability(Capability { max_kind: 20 })
-    );
-}
-
-#[tokio::test]
-async fn negotiation_full_handshake_succeeds() {
-    let client_cap = Capability { max_kind: 20 };
-    let server_cap = Capability { max_kind: 17 };
-
-    let (mut client, mut server) = tokio::io::duplex(256);
-
-    let client_task = tokio::spawn(async move {
-        write_capability(&mut client, &client_cap).await.unwrap();
-        let resp = read_capability(&mut client).await.unwrap();
-        std::cmp::min(client_cap.max_kind, resp.max_kind)
-    });
-
-    let server_task = tokio::spawn(async move {
-        let client = read_capability(&mut server).await.unwrap();
-        let negotiated = std::cmp::min(client.max_kind, server_cap.max_kind);
-        write_capability(
-            &mut server,
-            &Capability {
-                max_kind: server_cap.max_kind,
-            },
-        )
-        .await
-        .unwrap();
-        negotiated
-    });
-
-    let client_result = client_task.await.unwrap();
-    let server_result = server_task.await.unwrap();
-    assert_eq!(client_result, 17); // min(20, 17)
-    assert_eq!(server_result, 17);
-}
-
-#[tokio::test]
-async fn capability_negotiation_with_legacy_peer_graceful_fallback_works() {
-    // Simulate end-to-end: new client sends capability, old server (pre-capability)
-    // would reject it. The rejection path in read_frame returns UnsupportedKind.
-    // This test verifies the legacy decoder rejects kind 255 as a proxy for the
-    // old-server behavior (already tested in old_decoder_rejects_unknown_transfer_kind).
-    // Here we verify the new decoder correctly handles the capability handshake
-    // by accepting kind 0 and parsing it as a valid frame.
-    let (mut client, mut server) = tokio::io::duplex(256);
-    let writer = tokio::spawn(async move {
-        write_capability(&mut client, &Capability { max_kind: 0 })
-            .await
-            .unwrap();
-    });
-
-    writer.await.unwrap();
-    let frame = read_next_frame(&mut server).await.unwrap();
-    assert!(matches!(frame, TransferFrame::Capability(_)));
 }

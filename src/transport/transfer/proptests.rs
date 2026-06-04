@@ -28,7 +28,7 @@ fn arb_failure_code() -> impl Strategy<Value = TransferFailureCode> {
 
 proptest! {
     #[test]
-    fn put_request_roundtrip(path in arb_path(), size in 0u64..1000000, mode in arb_mode(), recursive in any::<bool>()) {
+    fn put_request_roundtrip(path in arb_path(), size in 0u64..1_000_000, mode in arb_mode(), recursive in any::<bool>()) {
         let req = PutRequest { path, size, mode, recursive };
         let json = serde_json::to_vec(&req).unwrap();
         let decoded: PutRequest = serde_json::from_slice(&json).unwrap();
@@ -44,7 +44,7 @@ proptest! {
     }
 
     #[test]
-    fn transfer_ready_roundtrip(size in 0u64..1000000, mode in arb_mode()) {
+    fn transfer_ready_roundtrip(size in 0u64..1_000_000, mode in arb_mode()) {
         let req = TransferReady { size, mode };
         let json = serde_json::to_vec(&req).unwrap();
         let decoded: TransferReady = serde_json::from_slice(&json).unwrap();
@@ -52,7 +52,7 @@ proptest! {
     }
 
     #[test]
-    fn entry_header_roundtrip(path in arb_path(), size in 0u64..1000000, mode in arb_mode(), is_dir in any::<bool>()) {
+    fn entry_header_roundtrip(path in arb_path(), size in 0u64..1_000_000, mode in arb_mode(), is_dir in any::<bool>()) {
         let req = EntryHeader { path, size, mode, is_dir };
         let json = serde_json::to_vec(&req).unwrap();
         let decoded: EntryHeader = serde_json::from_slice(&json).unwrap();

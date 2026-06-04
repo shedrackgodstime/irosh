@@ -9,6 +9,10 @@ use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::System::JobObjects::*;
 use windows_sys::Win32::System::Threading::*;
 
+/// A Windows Job Object that groups child processes for automatic cleanup.
+///
+/// When the `JobObject` is dropped (or the process exits), all assigned child
+/// processes are terminated by the OS via the `KILL_ON_JOB_CLOSE` flag.
 pub struct JobObject {
     handle: HANDLE,
 }
@@ -94,6 +98,7 @@ pub static GLOBAL_JOB: std::sync::OnceLock<JobObject> = std::sync::OnceLock::new
 ///
 /// Returns an error if `JobObject::new` fails to create the underlying
 /// Win32 job object or configure it.
+#[must_use]
 pub fn init_global_job() -> std::io::Result<()> {
     if GLOBAL_JOB.get().is_none() {
         let job = JobObject::new()?;
@@ -109,6 +114,7 @@ pub fn init_global_job() -> std::io::Result<()> {
 ///
 /// Returns an error if `init_global_job` fails or if the underlying
 /// `AssignProcessToJobObject` call fails.
+#[must_use]
 pub fn assign_current_process_to_job() -> std::io::Result<()> {
     init_global_job()?;
     if let Some(job) = GLOBAL_JOB.get() {

@@ -95,19 +95,10 @@ impl Session {
         let remote = remote.as_ref();
         let local = local.as_ref();
 
-        // 1. Open transfer stream and negotiate capabilities
-        let (mut stream, max_kind) = self
-            .open_negotiated_stream("blob download unavailable")
+        // 1. Send BlobGetRequest to server to resolve path to hash
+        let mut stream = self
+            .open_transfer_stream("blob download unavailable")
             .await?;
-
-        if max_kind < 18 {
-            return Err(ClientError::DownloadFailed {
-                details: "remote peer does not support blob transfers; use download() instead"
-                    .to_string(),
-            }
-            .into());
-        }
-
         write_blob_get_request(
             &mut stream,
             &BlobGetRequest {
@@ -144,12 +135,12 @@ impl Session {
             BlobFormat::Raw
         };
 
-        // 3. Download via iroh-blobs
+        // 3. Download via iroh-blobs (use dedicated blobs connection)
         let conn = self
-            .connection
+            .blobs_connection
             .clone()
             .ok_or_else(|| ClientError::DownloadFailed {
-                details: "not connected to any peer".to_string(),
+                details: "no blobs connection available".to_string(),
             })?;
 
         let mut fetch_stream = self.blobs.remote().fetch(conn, hash).stream();
@@ -258,7 +249,7 @@ impl Session {
             .into());
         }
 
-        let (mut stream, _max_kind) = self.open_negotiated_stream("download unavailable").await?;
+        let mut stream = self.open_transfer_stream("download unavailable").await?;
 
         write_get_request(
             &mut stream,
@@ -390,8 +381,8 @@ impl Session {
         let remote_root = remote.as_ref();
         let local_root = local.as_ref();
 
-        let (mut stream, _max_kind) = self
-            .open_negotiated_stream("recursive download unavailable")
+        let mut stream = self
+            .open_transfer_stream("recursive download unavailable")
             .await?;
 
         // 1. Send recursive GetRequest

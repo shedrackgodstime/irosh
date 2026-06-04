@@ -269,7 +269,7 @@ mod tests {
             secret_key: key,
             ssh_key,
         };
-        let debug = format!("{:?}", identity);
+        let debug = format!("{identity:?}");
         assert!(debug.contains("<redacted>"));
         assert!(debug.contains("secret_key: \"<redacted>\""));
         let _ = std::fs::remove_dir_all(state.root());

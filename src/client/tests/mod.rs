@@ -102,6 +102,7 @@ async fn connect_test_session(
             handler: client_handler_clone,
             channel: tokio::sync::Mutex::new(Some(channel)),
             connection: None,
+            blobs_connection: None,
             endpoint: None,
             remote_metadata: None,
             state: SessionState::Authenticated,

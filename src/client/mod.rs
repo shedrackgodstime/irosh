@@ -84,6 +84,7 @@ pub struct Session {
     pub(super) handler: handler::ClientHandler,
     channel: tokio::sync::Mutex<Option<russh::Channel<russh::client::Msg>>>,
     connection: Option<iroh::endpoint::Connection>,
+    blobs_connection: Option<iroh::endpoint::Connection>,
     endpoint: Option<iroh::Endpoint>,
     remote_metadata: Option<crate::transport::metadata::PeerMetadata>,
     state: SessionState,
@@ -96,6 +97,7 @@ impl fmt::Debug for Session {
             .field("state", &self.state)
             .field("has_metadata", &self.remote_metadata.is_some())
             .field("has_connection", &self.connection.is_some())
+            .field("has_blobs_connection", &self.blobs_connection.is_some())
             .field("has_endpoint", &self.endpoint.is_some())
             .finish_non_exhaustive()
     }
@@ -483,6 +485,9 @@ impl Session {
 
         // Explicitly close Iroh resources to avoid ungraceful drop panics.
         if let Some(conn) = self.connection.take() {
+            conn.close(0u32.into(), b"Session disconnected");
+        }
+        if let Some(conn) = self.blobs_connection.take() {
             conn.close(0u32.into(), b"Session disconnected");
         }
         if let Some(endpoint) = self.endpoint.take() {

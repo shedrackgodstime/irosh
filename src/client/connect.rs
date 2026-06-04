@@ -203,6 +203,7 @@ impl Client {
         iroh::endpoint::Connection,
         iroh::Endpoint,
         iroh_blobs::store::fs::FsStore,
+        iroh::endpoint::Connection, // blobs connection
     )> {
         let blobs = iroh_blobs::store::fs::FsStore::load(options.state().blobs_path())
             .await
@@ -243,7 +244,34 @@ impl Client {
             )
             .await
             {
-                Ok(Ok(connection)) => return Ok((connection, endpoint, blobs)),
+                Ok(Ok(connection)) => {
+                    // Also establish a blobs-ALPN connection for content-addressed transfers
+                    let blobs_connection = match tokio::time::timeout(
+                        Self::CONNECT_TIMEOUT,
+                        endpoint.connect(target_addr.clone(), iroh_blobs::ALPN),
+                    )
+                    .await
+                    {
+                        Ok(Ok(c)) => c,
+                        Ok(Err(err)) => {
+                            tracing::warn!("Blobs connection failed (non-fatal): {err}");
+                            connection.close(0u32.into(), b"blobs connect failed");
+                            endpoint.close().await;
+                            return Err(ClientError::ConnectFailed { source: err }.into());
+                        }
+                        Err(_) => {
+                            connection.close(0u32.into(), b"blobs connect timeout");
+                            endpoint.close().await;
+                            return Err(ClientError::ConnectFailed {
+                                source: iroh::endpoint::ConnectError::from(
+                                    iroh::endpoint::ConnectionError::Reset,
+                                ),
+                            }
+                            .into());
+                        }
+                    };
+                    return Ok((connection, endpoint, blobs, blobs_connection));
+                }
                 Ok(Err(err)) => {
                     last_err = Some(ClientError::ConnectFailed { source: err });
                 }
@@ -273,10 +301,11 @@ impl Client {
     #[tracing::instrument(skip(options, connection, endpoint, blobs))]
     pub async fn establish_session(
         options: &ClientOptions,
-        (connection, endpoint, blobs): (
+        (connection, endpoint, blobs, blobs_connection): (
             iroh::endpoint::Connection,
             iroh::Endpoint,
             iroh_blobs::store::fs::FsStore,
+            iroh::endpoint::Connection,
         ),
     ) -> Result<Session> {
         let endpoint_id = connection.remote_id().to_string();
@@ -446,6 +475,7 @@ impl Client {
                     handler,
                     channel: tokio::sync::Mutex::new(None),
                     connection: Some(connection),
+                    blobs_connection: Some(blobs_connection),
                     endpoint: Some(endpoint),
                     remote_metadata,
                     state,

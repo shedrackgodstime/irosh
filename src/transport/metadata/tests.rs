@@ -73,7 +73,7 @@ async fn metadata_rejects_oversized_payload() {
         client.write_u8(VERSION).await.unwrap();
         client.write_u8(KIND_PEER_METADATA).await.unwrap();
         client
-            .write_u32((MAX_METADATA_BYTES as u32) + 1)
+            .write_u32(u32::try_from(MAX_METADATA_BYTES).unwrap() + 1)
             .await
             .unwrap();
     });

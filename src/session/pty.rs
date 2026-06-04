@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn pty_size_clamps_to_maximum() {
-        let large = u16::MAX as u32 + 100;
+        let large = u32::from(u16::MAX) + 100;
         let result = pty_size(large, large, large, large);
         assert_eq!(result.cols, u16::MAX);
         assert_eq!(result.rows, u16::MAX);

@@ -90,9 +90,6 @@ fn write_public_key(path: &Path, key: &PublicKey) -> Result<()> {
 
 /// Loads the pinned server public key for a specific node ID, if one has been trusted in the past.
 ///
-/// This function also checks the legacy single-tenant trust file for backward
-/// compatibility.
-///
 /// # Errors
 ///
 /// Returns an error if a trust file exists but cannot be read or parsed.
@@ -110,28 +107,11 @@ pub fn load_known_server(state: &StateConfig, node_id: &str) -> Result<Option<Pu
                 .into()
             })
     } else {
-        // Fallback for legacy single-tenant file
-        let legacy_path = state.root().join("trust/known_server.pub");
-        if legacy_path.exists() {
-            PublicKey::read_openssh_file(&legacy_path)
-                .map(Some)
-                .map_err(|source| {
-                    StorageError::PublicKeyRead {
-                        path: legacy_path.clone(),
-                        source,
-                    }
-                    .into()
-                })
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     }
 }
 
 /// Loads the authorized client public key for a specific node ID, if one has been trusted in the past.
-///
-/// This function also checks the legacy single-tenant trust file for backward
-/// compatibility.
 ///
 /// # Errors
 ///
@@ -150,21 +130,7 @@ pub fn load_authorized_client(state: &StateConfig, node_id: &str) -> Result<Opti
                 .into()
             })
     } else {
-        // Fallback for legacy single-tenant file
-        let legacy_path = state.root().join("trust/authorized_client.pub");
-        if legacy_path.exists() {
-            PublicKey::read_openssh_file(&legacy_path)
-                .map(Some)
-                .map_err(|source| {
-                    StorageError::PublicKeyRead {
-                        path: legacy_path.clone(),
-                        source,
-                    }
-                    .into()
-                })
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     }
 }
 
@@ -201,14 +167,6 @@ pub fn load_all_authorized_clients(state: &StateConfig) -> Result<Vec<(String, P
                     }
                 }
             }
-        }
-    }
-
-    // Fallback for legacy single-tenant file
-    let legacy_path = state.root().join("trust/authorized_client.pub");
-    if legacy_path.exists() {
-        if let Ok(key) = PublicKey::read_openssh_file(&legacy_path) {
-            keys.push(("legacy".to_string(), key));
         }
     }
 
@@ -295,9 +253,6 @@ fn remove_if_exists(path: &Path) -> Result<bool> {
 
 /// Analyzes and returns the state of all current trust records on disk.
 ///
-/// Both per-node trust files and legacy single-tenant files are included when
-/// present.
-///
 /// # Errors
 ///
 /// Returns an error if trust directories or trust files cannot be inspected.
@@ -306,19 +261,8 @@ pub fn inspect_trust(state: &StateConfig) -> Result<TrustSummary> {
     let servers_dir = state.root().join("trust").join("servers");
     let clients_dir = state.root().join("trust").join("clients");
 
-    let mut known_servers = read_trust_dir(&servers_dir)?;
-    let mut authorized_clients = read_trust_dir(&clients_dir)?;
-
-    // Also inspect legacy files if they exist
-    let legacy_server = state.root().join("trust/known_server.pub");
-    if legacy_server.exists() {
-        known_servers.push(inspect_public_key_record(legacy_server)?);
-    }
-
-    let legacy_client = state.root().join("trust/authorized_client.pub");
-    if legacy_client.exists() {
-        authorized_clients.push(inspect_public_key_record(legacy_client)?);
-    }
+    let known_servers = read_trust_dir(&servers_dir)?;
+    let authorized_clients = read_trust_dir(&clients_dir)?;
 
     Ok(TrustSummary {
         known_servers,

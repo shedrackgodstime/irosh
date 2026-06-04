@@ -50,7 +50,7 @@ pub fn warn(title: &str, message: &str) {
 /// Green check — operation succeeded.
 pub fn success(msg: &str) {
     if !JSON_MODE.load(Ordering::SeqCst) {
-        eprintln!("{} {}", style("✓").green().bold(), msg);
+        eprintln!("{} {}", style("[OK]").green().bold(), msg);
     }
 }
 

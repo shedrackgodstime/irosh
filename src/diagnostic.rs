@@ -97,6 +97,8 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
 
 /// The result of a security permissions check.
 #[derive(Debug, Clone, PartialEq, Eq)]
+// Reason: SecurityReport intentionally exposes each permission as a separate bool
+// for diagnostic display purposes. Grouping them would obscure individual failures.
 #[allow(clippy::struct_excessive_bools)]
 pub struct SecurityReport {
     /// The daemon's state directory path.
