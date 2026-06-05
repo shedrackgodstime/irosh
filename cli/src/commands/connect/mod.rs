@@ -94,7 +94,7 @@ async fn exec_internal(
                 Ui::info("  1. Use a wormhole code:   irosh <code-word>");
                 Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
                 Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
-                println!();
+                Ui::blank();
 
                 match Ui::input("Enter a wormhole code or ticket", None) {
                     Some(val) if !val.trim().is_empty() => val.trim().to_string(),

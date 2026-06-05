@@ -1,5 +1,6 @@
 use crate::commands::ConfigAction;
 use crate::context::CliContext;
+use crate::output::Output;
 use crate::ui::Ui;
 use anyhow::Result;
 
@@ -31,9 +32,8 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                 return Ok(());
             }
 
-            println!("\n  Global Configuration");
-            println!("  ----------------------------------------------------");
-            println!("  {:<18} {:<30}", "SETTING", "VALUE");
+            Output::section("Global Configuration");
+            Output::line(&format!("  {:<18} {:<30}", "SETTING", "VALUE"));
 
             let settings = [
                 (
@@ -53,9 +53,10 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
             ];
 
             for (k, v) in settings {
-                println!("  {k:<18} {v}");
+                Output::line(&format!("  {k:<18} {v}"));
             }
-            println!("  ----------------------------------------------------\n");
+            Output::hr();
+            Output::nl();
         }
         ConfigAction::Get { key } => {
             let val = match key.as_str() {

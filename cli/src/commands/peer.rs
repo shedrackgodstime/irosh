@@ -1,6 +1,7 @@
 use crate::commands::PeerAction;
 use crate::context::CliContext;
 use crate::display;
+use crate::output::Output;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::storage;
@@ -45,14 +46,18 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 return Ok(());
             }
 
-            println!("\n  Saved Peers (Address Book)");
-            println!("  ----------------------------------------------------");
-            println!("  {:<18} {:<30}", "ALIAS", "TICKET SUMMARY");
+            Output::section("Saved Peers (Address Book)");
+            Output::line(&format!("  {:<18} {:<30}", "ALIAS", "TICKET SUMMARY"));
 
             for p in peers {
-                println!("  {:<18} {}", p.name, display::shorten_ticket(&p.ticket));
+                Output::line(&format!(
+                    "  {:<18} {}",
+                    p.name,
+                    display::shorten_ticket(&p.ticket)
+                ));
             }
-            println!("  ----------------------------------------------------\n");
+            Output::hr();
+            Output::nl();
         }
         PeerAction::Add { name, ticket } => {
             let target_ticket = if let Some(t) = ticket {
@@ -222,16 +227,16 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                     return Ok(());
                 }
 
-                println!("\n  Peer Detail: {target_name}");
-                println!("  ----------------------------------------------------");
-                println!("  Alias:       {target_name}");
-                println!("  Endpoint ID: {}", addr.id);
-                println!("  Ticket:    {}", p.ticket);
+                Output::section(&format!("Peer Detail: {target_name}"));
+                Output::line(&format!("  Alias:       {target_name}"));
+                Output::line(&format!("  Endpoint ID: {}", addr.id));
+                Output::line(&format!("  Ticket:      {}", p.ticket));
 
                 if let Some(r) = relay {
-                    println!("  Relay:     {r}");
+                    Output::line(&format!("  Relay:       {r}"));
                 }
-                println!("  ----------------------------------------------------\n");
+                Output::hr();
+                Output::nl();
             } else {
                 if ctx.args.json {
                     crate::output::print_error(

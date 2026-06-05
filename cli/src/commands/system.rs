@@ -132,7 +132,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                     }
                     _ => unreachable!(),
                 }
-                println!();
+                Ui::blank();
             }
             SystemAction::Logs { follow } => {
                 irosh::sys::service::view_logs(*follow, Some(state_root.clone())).await?;

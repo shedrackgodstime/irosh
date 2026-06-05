@@ -60,6 +60,16 @@ impl Ui {
         eprintln!("  ----------------------------------------------------\n");
     }
 
+    /// Print a blank line to stderr (UI formatting spacer).
+    pub fn blank() {
+        eprintln!();
+    }
+
+    /// Print a decorative horizontal rule to stderr.
+    pub fn separator() {
+        eprintln!("  {}", "─".repeat(52));
+    }
+
     pub fn header(msg: &str) {
         feedback::header(msg);
     }

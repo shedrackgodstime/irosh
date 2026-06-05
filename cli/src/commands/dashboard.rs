@@ -61,7 +61,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
         Ui::info("  1. Connect to another device:  irosh connect <code-or-ticket>");
         Ui::info("  2. Pair with a new device:     irosh wormhole");
         Ui::info("  3. Host this machine:          irosh system start");
-        println!();
+        Ui::blank();
     } else {
         Ui::info("Quick connect: irosh <alias|ticket|code>");
     }

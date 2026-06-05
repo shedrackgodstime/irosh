@@ -139,7 +139,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     }
 
     // System
-    println!();
+    Ui::blank();
     Ui::info("System Environment");
 
     if let Some(v) = system.ssh_version {
@@ -161,7 +161,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     }
 
     // Network
-    println!();
+    Ui::blank();
     Ui::info("P2P Network Health");
 
     Ui::status("Stealth Mode", stealth_status, None);
@@ -190,9 +190,9 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
         }
     }
 
-    println!("  ----------------------------------------------------");
+    Ui::separator();
     Ui::info("Run 'irosh system status' for active session details.");
-    println!();
+    Ui::blank();
 
     Ok(())
 }

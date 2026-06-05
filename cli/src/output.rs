@@ -69,3 +69,32 @@ pub fn print_error(message: &str, code: &str) {
     let json = serde_json::to_string_pretty(&envelope).unwrap_or_default();
     println!("{json}");
 }
+
+/// Plain-text stdout output helpers.
+///
+/// All methods write to stdout in plain mode. JSON mode is handled by early
+/// returns in the caller — these functions are only reached in plain mode.
+pub struct Output;
+
+impl Output {
+    /// Print a formatted line to stdout.
+    pub fn line(msg: &str) {
+        println!("{msg}");
+    }
+
+    /// Print a section title with a decorative rule underneath.
+    pub fn section(title: &str) {
+        println!("\n  {title}");
+        println!("  {}", "─".repeat(52));
+    }
+
+    /// Print a decorative horizontal rule.
+    pub fn hr() {
+        println!("  {}", "─".repeat(52));
+    }
+
+    /// Print a blank line.
+    pub fn nl() {
+        println!();
+    }
+}

@@ -89,7 +89,7 @@ pub fn exec(action: PasswdAction, ctx: &CliContext) -> Result<()> {
                     "Node is currently in TOFU or Invite-only mode.",
                 );
             }
-            println!();
+            Ui::blank();
         }
     }
     Ok(())

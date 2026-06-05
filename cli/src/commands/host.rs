@@ -1,4 +1,5 @@
 use crate::context::CliContext;
+use crate::output::Output;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::{Server, ServerOptions};
@@ -126,10 +127,10 @@ pub async fn exec(
         }
         Ui::info("Press Ctrl+C to stop the server.");
     } else {
-        println!("ID: {}", ready.endpoint_id());
-        println!("TICKET: {}", ready.ticket);
+        Output::line(&format!("ID: {}", ready.endpoint_id()));
+        Output::line(&format!("TICKET: {}", ready.ticket));
         if stealth_mode {
-            println!("STEALTH: active");
+            Output::line("STEALTH: active");
         }
     }
 

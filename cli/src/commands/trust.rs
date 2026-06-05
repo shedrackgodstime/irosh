@@ -1,5 +1,6 @@
 use crate::commands::TrustAction;
 use crate::context::CliContext;
+use crate::output::Output;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::russh::keys::ssh_key::HashAlg;
@@ -50,9 +51,11 @@ pub fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                 return Ok(());
             }
 
-            println!("\n  Authorized Devices (Vault)");
-            println!("  ----------------------------------------------------");
-            println!("  {:<20} {:<30}", "IDENTITY", "FINGERPRINT (SHA256)");
+            Output::section("Authorized Devices (Vault)");
+            Output::line(&format!(
+                "  {:<20} {:<30}",
+                "IDENTITY", "FINGERPRINT (SHA256)"
+            ));
 
             for (id, k) in keys {
                 let fingerprint = k.fingerprint(HashAlg::Sha256).to_string();
@@ -62,9 +65,10 @@ pub fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                     id.clone()
                 };
 
-                println!("  {short_id:<20} {fingerprint}");
+                Output::line(&format!("  {short_id:<20} {fingerprint}"));
             }
-            println!("  ----------------------------------------------------\n");
+            Output::hr();
+            Output::nl();
         }
         TrustAction::Revoke { fingerprint: _ } => {
             let keys = storage::load_all_authorized_clients(&state)?;
