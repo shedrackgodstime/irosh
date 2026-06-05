@@ -3,7 +3,7 @@ use crate::terminal::TerminalGuard;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::sys::current_terminal_size;
-use irosh::{Client, ClientOptions, PtyOptions};
+use irosh::{Client, ClientOptions, PtyOptions, Session};
 use std::io::{IsTerminal, Write};
 
 mod completion;
@@ -14,6 +14,8 @@ mod prompt;
 mod session;
 mod transfer;
 mod tunnels;
+
+use session::DisconnectReason;
 
 #[derive(Debug, Clone)]
 struct CliPasswordPrompter {
@@ -52,6 +54,42 @@ pub async fn exec(
     exec_internal(target, code, ticket, forward, secret, exec_cmd, ctx).await
 }
 
+// ── Connect Phase State Machine ──────────────────────────────────────────────
+
+/// A single state in the connect flow.
+enum ConnectPhase {
+    /// Resolve a target string into a ResolvedTarget (ticket, wormhole, or alias).
+    Resolve { target_str: Option<String> },
+    /// Dial the P2P connection and authenticate.
+    Dial {
+        target: irosh::ResolvedTarget,
+        attempts: u32,
+    },
+    /// Setup the session (auto-save, PTY, shell, forwarding).
+    Setup {
+        session: Session,
+        ticket: irosh::transport::ticket::Ticket,
+        is_pairing: bool,
+    },
+    /// Active shell session.
+    Shell {
+        session: Session,
+        engine: input::InputEngine,
+        guard: Option<TerminalGuard>,
+    },
+    /// Disconnect and render summary.
+    Close { reason: DisconnectReason },
+}
+
+/// Shared context threaded through all phases.
+struct ConnectCtx {
+    state: irosh::StateConfig,
+    options: ClientOptions,
+    forward: Option<String>,
+    exec_cmd: Option<String>,
+    peer_alias: Option<String>,
+}
+
 async fn exec_internal(
     target_str: Option<String>,
     code_str: Option<String>,
@@ -66,7 +104,6 @@ async fn exec_internal(
 
     let mut options = ClientOptions::new(state.clone());
 
-    // Apply global config overrides
     if let Some(secret) = secret_str.or(config.stealth_secret) {
         options = options.secret(secret);
     }
@@ -76,87 +113,132 @@ async fn exec_internal(
         options = options.relay_mode(mode);
     }
 
-    // Resolve connection target
-    let target = if let Some(t) = ticket_str {
-        Ui::info("Connecting via explicit ticket...");
-        irosh::ResolvedTarget::Ticket(t.parse()?)
-    } else if let Some(c) = code_str {
-        Ui::info(&format!("Connecting via explicit wormhole: {c}"));
-        irosh::ResolvedTarget::WormholeCode(c)
-    } else {
-        let raw_target = if let Some(t) = target_str {
-            t
-        } else {
-            let peers = irosh::storage::list_peers(&state)?;
-            if peers.is_empty() {
-                Ui::warn("Address book is empty", "You haven't saved any peers yet.");
-                Ui::info("To connect, you can:");
-                Ui::info("  1. Use a wormhole code:   irosh <code-word>");
-                Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
-                Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
-                Ui::blank();
+    // Inject explicit ticket/code into the target string for the resolve phase.
+    let initial_target = ticket_str.or(code_str).or(target_str);
 
-                match Ui::input("Enter a wormhole code or ticket", None) {
-                    Some(val) if !val.trim().is_empty() => val.trim().to_string(),
-                    _ => anyhow::bail!("No target specified."),
-                }
-            } else {
-                let mut items = vec!["[Use a wormhole code or ticket]".to_string()];
-                items.extend(
-                    peers
-                        .iter()
-                        .map(|p| format!("[{}] {}", p.name, display::shorten_ticket(&p.ticket))),
-                );
-
-                let selection = Ui::select("Select a peer to connect", &items);
-                match selection {
-                    Some(0) => match Ui::input("Enter a wormhole code or ticket", None) {
-                        Some(val) if !val.trim().is_empty() => val.trim().to_string(),
-                        _ => anyhow::bail!("No target specified."),
-                    },
-                    Some(idx) => peers[idx - 1].name.clone(),
-                    None => anyhow::bail!("Connection cancelled."),
-                }
-            }
-        };
-
-        let resolved = Client::parse_target(options.state(), &raw_target)?;
-
-        match &resolved {
-            irosh::ResolvedTarget::Ticket(_) => {
-                let is_alias = irosh::storage::list_peers(&state)?
-                    .iter()
-                    .any(|p| p.name == raw_target);
-
-                if is_alias {
-                    Ui::info(&format!("Connecting to saved peer: {raw_target}"));
-                } else {
-                    Ui::info("Connecting via direct ticket...");
-                }
-            }
-            irosh::ResolvedTarget::WormholeCode(code) => {
-                Ui::info(&format!("Attempting wormhole connection: {code}"));
-            }
-            _ => {}
-        }
-        resolved
+    let mut sm = ConnectCtx {
+        state,
+        options,
+        forward: forward_str,
+        exec_cmd,
+        peer_alias: None,
     };
 
+    let mut phase = ConnectPhase::Resolve {
+        target_str: initial_target,
+    };
+
+    loop {
+        phase = match phase {
+            ConnectPhase::Resolve { target_str } => phase_resolve(target_str, &mut sm)?,
+            ConnectPhase::Dial { target, attempts } => {
+                phase_dial(target, attempts, &mut sm).await?
+            }
+            ConnectPhase::Setup {
+                session,
+                ticket,
+                is_pairing,
+            } => phase_setup(session, ticket, is_pairing, &mut sm).await?,
+            ConnectPhase::Shell {
+                session,
+                engine,
+                guard,
+            } => phase_shell(session, engine, guard, &sm).await,
+            ConnectPhase::Close { reason } => {
+                phase_close(&reason, &sm);
+                return Ok(());
+            }
+        };
+    }
+}
+
+// ── Phase: Resolve ───────────────────────────────────────────────────────────
+
+fn phase_resolve(target_str: Option<String>, sm: &mut ConnectCtx) -> Result<ConnectPhase> {
+    use irosh::ResolvedTarget;
+
+    let raw_target = if let Some(t) = target_str {
+        t
+    } else {
+        let peers = irosh::storage::list_peers(&sm.state)?;
+        if peers.is_empty() {
+            Ui::warn("Address book is empty", "You haven't saved any peers yet.");
+            Ui::info("To connect, you can:");
+            Ui::info("  1. Use a wormhole code:   irosh <code-word>");
+            Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
+            Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
+            Ui::blank();
+
+            match Ui::input("Enter a wormhole code or ticket", None) {
+                Some(val) if !val.trim().is_empty() => val.trim().to_string(),
+                _ => anyhow::bail!("No target specified."),
+            }
+        } else {
+            let mut items = vec!["[Use a wormhole code or ticket]".to_string()];
+            items.extend(
+                peers
+                    .iter()
+                    .map(|p| format!("[{}] {}", p.name, display::shorten_ticket(&p.ticket))),
+            );
+
+            match Ui::select("Select a peer to connect", &items) {
+                Some(0) => match Ui::input("Enter a wormhole code or ticket", None) {
+                    Some(val) if !val.trim().is_empty() => val.trim().to_string(),
+                    _ => anyhow::bail!("No target specified."),
+                },
+                Some(idx) => peers[idx - 1].name.clone(),
+                None => anyhow::bail!("Connection cancelled."),
+            }
+        }
+    };
+
+    let resolved = Client::parse_target(sm.options.state(), &raw_target)?;
+
+    match &resolved {
+        ResolvedTarget::Ticket(_) => {
+            let is_alias = irosh::storage::list_peers(&sm.state)?
+                .iter()
+                .any(|p| p.name == raw_target);
+
+            if is_alias {
+                Ui::info(&format!("Connecting to saved peer: {raw_target}"));
+            } else {
+                Ui::info("Connecting via direct ticket...");
+            }
+        }
+        ResolvedTarget::WormholeCode(code) => {
+            Ui::info(&format!("Attempting wormhole connection: {code}"));
+        }
+        _ => {}
+    }
+
+    Ok(ConnectPhase::Dial {
+        target: resolved,
+        attempts: 0,
+    })
+}
+
+// ── Phase: Dial ──────────────────────────────────────────────────────────────
+
+async fn phase_dial(
+    target: irosh::ResolvedTarget,
+    _attempts: u32,
+    sm: &mut ConnectCtx,
+) -> Result<ConnectPhase> {
+    use irosh::ResolvedTarget;
+
     let pb = Ui::spinner("Establishing connection...");
-    options = options.password_prompter(CliPasswordPrompter {
+    let opts = sm.options.clone().password_prompter(CliPasswordPrompter {
         pb: Some(pb.clone()),
     });
 
     let (ticket, is_pairing) = tokio::select! {
         res = async {
             match target {
-                irosh::ResolvedTarget::Ticket(t) => Ok((t, false)),
-                irosh::ResolvedTarget::WormholeCode(code) => {
+                ResolvedTarget::Ticket(t) => Ok((t, false)),
+                ResolvedTarget::WormholeCode(ref code) => {
                     pb.set_message(format!("Searching for wormhole: {code}..."));
-                    match Client::connect_wormhole(&options, &code).await {
-                        Ok(t) => Ok((t, true)),
-                        Err(e) => Err(e),
-                    }
+                    Client::connect_wormhole(&opts, code).await.map(|t| (t, true))
                 }
                 _ => unreachable!(),
             }
@@ -168,13 +250,13 @@ async fn exec_internal(
     };
 
     let connection_info = tokio::select! {
-        res = Client::dial_p2p(&options, ticket.clone(), is_pairing) => {
+        res = Client::dial_p2p(&opts, ticket.clone(), is_pairing) => {
             match res {
                 Ok(c) => c,
                 Err(e) => {
                     pb.finish_with_message("Failed");
                     if is_pairing {
-                        auto_save_temp_peer(&state, &ticket);
+                        auto_save_temp_peer(&sm.state, &ticket);
                     }
                     return Err(e.into());
                 }
@@ -183,21 +265,21 @@ async fn exec_internal(
         _ = tokio::signal::ctrl_c() => {
             pb.finish_with_message("Cancelled");
             if is_pairing {
-                auto_save_temp_peer(&state, &ticket);
+                auto_save_temp_peer(&sm.state, &ticket);
             }
             anyhow::bail!("Connection cancelled by user.");
         }
     };
 
     pb.set_message("Authenticating...");
-    let mut session = tokio::select! {
-        res = Client::establish_session(&options, connection_info) => {
+    let session = tokio::select! {
+        res = Client::establish_session(&opts, connection_info) => {
             match res {
                 Ok(s) => s,
                 Err(e) => {
                     pb.finish_with_message("Failed");
                     if is_pairing {
-                        auto_save_temp_peer(&state, &ticket);
+                        auto_save_temp_peer(&sm.state, &ticket);
                     }
                     return Err(e.into());
                 }
@@ -206,7 +288,7 @@ async fn exec_internal(
         _ = tokio::signal::ctrl_c() => {
             pb.finish_with_message("Cancelled");
             if is_pairing {
-                auto_save_temp_peer(&state, &ticket);
+                auto_save_temp_peer(&sm.state, &ticket);
             }
             anyhow::bail!("Connection cancelled by user.");
         }
@@ -214,16 +296,33 @@ async fn exec_internal(
 
     pb.finish_with_message("Done");
 
+    Ok(ConnectPhase::Setup {
+        session,
+        ticket,
+        is_pairing,
+    })
+}
+
+// ── Phase: Setup ─────────────────────────────────────────────────────────────
+
+async fn phase_setup(
+    mut session: Session,
+    ticket: irosh::transport::ticket::Ticket,
+    _is_pairing: bool,
+    sm: &mut ConnectCtx,
+) -> Result<ConnectPhase> {
     // NON-INTERACTIVE EXEC MODE
-    if let Some(cmd) = exec_cmd {
-        let output = session.capture_exec(&cmd).await?;
+    if let Some(cmd) = &sm.exec_cmd {
+        let output = session.capture_exec(cmd).await?;
         std::io::stdout().write_all(&output.stdout)?;
         std::io::stderr().write_all(&output.stderr)?;
         if output.exit_status != 0 {
             #[allow(clippy::cast_possible_wrap)]
             std::process::exit(output.exit_status as i32);
         }
-        return Ok(());
+        return Ok(ConnectPhase::Close {
+            reason: DisconnectReason::UserInitiated,
+        });
     }
 
     let metadata = session.remote_metadata();
@@ -235,68 +334,121 @@ async fn exec_internal(
 
     Ui::success(&format!("Secure session established with {display_name}"));
 
-    // Silent Auto-save logic: Automatically save the peer if it's new and doesn't conflict.
-    let peers = irosh::storage::list_peers(&state)?;
-    let is_already_saved = peers
-        .iter()
-        .any(|p| p.ticket.to_addr().id == ticket.to_addr().id);
+    // Auto-save peer
+    sm.peer_alias = auto_save_peer(&sm.state, &ticket, &display_name);
 
-    if !is_already_saved {
-        let name_exists = peers.iter().any(|p| p.name == display_name);
-
-        let final_name = if name_exists {
-            // CONFLICT: Name is taken, ask for a new one.
-            let fallback = format!("{}-{}", display_name, &ticket.to_addr().id.to_string()[..4]);
-            Ui::input(
-                &format!("A peer named '{display_name}' already exists. Enter a new alias"),
-                Some(&fallback),
-            )
-        } else {
-            // NO CONFLICT: Silent save.
-            Some(display_name.clone())
-        };
-
-        if let Some(target_name) = final_name {
-            let profile = irosh::storage::PeerProfile {
-                name: target_name.clone(),
-                ticket: ticket.clone(),
-            };
-            if irosh::storage::save_peer(&state, &profile).is_ok() {
-                if name_exists {
-                    Ui::success(&format!("Peer alias updated to '{target_name}'"));
-                } else {
-                    Ui::success(&format!(
-                        "Peer auto-saved as '{target_name}'. Use 'irosh {target_name}' next time."
-                    ));
-                }
-            }
-        }
-    }
-
-    // Setup terminal
+    // PTY and shell
     let stdin_is_tty = std::io::stdin().is_terminal();
     let stdout_is_tty = std::io::stdout().is_terminal();
-    let mut _guard = None;
-
-    if stdin_is_tty && stdout_is_tty {
-        _guard = Some(TerminalGuard::new()?);
+    let guard = if stdin_is_tty && stdout_is_tty {
+        let guard = TerminalGuard::new()?;
         let size = current_terminal_size();
         let term = std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string());
         session.request_pty(PtyOptions::new(term, size)).await?;
-    }
+        Some(guard)
+    } else {
+        None
+    };
 
     session.start_shell().await?;
 
-    // Handle port forwarding
-    tunnels::setup_forwarding(&mut session, forward_str).await?;
+    if let Some(ref fwd) = sm.forward {
+        tunnels::setup_forwarding(&mut session, Some(fwd.clone())).await?;
+    }
 
     let remote_is_windows = session
         .remote_metadata()
         .is_some_and(|meta| meta.os.eq_ignore_ascii_case("windows"));
 
-    let input_engine = input::InputEngine::new(&state, remote_is_windows);
+    let engine = input::InputEngine::new(&sm.state, remote_is_windows);
 
-    session::drive_session(session, input_engine).await
+    Ok(ConnectPhase::Shell {
+        session,
+        engine,
+        guard,
+    })
+}
+
+// ── Phase: Shell ─────────────────────────────────────────────────────────────
+
+async fn phase_shell(
+    session: Session,
+    engine: input::InputEngine,
+    _guard: Option<TerminalGuard>,
+    _sm: &ConnectCtx,
+) -> ConnectPhase {
+    let reason = match session::drive_session(session, engine).await {
+        Ok(reason) => reason,
+        Err(_) => DisconnectReason::Error,
+    };
+    ConnectPhase::Close { reason }
+}
+
+// ── Phase: Close ─────────────────────────────────────────────────────────────
+
+fn phase_close(reason: &DisconnectReason, sm: &ConnectCtx) {
+    let peer = sm.peer_alias.as_deref().unwrap_or("remote");
+    match reason {
+        DisconnectReason::UserInitiated => {
+            Ui::info(&format!("Disconnected from {peer}."));
+        }
+        DisconnectReason::RemoteClosed => {
+            Ui::info(&format!("{peer} closed the connection."));
+        }
+        DisconnectReason::ShellCrashed => {
+            Ui::error(&format!("{peer} shell exited unexpectedly."), None);
+        }
+        DisconnectReason::Error => {
+            Ui::error(
+                &format!("Session with {peer} terminated due to an error."),
+                None,
+            );
+        }
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn auto_save_peer(
+    state: &irosh::StateConfig,
+    ticket: &irosh::transport::ticket::Ticket,
+    display_name: &str,
+) -> Option<String> {
+    let peers = irosh::storage::list_peers(state).unwrap_or_default();
+    if peers
+        .iter()
+        .any(|p| p.ticket.to_addr().id == ticket.to_addr().id)
+    {
+        return None;
+    }
+
+    let name_exists = peers.iter().any(|p| p.name == display_name);
+    let final_name = if name_exists {
+        let fallback = format!("{}-{}", display_name, &ticket.to_addr().id.to_string()[..4]);
+        Ui::input(
+            &format!("A peer named '{display_name}' already exists. Enter a new alias"),
+            Some(&fallback),
+        )
+    } else {
+        Some(display_name.to_string())
+    };
+
+    if let Some(ref name) = final_name {
+        let profile = irosh::storage::PeerProfile {
+            name: name.clone(),
+            ticket: ticket.clone(),
+        };
+        if irosh::storage::save_peer(state, &profile).is_ok() {
+            if name_exists {
+                Ui::success(&format!("Peer alias updated to '{name}'"));
+            } else {
+                Ui::success(&format!(
+                    "Peer auto-saved as '{name}'. Use 'irosh {name}' next time."
+                ));
+            }
+        }
+    }
+    final_name
 }
 
 fn auto_save_temp_peer(state: &irosh::StateConfig, ticket: &irosh::transport::ticket::Ticket) {

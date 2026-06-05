@@ -118,12 +118,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ban raw print calls in command code
+      - name: Ban raw print calls in command and main code
         run: |
-          if grep -rn 'println!(' cli/src/commands/ || grep -rn 'eprintln!(' cli/src/commands/; then
-            echo "::error::Raw println!/eprintln! call found in cli/src/commands/ — use Output::* for stdout data or Ui::* for stderr messages"
+          if grep -rn 'println!(' cli/src/commands/ cli/src/main.rs || grep -rn 'eprintln!(' cli/src/commands/ cli/src/main.rs; then
+            echo "::error::Raw println!/eprintln! call found in cli/src/commands/ or cli/src/main.rs — use Output::* for stdout data or Ui::* for stderr messages"
             exit 1
           fi
+      - name: Ban inline tip strings in command code
+        run: |
+          if grep -rn 'Ui::error(' cli/src/commands/ | grep 'Some("' ; then
+            echo "::error::Inline tip string found in cli/src/commands/ — all tips must reference messages::* constants"
+            exit 1
+          fi
+      - name: Verify output traceability table exists
+        run: test -f docs_dev/output-traceability.md
 
   fuzz:
     name: Fuzz

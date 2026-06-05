@@ -8,8 +8,27 @@ use super::input::{EscapeAction, InputEngine, InputMode};
 use super::prompt::execute_local_command;
 use super::transfer::TransferContext;
 
+/// Why the shell session ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisconnectReason {
+    /// User typed `~.` to disconnect.
+    UserInitiated,
+    /// Remote peer closed the connection.
+    RemoteClosed,
+    /// Shell exited / crashed.
+    #[allow(dead_code)]
+    ShellCrashed,
+    /// I/O or protocol error.
+    Error,
+}
+
+/// Run the shell event loop until the session ends.
+/// Returns the reason for disconnection rather than a bare `Result`.
 #[must_use]
-pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) -> Result<()> {
+pub async fn drive_session(
+    mut session: Session,
+    mut input_engine: InputEngine,
+) -> Result<DisconnectReason> {
     let mut stdin = AsyncStdin::new()?;
     let mut stdout = tokio::io::stdout();
     let mut stderr = tokio::io::stderr();
@@ -52,7 +71,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                             }
 
                             if !cont {
-                                return Ok(());
+                                return Ok(DisconnectReason::UserInitiated);
                             }
                         }
                     }
@@ -65,7 +84,7 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                     }
                     None => {
                         session.eof().await?;
-                        break;
+                        return Ok(DisconnectReason::UserInitiated);
                     }
                 }
             }
@@ -90,17 +109,14 @@ pub async fn drive_session(mut session: Session, mut input_engine: InputEngine) 
                     Some(SessionEvent::Closed) => {
                         stdout.write_all(b"\r\nSession closed.\r\n").await?;
                         stdout.flush().await?;
-                        break;
+                        return Ok(DisconnectReason::RemoteClosed);
                     }
-                    None => break,
+                    None => return Ok(DisconnectReason::RemoteClosed),
                     _ => {}
                 }
             }
         }
     }
-
-    let _ = session.disconnect().await;
-    Ok(())
 }
 
 async fn handle_action(

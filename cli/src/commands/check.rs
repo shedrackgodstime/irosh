@@ -1,6 +1,6 @@
 use crate::context::CliContext;
-use crate::ui::messages;
 use crate::ui::Ui;
+use crate::ui::messages;
 use anyhow::Result;
 use irosh::diagnostic;
 
@@ -152,7 +152,10 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     if system.udp_available {
         Ui::success("UDP Socket: Available");
     } else {
-        Ui::error("UDP Socket: blocked or unavailable", Some(messages::TIP_UDP_FIREWALL));
+        Ui::error(
+            "UDP Socket: blocked or unavailable",
+            Some(messages::TIP_UDP_FIREWALL),
+        );
     }
 
     // Network
@@ -183,10 +186,7 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
         }
         Err(e) => {
             pb.finish_with_message("Done");
-            Ui::error(
-                "P2P Endpoint: OFFLINE",
-                Some(messages::TIP_UDP_FIREWALL),
-            );
+            Ui::error("P2P Endpoint: OFFLINE", Some(messages::TIP_UDP_FIREWALL));
             Ui::info(&format!("Error: {e:#}"));
         }
     }

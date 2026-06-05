@@ -16,6 +16,7 @@
 mod commands;
 mod context;
 mod display;
+mod error;
 /// Terminal output helpers for JSON and plain-text formatting.
 pub mod output;
 mod terminal;
@@ -177,62 +178,9 @@ async fn main() {
             } else {
                 format!("{e}")
             };
-            let tip = Some(classify_error(&e));
-            Ui::error(&msg, tip);
+            let tip = error::CliError::classify(&e).tip();
+            Ui::error(&msg, Some(tip));
         }
         std::process::exit(1);
     }
-}
-
-/// Maps a known error to a context-specific tip the user can act on.
-///
-/// Returns a tip constant from `messages.rs`. The fallback `TIP_FALLBACK`
-/// is returned when no specific tip matches.
-fn classify_error(e: &anyhow::Error) -> &'static str {
-    use crate::ui::messages;
-
-    let s = format!("{e:#}").to_lowercase();
-
-    // ── Auth errors: split by cause ───────────────────────────────────────
-    if s.contains("password") && (s.contains("incorrect") || s.contains("wrong") || s.contains("invalid")) {
-        return messages::TIP_AUTH_WRONG_PASSWORD;
-    }
-    if s.contains("auth") && (s.contains("key") || s.contains("publickey") || s.contains("signature")) {
-        return messages::TIP_AUTH_KEY_REJECTED;
-    }
-    if s.contains("auth") && s.contains("failed") {
-        // Generic auth failure — could be either, be vague
-        return messages::TIP_AUTH_WRONG_PASSWORD;
-    }
-
-    // ── Connectivity ──────────────────────────────────────────────────────
-    if s.contains("connection refused") || s.contains("connect failed") || s.contains("timed out") {
-        return messages::TIP_CONNECTION_REFUSED;
-    }
-
-    // ── Wormhole ──────────────────────────────────────────────────────────
-    if s.contains("wormhole") && (s.contains("not found") || s.contains("no peer")) {
-        return messages::TIP_WORMHOLE_TIMEOUT;
-    }
-
-    // ── Daemon conflict ───────────────────────────────────────────────────
-    if s.contains("identity conflict") || s.contains("already running") {
-        return messages::TIP_DAEMON_STATUS;
-    }
-
-    // ── Storage / blobs ───────────────────────────────────────────────────
-    if s.contains("blobs") || s.contains("store") {
-        return messages::TIP_BLOB_STORE;
-    }
-
-    // ── Filesystem ────────────────────────────────────────────────────────
-    if s.contains("permission denied") {
-        return messages::TIP_CHECK_DIAGNOSTIC;
-    }
-    if s.contains("no such file") || s.contains("not found") {
-        return messages::TIP_VERIFY_PATH;
-    }
-
-    // ── Fallback ──────────────────────────────────────────────────────────
-    messages::TIP_FALLBACK
 }

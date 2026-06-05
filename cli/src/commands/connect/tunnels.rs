@@ -1,5 +1,5 @@
-use crate::ui::messages;
 use crate::ui::Ui;
+use crate::ui::messages;
 use anyhow::Result;
 use irosh::Session;
 

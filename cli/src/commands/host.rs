@@ -1,7 +1,7 @@
 use crate::context::CliContext;
 use crate::output::Output;
-use crate::ui::messages;
 use crate::ui::Ui;
+use crate::ui::messages;
 use anyhow::Result;
 use irosh::{Server, ServerOptions};
 

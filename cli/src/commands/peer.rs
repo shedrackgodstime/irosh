@@ -2,8 +2,8 @@ use crate::commands::PeerAction;
 use crate::context::CliContext;
 use crate::display;
 use crate::output::Output;
-use crate::ui::messages;
 use crate::ui::Ui;
+use crate::ui::messages;
 use anyhow::Result;
 use irosh::storage;
 
