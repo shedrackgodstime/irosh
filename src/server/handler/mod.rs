@@ -71,9 +71,8 @@ impl ServerHandler {
     }
 
     /// Builds a `MethodSet` of the remaining auth methods after excluding `used`.
-    fn remaining_methods(&self, used: AuthMethod) -> Option<MethodSet> {
-        let supported = self.authenticator.supported_methods();
-        let remaining: Vec<_> = supported.into_iter().filter(|m| *m != used).collect();
+    fn remaining_methods(methods: Vec<AuthMethod>, used: AuthMethod) -> Option<MethodSet> {
+        let remaining: Vec<_> = methods.into_iter().filter(|m| *m != used).collect();
         if remaining.is_empty() {
             None
         } else {
@@ -98,12 +97,14 @@ impl server::Handler for ServerHandler {
         key: &russh::keys::ssh_key::PublicKey,
     ) -> std::result::Result<server::Auth, Self::Error> {
         debug!("auth_publickey request for user '{}'", user);
-        if self.authenticator.check_public_key(user, key)? {
+        let accepted = self.authenticator.check_public_key(user, key).await?;
+        if accepted {
             Ok(server::Auth::Accept)
         } else {
             self.metrics.record_error();
+            let methods = self.authenticator.supported_methods().await;
             Ok(server::Auth::Reject {
-                proceed_with_methods: self.remaining_methods(AuthMethod::PublicKey),
+                proceed_with_methods: Self::remaining_methods(methods, AuthMethod::PublicKey),
                 partial_success: false,
             })
         }
@@ -115,12 +116,14 @@ impl server::Handler for ServerHandler {
         password: &str,
     ) -> std::result::Result<server::Auth, Self::Error> {
         debug!("auth_password request for user '{}'", user);
-        if self.authenticator.check_password(user, password)? {
+        let accepted = self.authenticator.check_password(user, password).await?;
+        if accepted {
             Ok(server::Auth::Accept)
         } else {
             self.metrics.record_error();
+            let methods = self.authenticator.supported_methods().await;
             Ok(server::Auth::Reject {
-                proceed_with_methods: self.remaining_methods(AuthMethod::Password),
+                proceed_with_methods: Self::remaining_methods(methods, AuthMethod::Password),
                 partial_success: false,
             })
         }

@@ -17,6 +17,7 @@
 //! - [`UnifiedAuthenticator`] - The master security policy for Irosh V2. Manages the
 //!   precedence between established trust, node passwords, and temporary wormhole codes.
 
+use async_trait::async_trait;
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -90,12 +91,13 @@ pub enum AuthMode {
 ///     }
 /// }
 /// ```
+#[async_trait]
 pub trait Authenticator: Send + Sync + fmt::Debug + 'static {
     /// Returns which auth methods this backend supports.
     ///
     /// The server will advertise these methods to clients during the SSH
     /// handshake. Methods not listed here will be rejected immediately.
-    fn supported_methods(&self) -> Vec<AuthMethod>;
+    async fn supported_methods(&self) -> Vec<AuthMethod>;
 
     /// Validate a public key for the given user.
     ///
@@ -105,7 +107,7 @@ pub trait Authenticator: Send + Sync + fmt::Debug + 'static {
     /// # Errors
     ///
     /// Returns an error if the underlying storage or cryptographic operation fails.
-    fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool>;
+    async fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool>;
 
     /// Validate a username + password combination.
     ///
@@ -114,8 +116,8 @@ pub trait Authenticator: Send + Sync + fmt::Debug + 'static {
     ///
     /// # Errors
     ///
-    /// Returns an error if authentication fails or the credentials are invalid.
-    fn check_password(&self, user: &str, password: &str) -> Result<bool>;
+    /// Returns an error if the authentication fails or the credentials are invalid.
+    async fn check_password(&self, user: &str, password: &str) -> Result<bool>;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ pub trait Authenticator: Send + Sync + fmt::Debug + 'static {
 /// This replicates the existing irosh authentication behavior exactly.
 /// It is used automatically when no custom [`Authenticator`] is configured
 /// on [`ServerOptions`](crate::ServerOptions).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KeyOnlyAuth {
     policy: HostKeyPolicy,
     authorized_keys: Arc<StdMutex<Vec<PublicKey>>>,
@@ -160,50 +162,57 @@ impl KeyOnlyAuth {
     }
 }
 
+#[async_trait]
 impl Authenticator for KeyOnlyAuth {
-    fn supported_methods(&self) -> Vec<AuthMethod> {
+    async fn supported_methods(&self) -> Vec<AuthMethod> {
         vec![AuthMethod::PublicKey]
     }
 
-    fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
-        let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+    async fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
+        let this = self.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || {
+            let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
 
-        if self.policy == HostKeyPolicy::AcceptAll {
-            info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
-            return Ok(true);
-        }
-
-        let mut authorized = self.lock_keys();
-
-        if !authorized.is_empty() {
-            if authorized.contains(key) {
-                info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
+            if this.policy == HostKeyPolicy::AcceptAll {
+                info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
                 return Ok(true);
             }
-            warn!(%fingerprint, "Client key not in authorized list. Rejecting connection.");
-            return Ok(false);
-        }
 
-        // No authorized keys yet - check policy for new keys.
-        match self.policy {
-            HostKeyPolicy::Strict => {
-                warn!(%fingerprint, "Strict policy: No pre-authorized keys found. Rejecting connection.");
-                Ok(false)
+            let mut authorized = this.lock_keys();
+
+            if !authorized.is_empty() {
+                if authorized.contains(&key) {
+                    info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
+                    return Ok(true);
+                }
+                warn!(%fingerprint, "Client key not in authorized list. Rejecting connection.");
+                return Ok(false);
             }
-            HostKeyPolicy::Tofu => {
-                info!(%fingerprint, "Tofu policy: No pre-authorized keys found. Trusting first client.");
-                let _event = write_authorized_client(&self.state, &fingerprint, key)?;
-                authorized.push(key.clone());
-                Ok(true)
+
+            // No authorized keys yet - check policy for new keys.
+            match this.policy {
+                HostKeyPolicy::Strict => {
+                    warn!(%fingerprint, "Strict policy: No pre-authorized keys found. Rejecting connection.");
+                    Ok(false)
+                }
+                HostKeyPolicy::Tofu => {
+                    info!(%fingerprint, "Tofu policy: No pre-authorized keys found. Trusting first client.");
+                    let _event = write_authorized_client(&this.state, &fingerprint, &key)?;
+                    authorized.push(key.clone());
+                    Ok(true)
+                }
+                HostKeyPolicy::AcceptAll => {
+                    info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
+                    Ok(true)
+                }
             }
-            HostKeyPolicy::AcceptAll => {
-                info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
-                Ok(true)
-            }
-        }
+        })
+        .await
+        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))?
     }
 
-    fn check_password(&self, _user: &str, _password: &str) -> Result<bool> {
+    async fn check_password(&self, _user: &str, _password: &str) -> Result<bool> {
         Ok(false) // Key-only backend never accepts passwords.
     }
 }
@@ -223,7 +232,7 @@ impl Authenticator for KeyOnlyAuth {
 /// ```bash
 /// irosh-server --auth-mode password --auth-password "mySecret123"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PasswordAuth {
     password_hash: String,
 }
@@ -237,24 +246,31 @@ impl PasswordAuth {
     }
 }
 
+#[async_trait]
 impl Authenticator for PasswordAuth {
-    fn supported_methods(&self) -> Vec<AuthMethod> {
+    async fn supported_methods(&self) -> Vec<AuthMethod> {
         vec![AuthMethod::Password]
     }
 
-    fn check_public_key(&self, _user: &str, _key: &PublicKey) -> Result<bool> {
+    async fn check_public_key(&self, _user: &str, _key: &PublicKey) -> Result<bool> {
         Ok(false) // Password-only backend never accepts keys.
     }
 
-    fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
-        let parsed_hash = PasswordHash::new(&self.password_hash)
-            .map_err(|reason| AuthError::VerificationFailed { reason })?;
+    async fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
+        let this = self.clone();
+        let password = password.to_string();
+        tokio::task::spawn_blocking(move || {
+            let parsed_hash = PasswordHash::new(&this.password_hash)
+                .map_err(|reason| AuthError::VerificationFailed { reason })?;
 
-        match Argon2::default().verify_password(password.as_bytes(), &parsed_hash) {
-            Ok(()) => Ok(true),
-            Err(argon2::password_hash::Error::Password) => Ok(false),
-            Err(reason) => Err(AuthError::VerificationFailed { reason }.into()),
-        }
+            match Argon2::default().verify_password(password.as_bytes(), &parsed_hash) {
+                Ok(()) => Ok(true),
+                Err(argon2::password_hash::Error::Password) => Ok(false),
+                Err(reason) => Err(AuthError::VerificationFailed { reason }.into()),
+            }
+        })
+        .await
+        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))?
     }
 }
 
@@ -295,7 +311,7 @@ pub fn hash_password(password: &str) -> Result<String> {
 ///
 /// This delegates to a [`KeyOnlyAuth`] for key checks and a [`PasswordAuth`]
 /// for password checks. A client can authenticate with either method.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CombinedAuth {
     key_auth: KeyOnlyAuth,
     password_auth: PasswordAuth,
@@ -312,17 +328,18 @@ impl CombinedAuth {
     }
 }
 
+#[async_trait]
 impl Authenticator for CombinedAuth {
-    fn supported_methods(&self) -> Vec<AuthMethod> {
+    async fn supported_methods(&self) -> Vec<AuthMethod> {
         vec![AuthMethod::PublicKey, AuthMethod::Password]
     }
 
-    fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool> {
-        self.key_auth.check_public_key(user, key)
+    async fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool> {
+        self.key_auth.check_public_key(user, key).await
     }
 
-    fn check_password(&self, user: &str, password: &str) -> Result<bool> {
-        self.password_auth.check_password(user, password)
+    async fn check_password(&self, user: &str, password: &str) -> Result<bool> {
+        self.password_auth.check_password(user, password).await
     }
 }
 
@@ -398,7 +415,7 @@ pub struct PairingMonitor {
 /// 2. Permanent Node Password challenges unknown keys.
 /// 3. Active Wormhole Temp Password (Invite Pattern) provides a one-time override.
 /// 4. Empty Vault + No Passwords allows TOFU.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnifiedAuthenticator {
     state: StateConfig,
     policy: HostKeyPolicy,
@@ -554,120 +571,142 @@ impl UnifiedAuthenticator {
     }
 }
 
+#[async_trait]
 impl Authenticator for UnifiedAuthenticator {
-    fn supported_methods(&self) -> Vec<AuthMethod> {
-        let mut methods = vec![AuthMethod::PublicKey];
-        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) {
-            hash.is_some()
-        } else {
-            warn!("Failed to read shadow file, assuming password exists (fail-closed)");
-            true
-        };
-        if node_pw_exists || self.temp_password_hash.is_some() {
-            methods.push(AuthMethod::Password);
-        }
-        methods
+    async fn supported_methods(&self) -> Vec<AuthMethod> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut methods = vec![AuthMethod::PublicKey];
+            let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&this.state) {
+                hash.is_some()
+            } else {
+                warn!("Failed to read shadow file, assuming password exists (fail-closed)");
+                true
+            };
+            if node_pw_exists || this.temp_password_hash.is_some() {
+                methods.push(AuthMethod::Password);
+            }
+            methods
+        })
+        .await
+        .unwrap_or_else(|join_err| {
+            warn!("supported_methods task failed: {join_err}");
+            vec![AuthMethod::PublicKey]
+        })
     }
 
-    fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
-        if self.failed_attempts.load(Ordering::Relaxed) >= 3 {
-            warn!("Authentication rejected: Rate limit exceeded.");
-            return Ok(false);
-        }
-        let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+    async fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
+        let this = self.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || {
+            if this.failed_attempts.load(Ordering::Relaxed) >= 3 {
+                warn!("Authentication rejected: Rate limit exceeded.");
+                return Ok(false);
+            }
+            let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
 
-        // 0. AcceptAll: accept every key without tracking.
-        if self.policy == HostKeyPolicy::AcceptAll {
-            return Ok(true);
-        }
-
-        {
-            let authorized = self.lock_keys();
-            // 1. Established trust (Vault) always wins.
-            if authorized.contains(key) {
-                info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
+            // 0. AcceptAll: accept every key without tracking.
+            if this.policy == HostKeyPolicy::AcceptAll {
                 return Ok(true);
             }
-        }
 
-        // If not found, refresh vault from disk to see if it was updated by another process.
-        let _ = self.refresh_keys();
-        let mut authorized = self.lock_keys();
-
-        if authorized.contains(key) {
-            info!(%fingerprint, "Client matched key after vault refresh. Access granted.");
-            return Ok(true);
-        }
-
-        // 2. If node is under Strict policy and not empty, reject strangers early.
-        if self.policy == HostKeyPolicy::Strict && !authorized.is_empty() {
-            warn!(%fingerprint, "Strict policy: unknown key rejected.");
-            self.record_failure();
-            return Ok(false);
-        }
-
-        // 3. If any password exists, we MUST reject the public key and force a password challenge.
-        let node_pw_exists = if let Ok(hash) = crate::storage::load_shadow_file(&self.state) {
-            hash.is_some()
-        } else {
-            warn!("Failed to read shadow file, assuming password exists (fail-closed)");
-            true
-        };
-        if node_pw_exists || self.temp_password_hash.is_some() {
-            if let Ok(mut cache) = self.cached_key.lock() {
-                *cache = Some(key.clone());
+            {
+                let authorized = this.lock_keys();
+                // 1. Established trust (Vault) always wins.
+                if authorized.contains(&key) {
+                    info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
+                    return Ok(true);
+                }
             }
-            return Ok(false);
-        }
 
-        // 4. No passwords set. Check for TOFU (Bootstrap phase).
-        if authorized.is_empty() {
-            info!(%fingerprint, "Vault is empty and no password set. Accepting first connection (TOFU).");
-            let _event =
-                crate::storage::trust::write_authorized_client(&self.state, &fingerprint, key)?;
-            authorized.push(key.clone());
-            self.success_flag.store(true, Ordering::Relaxed);
-            self.notify_success();
-            return Ok(true);
-        }
+            // If not found, refresh vault from disk to see if it was updated by another process.
+            let _ = this.refresh_keys();
+            let mut authorized = this.lock_keys();
 
-        // 5. Default: Reject (Vault not empty, no password set).
-        warn!(%fingerprint, "Vault is claimed and no password is set. Unknown key rejected.");
-        self.record_failure();
-        Ok(false)
+            if authorized.contains(&key) {
+                info!(%fingerprint, "Client matched key after vault refresh. Access granted.");
+                return Ok(true);
+            }
+
+            // 2. If node is under Strict policy and not empty, reject strangers early.
+            if this.policy == HostKeyPolicy::Strict && !authorized.is_empty() {
+                warn!(%fingerprint, "Strict policy: unknown key rejected.");
+                this.record_failure();
+                return Ok(false);
+            }
+
+            // 3. If any password exists, we MUST reject the public key and force a password challenge.
+            let node_pw_exists =
+                if let Ok(hash) = crate::storage::load_shadow_file(&this.state) {
+                    hash.is_some()
+                } else {
+                    warn!("Failed to read shadow file, assuming password exists (fail-closed)");
+                    true
+                };
+            if node_pw_exists || this.temp_password_hash.is_some() {
+                if let Ok(mut cache) = this.cached_key.lock() {
+                    *cache = Some(key.clone());
+                }
+                return Ok(false);
+            }
+
+            // 4. No passwords set. Check for TOFU (Bootstrap phase).
+            if authorized.is_empty() {
+                info!(%fingerprint, "Vault is empty and no password set. Accepting first connection (TOFU).");
+                let _event =
+                    crate::storage::trust::write_authorized_client(&this.state, &fingerprint, &key)?;
+                authorized.push(key.clone());
+                this.success_flag.store(true, Ordering::Relaxed);
+                this.notify_success();
+                return Ok(true);
+            }
+
+            // 5. Default: Reject (Vault not empty, no password set).
+            warn!(%fingerprint, "Vault is claimed and no password is set. Unknown key rejected.");
+            this.record_failure();
+            Ok(false)
+        })
+        .await
+        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))?
     }
 
-    fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
-        if self.failed_attempts.load(Ordering::Relaxed) >= 3 {
-            warn!("Authentication rejected: Rate limit exceeded.");
-            return Ok(false);
-        }
+    async fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
+        let this = self.clone();
+        let password = password.to_string();
+        tokio::task::spawn_blocking(move || {
+            if this.failed_attempts.load(Ordering::Relaxed) >= 3 {
+                warn!("Authentication rejected: Rate limit exceeded.");
+                return Ok(false);
+            }
 
-        if let Some(is_wormhole) = self.check_password_match(password) {
-            // Password accepted!
-            if is_wormhole {
-                // Wormhole code used: we must authorize the key that was cached during the publickey step.
-                if let Ok(cache) = self.cached_key.lock() {
-                    if let Some(key) = &*cache {
-                        let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
-                        let mut authorized = self.lock_keys();
-                        if !authorized.contains(key) {
-                            info!(%fingerprint, "Wormhole code accepted: Adding new client to vault.");
-                            let _event = write_authorized_client(&self.state, &fingerprint, key)?;
-                            authorized.push(key.clone());
-                            self.success_flag.store(true, Ordering::Relaxed);
-                            self.notify_success();
+            if let Some(is_wormhole) = this.check_password_match(&password) {
+                // Password accepted!
+                if is_wormhole {
+                    // Wormhole code used: we must authorize the key that was cached during the publickey step.
+                    if let Ok(cache) = this.cached_key.lock() {
+                        if let Some(key) = &*cache {
+                            let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+                            let mut authorized = this.lock_keys();
+                            if !authorized.contains(key) {
+                                info!(%fingerprint, "Wormhole code accepted: Adding new client to vault.");
+                                let _event = write_authorized_client(&this.state, &fingerprint, key)?;
+                                authorized.push(key.clone());
+                                this.success_flag.store(true, Ordering::Relaxed);
+                                this.notify_success();
+                            }
                         }
                     }
+                } else {
+                    info!("Node password accepted: Access granted for this session only.");
                 }
-            } else {
-                info!("Node password accepted: Access granted for this session only.");
+                return Ok(true);
             }
-            return Ok(true);
-        }
 
-        self.record_failure();
-        Ok(false)
+            this.record_failure();
+            Ok(false)
+        })
+        .await
+        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))?
     }
 }
 
@@ -676,6 +715,10 @@ mod tests {
     use super::*;
     use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
     use secrecy::ExposeSecret;
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
 
     fn temp_state(name: &str) -> StateConfig {
         let mut path = std::env::temp_dir();
@@ -696,10 +739,10 @@ mod tests {
             vec![],
             temp_state("accept-all"),
         );
-        assert!(auth.supported_methods().contains(&AuthMethod::PublicKey));
-        assert!(!auth.supported_methods().contains(&AuthMethod::Password));
+        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::PublicKey));
+        assert!(!block_on(auth.supported_methods()).contains(&AuthMethod::Password));
         // Password should always be rejected.
-        assert!(!auth.check_password("user", "pass")?);
+        assert!(!block_on(auth.check_password("user", "pass"))?);
         Ok(())
     }
 
@@ -709,13 +752,13 @@ mod tests {
         let hash = hash_password(password).expect("failed to hash test password");
         let auth = PasswordAuth::new(hash);
 
-        assert!(auth.check_password("anyone", password)?);
-        assert!(!auth.check_password("anyone", "wrong")?);
-        assert!(!auth.check_password("anyone", "")?);
+        assert!(block_on(auth.check_password("anyone", password))?);
+        assert!(!block_on(auth.check_password("anyone", "wrong"))?);
+        assert!(!block_on(auth.check_password("anyone", ""))?);
 
         // PublicKey should always be rejected.
-        assert!(auth.supported_methods().contains(&AuthMethod::Password));
-        assert!(!auth.supported_methods().contains(&AuthMethod::PublicKey));
+        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::Password));
+        assert!(!block_on(auth.supported_methods()).contains(&AuthMethod::PublicKey));
         Ok(())
     }
 
@@ -733,11 +776,11 @@ mod tests {
         let pass = PasswordAuth::new(hash);
         let auth = CombinedAuth::new(key, pass);
 
-        assert_eq!(auth.supported_methods().len(), 2);
-        assert!(auth.supported_methods().contains(&AuthMethod::PublicKey));
-        assert!(auth.supported_methods().contains(&AuthMethod::Password));
-        assert!(auth.check_password("user", password)?);
-        assert!(!auth.check_password("user", "wrong")?);
+        assert_eq!(block_on(auth.supported_methods()).len(), 2);
+        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::PublicKey));
+        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::Password));
+        assert!(block_on(auth.check_password("user", password))?);
+        assert!(!block_on(auth.check_password("user", "wrong"))?);
         Ok(())
     }
 
@@ -752,7 +795,7 @@ mod tests {
         let key = PrivateKey::from(keypair).public_key().clone();
 
         // 1. First connection should succeed (TOFU)
-        assert!(auth.check_public_key("user", &key)?);
+        assert!(block_on(auth.check_public_key("user", &key))?);
 
         // 2. Vault should now contain the key
         let vault = crate::storage::load_all_authorized_clients(&state)?;
@@ -797,13 +840,13 @@ mod tests {
 
         // Step 1: public-key check must FAIL (forces password challenge).
         assert!(
-            !auth.check_public_key("user", &unknown_key)?,
+            !block_on(auth.check_public_key("user", &unknown_key))?,
             "unknown key should be rejected to force password challenge"
         );
 
         // Step 2: correct password must succeed and store the key in the vault.
         assert!(
-            auth.check_password("user", password)?,
+            block_on(auth.check_password("user", password))?,
             "correct wormhole password must succeed"
         );
         assert!(
@@ -824,7 +867,7 @@ mod tests {
             None,
         );
         assert!(
-            auth2.check_public_key("user", &unknown_key)?,
+            block_on(auth2.check_public_key("user", &unknown_key))?,
             "previously-paired key must be trusted on subsequent connection"
         );
 
@@ -844,12 +887,12 @@ mod tests {
         let key = make_key(0x01);
 
         // Force the key into the cache (simulates the SSH handshake sequence).
-        let _ = auth.check_public_key("user", &key)?;
+        let _ = block_on(auth.check_public_key("user", &key))?;
 
         // Three wrong attempts.
-        assert!(!auth.check_password("user", "wrong-1")?);
-        assert!(!auth.check_password("user", "wrong-2")?);
-        assert!(!auth.check_password("user", "wrong-3")?);
+        assert!(!block_on(auth.check_password("user", "wrong-1"))?);
+        assert!(!block_on(auth.check_password("user", "wrong-2"))?);
+        assert!(!block_on(auth.check_password("user", "wrong-3"))?);
 
         assert_eq!(
             auth.failed_attempts(),
@@ -881,7 +924,7 @@ mod tests {
         let auth = UnifiedAuthenticator::new(state, HostKeyPolicy::Strict, vec![trusted_key], None);
 
         assert!(
-            !auth.check_public_key("user", &stranger_key)?,
+            !block_on(auth.check_public_key("user", &stranger_key))?,
             "Strict policy with a non-empty vault must reject unknown keys"
         );
         Ok(())
@@ -898,18 +941,14 @@ mod tests {
         let auth_no_pw =
             UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], None);
         assert!(
-            !auth_no_pw
-                .supported_methods()
-                .contains(&AuthMethod::Password),
+            !block_on(auth_no_pw.supported_methods()).contains(&AuthMethod::Password),
             "without a temp hash, Password must not be advertised"
         );
 
         let auth_with_pw =
             UnifiedAuthenticator::new(state, HostKeyPolicy::Tofu, vec![], Some(hash));
         assert!(
-            auth_with_pw
-                .supported_methods()
-                .contains(&AuthMethod::Password),
+            block_on(auth_with_pw.supported_methods()).contains(&AuthMethod::Password),
             "with a temp hash, Password must be advertised"
         );
 
@@ -926,7 +965,7 @@ mod tests {
 
         // Pre-populate the vault by running a TOFU first-connection.
         let bootstrap = UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], None);
-        assert!(bootstrap.check_public_key("user", &existing_key)?);
+        assert!(block_on(bootstrap.check_public_key("user", &existing_key))?);
 
         // Load vault keys into a fresh authenticator - no password.
         let vault = crate::storage::load_all_authorized_clients(&state)?;
@@ -938,11 +977,11 @@ mod tests {
         );
 
         assert!(
-            !auth.check_public_key("user", &newcomer_key)?,
+            !block_on(auth.check_public_key("user", &newcomer_key))?,
             "claimed vault with no password must reject unknown keys"
         );
         assert!(
-            auth.check_public_key("user", &existing_key)?,
+            block_on(auth.check_public_key("user", &existing_key))?,
             "claimed vault must still accept the existing trusted key"
         );
 

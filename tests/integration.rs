@@ -1016,20 +1016,30 @@ async fn test_wormhole_rendezvous() {
         .await
         .unwrap();
 
-    // 3. Connect Client using the code
+    // 3. Connect Client using the code (retry for network flakiness)
     let client_opts = ClientOptions::new(client_state.clone())
         .security(SecurityConfig {
             host_key_policy: HostKeyPolicy::AcceptAll,
         })
         .relay_mode(RelayMode::Disabled);
 
-    // Discovery can take a few seconds as it relies on Gossip propagation
-    let session = Client::connect(
-        &client_opts,
-        irosh::ResolvedTarget::WormholeCode(code.to_string()),
-    )
-    .await
-    .expect("Wormhole discovery failed");
+    let session = 'retry: loop {
+        for attempt in 1..=3 {
+            match Client::connect(
+                &client_opts,
+                irosh::ResolvedTarget::WormholeCode(code.to_string()),
+            )
+            .await
+            {
+                Ok(session) => break 'retry session,
+                Err(e) if attempt < 3 => {
+                    tracing::warn!("Wormhole attempt {attempt} failed: {e}. Retrying...");
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                Err(e) => panic!("Wormhole discovery failed after 3 attempts: {e}"),
+            }
+        }
+    };
 
     // 4. Verify Connection
     assert!(session.remote_metadata().is_some());

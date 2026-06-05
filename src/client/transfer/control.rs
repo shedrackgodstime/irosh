@@ -75,6 +75,7 @@ impl Session {
         }
     }
 
+    #[must_use]
     pub(crate) async fn open_transfer_stream(
         &self,
         unavailable_context: &'static str,

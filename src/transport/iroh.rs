@@ -46,6 +46,7 @@ pub struct ServerEndpoint {
 /// # Errors
 ///
 /// Returns an error if the endpoint fails to bind.
+#[must_use]
 pub async fn bind_server_endpoint(
     secret_key: SecretKey,
     alpns: Vec<Vec<u8>>,
@@ -89,6 +90,7 @@ pub async fn bind_server_endpoint(
 /// # Errors
 ///
 /// Returns an error if the endpoint fails to bind.
+#[must_use]
 pub async fn bind_client_endpoint(
     secret_key: SecretKey,
     alpns: Vec<Vec<u8>>,

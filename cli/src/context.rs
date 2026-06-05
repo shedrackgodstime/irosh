@@ -4,6 +4,7 @@ use irosh::StateConfig;
 use std::path::PathBuf;
 
 /// Shared context for all CLI commands.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CliContext {
     pub args: Args,
     pub state: StateConfig,

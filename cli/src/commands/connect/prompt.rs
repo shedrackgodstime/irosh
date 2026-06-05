@@ -7,6 +7,7 @@ use super::transfer::{TransferContext, handle_get_command, handle_put_command};
 
 /// A command executed from the local `irosh>` prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LocalCommand {
     Help,
     Lpwd,
@@ -108,6 +109,7 @@ pub fn parse_local_command(buf: &[u8]) -> Option<LocalCommand> {
 
 /// Executes a parsed local command.
 /// Returns `Ok((continue_session, lines_printed))`.
+#[must_use]
 pub async fn execute_local_command(
     session: &mut Session,
     input_engine: &mut InputEngine,

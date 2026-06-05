@@ -104,7 +104,7 @@ impl fmt::Debug for Session {
 }
 
 /// Represents the output of a remote command execution.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExecOutput {
     /// The captured stdout bytes.
     pub stdout: Vec<u8>,
@@ -224,6 +224,7 @@ impl Session {
 
     /// Returns remote metadata if it was obtained during session setup.
     /// Ensures that the primary session channel is open, opening it if necessary.
+    #[must_use]
     pub(crate) async fn ensure_channel(
         &self,
     ) -> Result<tokio::sync::MutexGuard<'_, Option<russh::Channel<russh::client::Msg>>>> {
@@ -302,6 +303,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the local listener cannot be bound.
+    #[must_use]
     pub async fn local_forward(
         &self,
         local_addr: impl tokio::net::ToSocketAddrs,
@@ -505,6 +507,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the request is rejected by the server.
+    #[must_use]
     pub async fn remote_forward(
         &self,
         remote_host: String,

@@ -234,15 +234,15 @@ async fn handle_recursive_get_request(
             let mut reader = BufReader::new(stdout);
 
             loop {
-                let mut type_buf = Vec::new();
+                let mut type_buf = Vec::with_capacity(4);
                 if reader.read_until(0, &mut type_buf).await? == 0 {
                     break;
                 }
-                let mut path_buf = Vec::new();
+                let mut path_buf = Vec::with_capacity(256);
                 reader.read_until(0, &mut path_buf).await?;
-                let mut size_buf = Vec::new();
+                let mut size_buf = Vec::with_capacity(24);
                 reader.read_until(0, &mut size_buf).await?;
-                let mut mode_buf = Vec::new();
+                let mut mode_buf = Vec::with_capacity(8);
                 reader.read_until(0, &mut mode_buf).await?;
 
                 // Strip the trailing null bytes and convert to strings

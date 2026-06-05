@@ -84,6 +84,7 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<(u8, Vec<u8>
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 pub async fn write_metadata_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
 ) -> Result<(), MetadataError> {
@@ -95,6 +96,7 @@ pub async fn write_metadata_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 pub async fn read_metadata_request<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<(), MetadataError> {
@@ -116,6 +118,7 @@ pub async fn read_metadata_request<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[tracing::instrument(skip(writer))]
 pub async fn write_metadata<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -130,6 +133,7 @@ pub async fn write_metadata<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[tracing::instrument(skip(reader))]
 pub async fn read_metadata<R: AsyncRead + Unpin>(
     reader: &mut R,

@@ -32,6 +32,7 @@ impl JobObject {
     ///
     /// Returns an error if the underlying Win32 `CreateJobObjectW` or
     /// `SetInformationJobObject` calls fail.
+    #[must_use]
     pub fn new() -> std::io::Result<Self> {
         // SAFETY: Win32 API calls for job object creation and configuration.
         // We validate the handle against INVALID_HANDLE_VALUE and check all

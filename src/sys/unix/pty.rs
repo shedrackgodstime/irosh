@@ -83,6 +83,7 @@ pub fn current_terminal_size() -> PtySize {
 
 /// Events that can occur on a Unix terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TerminalEvent {
     /// Raw data received from stdin.
     Data(Vec<u8>),

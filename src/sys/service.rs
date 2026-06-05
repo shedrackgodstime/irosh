@@ -18,6 +18,7 @@ pub enum ServiceStatus {
 }
 
 /// Actions that can be performed on the background service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ServiceAction {
     /// Install the service for automatic startup.

@@ -154,6 +154,7 @@ async fn read_json_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_put_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -167,6 +168,7 @@ pub async fn write_put_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_put_request<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -179,6 +181,7 @@ pub async fn read_put_request<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_put_ready<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -192,6 +195,7 @@ pub async fn write_put_ready<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_put_ready<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -204,6 +208,7 @@ pub async fn read_put_ready<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 pub async fn write_put_chunk<W: AsyncWrite + Unpin>(
     writer: &mut W,
     chunk: &[u8],
@@ -216,6 +221,7 @@ pub async fn write_put_chunk<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 pub async fn read_put_chunk<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<Vec<u8>, TransferError> {
@@ -234,6 +240,7 @@ pub async fn read_put_chunk<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_put_complete<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -247,6 +254,7 @@ pub async fn write_put_complete<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_put_complete<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -259,6 +267,7 @@ pub async fn read_put_complete<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_get_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -272,6 +281,7 @@ pub async fn write_get_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_get_request<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -284,6 +294,7 @@ pub async fn read_get_request<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_get_ready<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -297,6 +308,7 @@ pub async fn write_get_ready<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_get_ready<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -309,6 +321,7 @@ pub async fn read_get_ready<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 pub async fn write_get_chunk<W: AsyncWrite + Unpin>(
     writer: &mut W,
     chunk: &[u8],
@@ -321,6 +334,7 @@ pub async fn write_get_chunk<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 pub async fn read_get_chunk<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<Vec<u8>, TransferError> {
@@ -339,6 +353,7 @@ pub async fn read_get_chunk<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_get_complete<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -352,6 +367,7 @@ pub async fn write_get_complete<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_get_complete<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -364,6 +380,7 @@ pub async fn read_get_complete<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_transfer_error<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -377,6 +394,7 @@ pub async fn write_transfer_error<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_transfer_error<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -389,6 +407,7 @@ pub async fn read_transfer_error<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_cwd_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -402,6 +421,7 @@ pub async fn write_cwd_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_cwd_response<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -415,6 +435,7 @@ pub async fn write_cwd_response<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_exists_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -428,6 +449,7 @@ pub async fn write_exists_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_exists_request<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -440,6 +462,7 @@ pub async fn read_exists_request<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_exists_response<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -453,6 +476,7 @@ pub async fn write_exists_response<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn read_exists_response<R: AsyncRead + Unpin>(
     reader: &mut R,
@@ -465,6 +489,7 @@ pub async fn read_exists_response<R: AsyncRead + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_new_entry<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -478,6 +503,7 @@ pub async fn write_new_entry<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_entry_complete<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -491,6 +517,7 @@ pub async fn write_entry_complete<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_completion_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -504,6 +531,7 @@ pub async fn write_completion_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_completion_response<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -517,6 +545,7 @@ pub async fn write_completion_response<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_blob_put_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -530,6 +559,7 @@ pub async fn write_blob_put_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[inline]
 pub async fn write_blob_get_request<W: AsyncWrite + Unpin>(
     writer: &mut W,
@@ -543,6 +573,7 @@ pub async fn write_blob_get_request<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be serialized or if the underlying channel encounters an I/O error.
+#[must_use]
 pub async fn write_blob_get_ready<W: AsyncWrite + Unpin>(
     writer: &mut W,
     ready: &BlobGetReady,
@@ -555,6 +586,7 @@ pub async fn write_blob_get_ready<W: AsyncWrite + Unpin>(
 /// # Errors
 ///
 /// Returns an error if the data cannot be deserialized or if the underlying channel encounters an I/O error.
+#[must_use]
 #[tracing::instrument(skip(reader))]
 pub async fn read_next_frame<R: AsyncRead + Unpin>(
     reader: &mut R,

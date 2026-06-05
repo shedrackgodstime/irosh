@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use tokio::process::Command;
 use tokio::task;
+use tracing::warn;
 
 use crate::error::{IroshError, Result, ServerError};
 
@@ -10,13 +11,19 @@ use crate::error::{IroshError, Result, ServerError};
 ///
 /// Returns [`IroshError::Server`] wrapping [`ServerError::BlockingTaskFailed`] if the
 /// blocking task panics.
+#[must_use]
 pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Result<PathBuf> {
     task::spawn_blocking(move || {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let link = format!("/proc/{pid}/cwd");
-            let cwd = std::fs::read_link(&link).unwrap_or(fallback_dir);
-            Ok(cwd)
+            match std::fs::read_link(&link) {
+                Ok(cwd) => Ok(cwd),
+                Err(e) => {
+                    warn!(%pid, error = %e, "failed to read /proc/{pid}/cwd, using fallback dir");
+                    Ok(fallback_dir)
+                }
+            }
         }
         #[cfg(windows)]
         {
@@ -59,6 +66,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
             unsafe {
                 let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
                 if handle == 0 as _ {
+                    warn!(%pid, "OpenProcess failed, cannot resolve Windows shell CWD");
                     return Ok(fallback_dir);
                 }
 
@@ -73,6 +81,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 );
 
                 if status != 0 {
+                    warn!(%pid, status, "NtQueryInformationProcess failed, cannot resolve Windows shell CWD");
                     CloseHandle(handle);
                     return Ok(fallback_dir);
                 }
@@ -95,6 +104,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 );
 
                 if ok == FALSE {
+                    warn!(%pid, "ReadProcessMemory(PEB->ProcessParameters) failed, cannot resolve Windows shell CWD");
                     CloseHandle(handle);
                     return Ok(fallback_dir);
                 }
@@ -114,6 +124,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 );
 
                 if ok == FALSE {
+                    warn!(%pid, "ReadProcessMemory(ProcessParameters->CurrentDirectoryName) failed, cannot resolve Windows shell CWD");
                     CloseHandle(handle);
                     return Ok(fallback_dir);
                 }
@@ -131,6 +142,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 CloseHandle(handle);
 
                 if ok == FALSE {
+                    warn!(%pid, "ReadProcessMemory(Buffer) failed, cannot resolve Windows shell CWD");
                     Ok(fallback_dir)
                 } else {
                     let path_str = String::from_utf16_lossy(&buffer);

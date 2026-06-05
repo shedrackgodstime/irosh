@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// A client for communicating with a running irosh daemon.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IpcClient {
     socket_path: PathBuf,
 }

@@ -6,6 +6,7 @@ use console::style;
 use irosh::{IpcClient, IpcCommand, IpcResponse, Server, ServerOptions, StateConfig};
 use std::path::Path;
 
+#[must_use]
 pub async fn exec(
     mut code: Option<String>,
     passwd: bool,

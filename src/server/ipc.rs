@@ -10,7 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
 /// Commands that can be sent to the irosh daemon via IPC.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IpcCommand {
     /// Enable a wormhole pairing session.
@@ -62,7 +62,7 @@ pub enum InternalCommand {
 }
 
 /// Detailed information about an active peer session.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionStatus {
     /// The remote peer's unique node ID.
     pub peer_id: String,
@@ -75,7 +75,7 @@ pub struct SessionStatus {
 }
 
 /// Detailed daemon status information.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaemonStatus {
     /// The server's unique P2P identifier.
     pub endpoint_id: String,
@@ -92,7 +92,7 @@ pub struct DaemonStatus {
 }
 
 /// Responses sent by the irosh daemon back to the IPC client.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IpcResponse {
     /// Command was accepted and executed successfully.
@@ -159,6 +159,7 @@ impl IpcServer {
     /// # Errors
     ///
     /// Returns an error if the IPC socket cannot be bound or if a critical I/O error occurs.
+    #[must_use]
     pub async fn run(
         self,
         mut shutdown_rx: tokio::sync::mpsc::Receiver<()>,

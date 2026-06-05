@@ -10,6 +10,7 @@ use super::transfer::TransferContext;
 
 /// Why the shell session ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DisconnectReason {
     /// User typed `~.` to disconnect.
     UserInitiated,
@@ -71,6 +72,7 @@ pub async fn drive_session(
                             }
 
                             if !cont {
+                                let _ = session.disconnect().await;
                                 return Ok(DisconnectReason::UserInitiated);
                             }
                         }
@@ -84,8 +86,10 @@ pub async fn drive_session(
                     }
                     None => {
                         session.eof().await?;
+                        let _ = session.disconnect().await;
                         return Ok(DisconnectReason::UserInitiated);
                     }
+                    Some(_) => {}
                 }
             }
 
@@ -107,11 +111,13 @@ pub async fn drive_session(
                         stderr.flush().await?;
                     }
                     Some(SessionEvent::Closed) => {
-                        stdout.write_all(b"\r\nSession closed.\r\n").await?;
-                        stdout.flush().await?;
+                        let _ = session.disconnect().await;
                         return Ok(DisconnectReason::RemoteClosed);
                     }
-                    None => return Ok(DisconnectReason::RemoteClosed),
+                    None => {
+                        let _ = session.disconnect().await;
+                        return Ok(DisconnectReason::RemoteClosed);
+                    }
                     _ => {}
                 }
             }

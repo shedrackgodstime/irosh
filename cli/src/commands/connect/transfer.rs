@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
 /// Context for file transfers, keeping track of the local working directory.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferContext {
     pub local_root: PathBuf,
 }
@@ -87,6 +87,7 @@ pub async fn resolve_remote_source_path(session: &mut Session, raw: &str) -> Res
     resolve_remote_path(session, Some(raw), None).await
 }
 
+#[must_use]
 pub async fn resolve_remote_target_path(
     session: &mut Session,
     raw: Option<&str>,
@@ -199,6 +200,7 @@ pub fn portable_file_name(path: &Path) -> Option<&str> {
     }
 }
 
+#[must_use]
 pub async fn handle_put_command(
     session: &mut Session,
     stdout: &mut tokio::io::Stdout,
@@ -277,6 +279,7 @@ pub async fn handle_put_command(
                         }
                     }
                     None => break Err(anyhow::anyhow!("transfer interrupted")),
+                    Some(_) => {}
                 }
             }
         }
@@ -360,6 +363,7 @@ pub async fn handle_put_command(
     Ok(())
 }
 
+#[must_use]
 pub async fn handle_get_command(
     session: &mut Session,
     stdout: &mut tokio::io::Stdout,
@@ -430,6 +434,7 @@ pub async fn handle_get_command(
                         }
                     }
                     None => break Err(anyhow::anyhow!("transfer interrupted")),
+                    Some(_) => {}
                 }
             }
         }

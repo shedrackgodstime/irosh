@@ -5,6 +5,7 @@ use crate::ui::messages;
 use anyhow::Result;
 use irosh::{Server, ServerOptions};
 
+#[must_use]
 pub async fn exec(
     secret: Option<String>,
     auth_mode: Option<crate::commands::CliAuthMode>,

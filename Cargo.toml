@@ -53,6 +53,9 @@ russh = { version = "0.61.1", optional = true, default-features = false, feature
 serde      = { version = "1", optional = true, features = ["derive"] }
 serde_json = { version = "1", optional = true }
 
+# async-trait: async trait methods for object-safe traits used via Arc<dyn Trait>.
+async-trait = "0.1"
+
 # thiserror: error type derivation.
 thiserror = "2"
 
@@ -63,7 +66,7 @@ tracing = "0.1"
 secrecy = { version = "0.8", features = ["alloc"] }
 
 # tokio: async runtime and traits. 
-tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "net", "fs", "signal"] }
+tokio = { version = "1", features = ["io-util", "sync", "macros", "process", "net", "fs", "signal", "rt"] }
 tokio-util = { version = "0.7" }
 dirs = "6"
 

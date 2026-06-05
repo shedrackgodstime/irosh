@@ -22,7 +22,7 @@ pub struct JsonEnvelope<T: Serialize> {
 }
 
 /// Error details included in a failed JSON envelope.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, PartialEq, Debug)]
 pub struct JsonError {
     /// Human-readable error description.
     pub message: String,
@@ -74,6 +74,7 @@ pub fn print_error(message: &str, code: &str) {
 ///
 /// All methods write to stdout in plain mode. JSON mode is handled by early
 /// returns in the caller — these functions are only reached in plain mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Output;
 
 impl Output {

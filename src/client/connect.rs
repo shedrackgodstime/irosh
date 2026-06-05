@@ -98,7 +98,7 @@ impl ClientOptions {
 }
 
 /// A handle to establish irosh client connections.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Client;
 
 impl Client {
@@ -137,6 +137,7 @@ impl Client {
     ///
     /// If the target is a [`ResolvedTarget::WormholeCode`], this will first perform
     /// a rendezvous handshake via Iroh Gossip to find the target's connection ticket.
+    #[must_use]
     #[tracing::instrument(skip(options, target))]
     pub async fn connect(
         options: &ClientOptions,
@@ -195,6 +196,7 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if the P2P connection fails or times out.
+    #[must_use]
     pub async fn dial_p2p(
         options: &ClientOptions,
         ticket: Ticket,
@@ -298,6 +300,7 @@ impl Client {
     /// # Errors
     ///
     /// Returns an error if SSH authentication fails, the stream cannot be opened, or the metadata exchange is interrupted.
+    #[must_use]
     #[tracing::instrument(skip(options, connection, endpoint, blobs))]
     pub async fn establish_session(
         options: &ClientOptions,
@@ -378,36 +381,52 @@ impl Client {
                 .map_err(|e| ClientError::SshNegotiationFailed { source: e })?;
 
             if !matches!(auth_res, client::AuthResult::Success) {
-                // Public key auth failed. Try password if credentials are provided or prompter is set.
-                let (user, password) = if let Some(ref creds) = credentials {
-                    (creds.user.clone(), creds.password.expose_secret().clone())
-                } else if let Some(ref p) = prompter {
-                    let p_clone = p.clone();
-                    let u = Self::DEFAULT_USER.to_string();
-                    let pw = tokio::task::spawn_blocking(move || p_clone.prompt_password(&u))
+                tracing::debug!("Public key auth rejected, attempting password auth");
+
+                if let Some(ref creds) = credentials {
+                    let user = creds.user.clone();
+                    let password = creds.password.expose_secret().clone();
+                    let res = handle
+                        .authenticate_password(user, password)
                         .await
-                        .unwrap_or_else(|e| {
-                            warn!("Password prompter task failed: {e}");
-                            None
-                        });
-                    let Some(pw) = pw else {
-                        tracing::error!("Password prompter returned no password");
+                        .map_err(|e| ClientError::SshNegotiationFailed { source: e })?;
+                    if !matches!(res, client::AuthResult::Success) {
+                        tracing::error!("Password authentication failed");
                         return Err(IroshError::AuthenticationFailed);
-                    };
-                    (Self::DEFAULT_USER.to_string(), pw)
+                    }
+                } else if let Some(ref p) = prompter {
+                    let mut accepted = false;
+                    for attempt in 1..=3 {
+                        if attempt > 1 {
+                            warn!("Password incorrect. Retrying (attempt {attempt}/3)...");
+                        }
+                        let p_clone = p.clone();
+                        let u = Self::DEFAULT_USER.to_string();
+                        let pw = tokio::task::spawn_blocking(move || p_clone.prompt_password(&u))
+                            .await
+                            .unwrap_or_else(|e| {
+                                warn!("Password prompter task failed: {e}");
+                                None
+                            });
+                        let Some(pw) = pw else {
+                            tracing::error!("Password prompter returned no password");
+                            return Err(IroshError::AuthenticationFailed);
+                        };
+                        let res = handle
+                            .authenticate_password(Self::DEFAULT_USER.to_string(), pw)
+                            .await
+                            .map_err(|e| ClientError::SshNegotiationFailed { source: e })?;
+                        if matches!(res, client::AuthResult::Success) {
+                            accepted = true;
+                            break;
+                        }
+                    }
+                    if !accepted {
+                        tracing::error!("Password authentication failed after 3 attempts");
+                        return Err(IroshError::AuthenticationFailed);
+                    }
                 } else {
                     tracing::error!("No credentials or prompter available for password auth");
-                    return Err(IroshError::AuthenticationFailed);
-                };
-
-                tracing::debug!("Public key auth rejected, attempting password auth");
-                let pw_res = handle
-                    .authenticate_password(user, password)
-                    .await
-                    .map_err(|e| ClientError::SshNegotiationFailed { source: e })?;
-
-                if !matches!(pw_res, client::AuthResult::Success) {
-                    tracing::error!("Password authentication failed");
                     return Err(IroshError::AuthenticationFailed);
                 }
             }

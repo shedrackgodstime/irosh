@@ -2688,6 +2688,7 @@ name = "irosh"
 version = "0.5.0"
 dependencies = [
  "argon2 0.5.3",
+ "async-trait",
  "chrono",
  "console 0.16.3",
  "criterion",

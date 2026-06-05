@@ -8,6 +8,7 @@ use russh::server;
 use russh::{MethodKind, MethodSet};
 use std::sync::Arc;
 
+#[must_use]
 #[tracing::instrument(skip(options))]
 pub(crate) async fn inspect_server(options: &ServerOptions) -> Result<ServerReady> {
     let identity = load_or_generate_identity(options.state()).await?;
@@ -56,6 +57,7 @@ fn build_method_set(methods: &[AuthMethod]) -> MethodSet {
     set
 }
 
+#[must_use]
 #[tracing::instrument(skip(options))]
 pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, Server)> {
     let identity = load_or_generate_identity(options.state()).await?;
@@ -150,7 +152,7 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
     };
 
     // Configure russh to advertise only the methods our authenticator supports.
-    let supported = authenticator.supported_methods();
+    let supported = authenticator.supported_methods().await;
     let method_set = build_method_set(&supported);
 
     let stealth_mode = options.secret_value().is_some();

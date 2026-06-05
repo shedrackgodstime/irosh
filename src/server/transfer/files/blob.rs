@@ -13,6 +13,7 @@ use crate::transport::transfer::{
 use futures_util::StreamExt;
 use tokio::io::AsyncReadExt;
 
+#[must_use]
 pub async fn handle_blob_put_request(
     stream: &mut IrohDuplex,
     _connection: iroh::endpoint::Connection,
@@ -91,7 +92,19 @@ pub async fn handle_blob_put_request(
                             .into());
                         }
                         let (len_bytes, blob_start) = data.split_at(8);
-                        expected_remaining = u64::from_be_bytes(len_bytes.try_into().unwrap());
+                        expected_remaining = u64::from_be_bytes([
+                            len_bytes[0],
+                            len_bytes[1],
+                            len_bytes[2],
+                            len_bytes[3],
+                            len_bytes[4],
+                            len_bytes[5],
+                            len_bytes[6],
+                            len_bytes[7],
+                        ]);
+                        if let Ok(cap) = usize::try_from(expected_remaining) {
+                            current_blob.reserve(cap);
+                        }
                         current_blob.extend_from_slice(blob_start);
                         expected_remaining -= blob_start.len() as u64;
                     } else {
@@ -276,6 +289,7 @@ pub async fn handle_blob_put_request(
         })
 }
 
+#[must_use]
 pub async fn handle_blob_get_request(
     stream: &mut IrohDuplex,
     _connection: iroh::endpoint::Connection,

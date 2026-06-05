@@ -311,6 +311,7 @@ impl ShellContext {
     ///
     /// If the path is relative, it is resolved against the current working
     /// directory of this context (either the live shell's CWD or the server home).
+    #[must_use]
     pub(crate) async fn resolve_path(
         self,
         raw: &str,

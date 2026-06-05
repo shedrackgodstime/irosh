@@ -19,6 +19,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn upload(
         &mut self,
         local: impl AsRef<std::path::Path>,
@@ -44,6 +45,7 @@ impl Session {
     ///
     /// Returns an error if the connection fails, the remote target exists and
     /// cannot be overwritten, or if the transfer is interrupted.
+    #[must_use]
     pub async fn upload_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,
@@ -77,6 +79,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn upload_blob<F>(
         &self,
         local: impl AsRef<std::path::Path>,
@@ -456,6 +459,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn upload_file(
         &mut self,
         local: impl AsRef<std::path::Path>,
@@ -469,6 +473,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn upload_file_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,
@@ -608,6 +613,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn upload_dir_with_progress<F>(
         &mut self,
         local: impl AsRef<std::path::Path>,

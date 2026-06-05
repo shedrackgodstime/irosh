@@ -82,6 +82,7 @@ pub async fn listen_for_ticket(_endpoint: &iroh::Endpoint, code: &str) -> Result
 ///
 /// Returns an error if the Pkarr client cannot be built, the TXT record
 /// cannot be created, or the packet cannot be signed.
+#[must_use]
 pub async fn broadcast_ticket_loop(code: &str, ticket: Ticket) -> Result<()> {
     let keypair = derive_keypair(code);
     let client = Client::builder()

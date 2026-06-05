@@ -5,7 +5,7 @@ use std::path::PathBuf;
 const MAX_HISTORY_ENTRIES: usize = 1000;
 
 /// Manages persistent and in-memory history for local commands.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommandHistory {
     path: Option<PathBuf>,
     entries: Vec<String>,

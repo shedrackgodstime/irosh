@@ -52,7 +52,10 @@ pub fn reset_vault(state: &crate::config::StateConfig) -> crate::error::Result<(
 pub async fn rotate_identity(
     state: &crate::config::StateConfig,
 ) -> crate::error::Result<EndpointIdentity> {
-    keys::delete_secret_key(state)?;
+    let state_clone = state.clone();
+    tokio::task::spawn_blocking(move || keys::delete_secret_key(&state_clone))
+        .await
+        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))??;
     keys::load_or_generate_identity(state).await
 }
 

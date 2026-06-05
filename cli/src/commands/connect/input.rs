@@ -9,6 +9,7 @@ use irosh::Session;
 
 /// Actions requested by the user via escape sequences (e.g., `~.`) or the local prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EscapeAction {
     /// Disconnect the session immediately (`~.`).
     Disconnect,
@@ -24,6 +25,7 @@ pub enum EscapeAction {
 
 /// The current mode of the input engine.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum InputMode {
     /// Normal mode: bytes are passed through to the remote host.
     #[default]
@@ -33,6 +35,7 @@ pub enum InputMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum ControlSequenceState {
     #[default]
     None,
@@ -287,7 +290,7 @@ impl InputEngine {
                         line.editor = LineEditor::new_prompt();
                         line.display_cursor = 0;
                         line.control_state = ControlSequenceState::None;
-                        to_local.extend_from_slice(b"\r\nirosh> ");
+                        to_local.extend_from_slice(b"irosh> ");
                     } else {
                         finalize_submitted_line(to_local, line);
                         self.exit_local_prompt(to_remote);

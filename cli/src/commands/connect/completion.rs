@@ -28,6 +28,7 @@ pub struct CompletionEdit {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CompletionResult {
     None,
     Applied(CompletionEdit),
@@ -35,11 +36,13 @@ pub enum CompletionResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CompletionMode {
     Escape,
     Prompt,
 }
 
+#[must_use]
 pub async fn complete_line(
     mode: CompletionMode,
     session: &mut Session,

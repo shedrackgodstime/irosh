@@ -1,6 +1,7 @@
 use super::history::CommandHistory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EditorEvent {
     InsertByte(u8),
     Backspace,
@@ -16,6 +17,7 @@ pub enum EditorEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EditorEffect {
     NoOp,
     Render,
@@ -25,7 +27,7 @@ pub enum EditorEffect {
     RequestCompletion,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LineEditor {
     line: Vec<u8>,
     cursor: usize,
@@ -33,6 +35,7 @@ pub struct LineEditor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EditorMode {
     Escape,
     Prompt,

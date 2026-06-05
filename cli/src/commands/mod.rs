@@ -20,7 +20,8 @@ pub trait CommandExec {
     async fn execute(&self, ctx: &CliContext) -> Result<()>;
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Commands {
     /// Connect to a remote peer (alias, ticket, or wormhole)
     #[command(
@@ -126,6 +127,7 @@ pub enum Commands {
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CliAuthMode {
     /// Only SSH public keys are allowed (Strict/TOFU)
     Key,
@@ -196,7 +198,8 @@ impl CommandExec for Commands {
     }
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SystemAction {
     Install,
     Uninstall,
@@ -211,7 +214,8 @@ pub enum SystemAction {
     },
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PeerAction {
     /// List all saved peers in the address book
     List,
@@ -245,27 +249,31 @@ pub enum PeerAction {
     },
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TrustAction {
     List,
     Revoke { fingerprint: Option<String> },
     Reset,
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PasswdAction {
     Set,
     Remove,
     Status,
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IdentityAction {
     Show,
     Rotate,
 }
 
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConfigAction {
     List,
     Get {

@@ -28,6 +28,7 @@ fn ensure_key_dir(state: &StateConfig) -> Result<()> {
 ///
 /// The same seed material is used to derive both the Iroh endpoint identity and
 /// the SSH host/client key used by the library.
+#[derive(Clone)]
 pub struct EndpointIdentity {
     /// The Iroh networking secret key.
     pub secret_key: SecretKey,

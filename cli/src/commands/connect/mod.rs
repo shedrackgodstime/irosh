@@ -162,16 +162,9 @@ fn phase_resolve(target_str: Option<String>, sm: &mut ConnectCtx) -> Result<Conn
     } else {
         let peers = irosh::storage::list_peers(&sm.state)?;
         if peers.is_empty() {
-            Ui::warn("Address book is empty", "You haven't saved any peers yet.");
-            Ui::info("To connect, you can:");
-            Ui::info("  1. Use a wormhole code:   irosh <code-word>");
-            Ui::info("  2. Use a full ticket:     irosh <ticket-string>");
-            Ui::info("  3. Add a peer manually:   irosh peer add <name> <ticket>");
-            Ui::blank();
-
             match Ui::input("Enter a wormhole code or ticket", None) {
                 Some(val) if !val.trim().is_empty() => val.trim().to_string(),
-                _ => anyhow::bail!("No target specified."),
+                _ => anyhow::bail!("Connection cancelled."),
             }
         } else {
             let mut items = vec!["[Use a wormhole code or ticket]".to_string()];
@@ -184,7 +177,7 @@ fn phase_resolve(target_str: Option<String>, sm: &mut ConnectCtx) -> Result<Conn
             match Ui::select("Select a peer to connect", &items) {
                 Some(0) => match Ui::input("Enter a wormhole code or ticket", None) {
                     Some(val) if !val.trim().is_empty() => val.trim().to_string(),
-                    _ => anyhow::bail!("No target specified."),
+                    _ => anyhow::bail!("Connection cancelled."),
                 },
                 Some(idx) => peers[idx - 1].name.clone(),
                 None => anyhow::bail!("Connection cancelled."),
@@ -316,6 +309,7 @@ async fn phase_setup(
         let output = session.capture_exec(cmd).await?;
         std::io::stdout().write_all(&output.stdout)?;
         std::io::stderr().write_all(&output.stderr)?;
+        let _ = session.disconnect().await;
         if output.exit_status != 0 {
             #[allow(clippy::cast_possible_wrap)]
             std::process::exit(output.exit_status as i32);

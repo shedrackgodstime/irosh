@@ -172,7 +172,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `ServerReady` is returned by [`Server::bind`] and [`Server::inspect`]. It is
 /// used to generate the connection ticket.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServerReady {
     /// The unique Iroh node ID of the server.
     pub endpoint_id: String,
@@ -498,7 +498,7 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
                     },
                 );
 
-                let pairing_methods = pairing_auth.supported_methods();
+                let pairing_methods = pairing_auth.supported_methods().await;
                 let mut pairing_method_set = russh::MethodSet::empty();
                 for m in &pairing_methods {
                     match m {

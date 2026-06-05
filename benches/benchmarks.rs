@@ -227,10 +227,11 @@ fn bench_password_hash(c: &mut Criterion) {
 
 fn bench_password_verify(c: &mut Criterion) {
     let hash = irosh::auth::hash_password("correct-horse-battery-staple").unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
     c.bench_function("auth/argon2_verify", |b| {
-        b.iter(|| {
+        b.to_async(&rt).iter(|| async {
             let auth = irosh::auth::PasswordAuth::new(&hash);
-            let _ = auth.check_password("someone", "correct-horse-battery-staple");
+            let _ = auth.check_password("someone", "correct-horse-battery-staple").await;
         })
     });
 }

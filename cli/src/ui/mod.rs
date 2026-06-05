@@ -5,6 +5,7 @@ pub mod messages;
 pub mod prompts;
 pub mod theme;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ui;
 
 impl Ui {

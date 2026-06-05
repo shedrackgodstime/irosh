@@ -21,6 +21,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn download(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -47,6 +48,7 @@ impl Session {
     ///
     /// Returns an error if the connection fails, the remote path is not found,
     /// or if the local filesystem prevents writing the data.
+    #[must_use]
     pub async fn download_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -83,6 +85,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn download_blob<F>(
         &self,
         remote: impl AsRef<std::path::Path>,
@@ -210,6 +213,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn download_file(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -224,6 +228,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn download_file_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
@@ -369,6 +374,7 @@ impl Session {
     /// # Errors
     ///
     /// Returns an error if the transfer fails or is rejected by the remote peer.
+    #[must_use]
     pub async fn download_dir_with_progress<F>(
         &mut self,
         remote: impl AsRef<std::path::Path>,
