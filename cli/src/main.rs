@@ -145,7 +145,7 @@ async fn main() {
                 use crate::ui::Ui;
                 Ui::error(
                     &format!("initialization failed: {e}"),
-                    Some("check that ~/.irosh exists and is readable, or re-run with --verbose"),
+                    Some(crate::ui::messages::TIP_INIT_FAILED),
                 );
             }
             std::process::exit(1);
@@ -186,28 +186,53 @@ async fn main() {
 
 /// Maps a known error to a context-specific tip the user can act on.
 ///
-/// Returns `None` for errors that are self-explanatory or already contain
-/// enough context. The fallback `"--verbose"` tip is added in the caller only
-/// when no specific tip is available.
+/// Returns a tip constant from `messages.rs`. The fallback `TIP_FALLBACK`
+/// is returned when no specific tip matches.
 fn classify_error(e: &anyhow::Error) -> &'static str {
+    use crate::ui::messages;
+
     let s = format!("{e:#}").to_lowercase();
 
-    if s.contains("connection refused") || s.contains("connect failed") || s.contains("timed out") {
-        "check that the remote server is running with 'irosh host'"
-    } else if s.contains("wormhole") && (s.contains("not found") || s.contains("no peer")) {
-        "wormhole codes expire after 60s — ask the remote side to re-run 'irosh wormhole'"
-    } else if s.contains("auth") && s.contains("failed") {
-        "run 'irosh peer list' to see trusted keys, or re-pair with 'irosh wormhole'"
-    } else if s.contains("blobs") || s.contains("store") {
-        "check permissions on ~/.irosh/client/blobs, or re-run with --verbose"
-    } else if s.contains("identity conflict") || s.contains("already running") {
-        "use 'irosh system status' to inspect the running daemon"
-    } else if s.contains("permission denied") {
-        "check file permissions, or run 'irosh check' for a full diagnostic"
-    } else if s.contains("no such file") || s.contains("not found") {
-        "verify the path exists and is accessible from the current directory"
-    } else {
-        // Generic fallback only shown when no specific tip matches
-        "run with --verbose for full diagnostic details"
+    // ── Auth errors: split by cause ───────────────────────────────────────
+    if s.contains("password") && (s.contains("incorrect") || s.contains("wrong") || s.contains("invalid")) {
+        return messages::TIP_AUTH_WRONG_PASSWORD;
     }
+    if s.contains("auth") && (s.contains("key") || s.contains("publickey") || s.contains("signature")) {
+        return messages::TIP_AUTH_KEY_REJECTED;
+    }
+    if s.contains("auth") && s.contains("failed") {
+        // Generic auth failure — could be either, be vague
+        return messages::TIP_AUTH_WRONG_PASSWORD;
+    }
+
+    // ── Connectivity ──────────────────────────────────────────────────────
+    if s.contains("connection refused") || s.contains("connect failed") || s.contains("timed out") {
+        return messages::TIP_CONNECTION_REFUSED;
+    }
+
+    // ── Wormhole ──────────────────────────────────────────────────────────
+    if s.contains("wormhole") && (s.contains("not found") || s.contains("no peer")) {
+        return messages::TIP_WORMHOLE_TIMEOUT;
+    }
+
+    // ── Daemon conflict ───────────────────────────────────────────────────
+    if s.contains("identity conflict") || s.contains("already running") {
+        return messages::TIP_DAEMON_STATUS;
+    }
+
+    // ── Storage / blobs ───────────────────────────────────────────────────
+    if s.contains("blobs") || s.contains("store") {
+        return messages::TIP_BLOB_STORE;
+    }
+
+    // ── Filesystem ────────────────────────────────────────────────────────
+    if s.contains("permission denied") {
+        return messages::TIP_CHECK_DIAGNOSTIC;
+    }
+    if s.contains("no such file") || s.contains("not found") {
+        return messages::TIP_VERIFY_PATH;
+    }
+
+    // ── Fallback ──────────────────────────────────────────────────────────
+    messages::TIP_FALLBACK
 }

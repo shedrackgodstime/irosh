@@ -1,4 +1,5 @@
 use crate::context::CliContext;
+use crate::ui::messages;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::diagnostic;
@@ -145,19 +146,13 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
     if let Some(v) = system.ssh_version {
         Ui::success(&format!("SSH Binary: Found ({v})"));
     } else {
-        Ui::error(
-            "SSH Binary: not found",
-            Some("install openssh-client, then re-run 'irosh check'"),
-        );
+        Ui::error("SSH Binary: not found", Some(messages::TIP_INSTALL_SSH));
     }
 
     if system.udp_available {
         Ui::success("UDP Socket: Available");
     } else {
-        Ui::error(
-            "UDP Socket: blocked or unavailable",
-            Some("irosh requires UDP for P2P transport — check your firewall settings"),
-        );
+        Ui::error("UDP Socket: blocked or unavailable", Some(messages::TIP_UDP_FIREWALL));
     }
 
     // Network
@@ -180,12 +175,18 @@ pub async fn exec(ctx: &CliContext) -> Result<()> {
                     Ui::success(&format!("Relay Link: Connected ({relay})"));
                 }
             } else {
-                Ui::error("Relay Link: DISCONNECTED", None);
+                Ui::error(
+                    "Relay Link: DISCONNECTED",
+                    Some(messages::TIP_CONNECTION_REFUSED),
+                );
             }
         }
         Err(e) => {
             pb.finish_with_message("Done");
-            Ui::error("P2P Endpoint: OFFLINE", None);
+            Ui::error(
+                "P2P Endpoint: OFFLINE",
+                Some(messages::TIP_UDP_FIREWALL),
+            );
             Ui::info(&format!("Error: {e:#}"));
         }
     }

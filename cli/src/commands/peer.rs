@@ -2,6 +2,7 @@ use crate::commands::PeerAction;
 use crate::context::CliContext;
 use crate::display;
 use crate::output::Output;
+use crate::ui::messages;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::storage;
@@ -117,9 +118,7 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 }
                 Ui::error(
                     &format!("a peer named '{target_name}' already exists"),
-                    Some(
-                        "use a different alias, or remove the existing one with 'irosh peer remove'",
-                    ),
+                    Some(crate::ui::messages::TIP_PEER_USE_DIFFERENT_ALIAS),
                 );
                 return Ok(());
             }
@@ -247,7 +246,7 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
                 }
                 Ui::error(
                     &format!("peer '{target_name}' not found in address book"),
-                    Some("run 'irosh peer list' to see known peers"),
+                    Some(messages::TIP_PEER_LIST),
                 );
             }
         }
@@ -285,7 +284,7 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             if target_old != target_new && storage::load_peer(state, &target_new)?.is_some() {
                 Ui::error(
                     &format!("a peer named '{target_new}' already exists"),
-                    Some("remove the existing peer first with 'irosh peer remove'"),
+                    Some(messages::TIP_PEER_REMOVE_FIRST),
                 );
                 return Ok(());
             }
@@ -296,7 +295,7 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
             } else {
                 Ui::error(
                     &format!("peer '{target_old}' not found in address book"),
-                    None,
+                    Some(messages::TIP_PEER_LIST),
                 );
             }
         }

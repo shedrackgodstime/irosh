@@ -1,6 +1,7 @@
 //! Shared UI components for the Irosh CLI.
 
 pub mod feedback;
+pub mod messages;
 pub mod prompts;
 pub mod theme;
 

@@ -1,6 +1,7 @@
 use crate::commands::ConfigAction;
 use crate::context::CliContext;
 use crate::output::Output;
+use crate::ui::messages;
 use crate::ui::Ui;
 use anyhow::Result;
 
@@ -84,7 +85,7 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     }
                     Ui::error(
                         &format!("unknown configuration key: {key}"),
-                        Some("run 'irosh config list' to see all valid keys"),
+                        Some(messages::TIP_CONFIG_LIST),
                     );
                     anyhow::bail!("Invalid key.");
                 }
@@ -133,7 +134,7 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                 _ => {
                     Ui::error(
                         &format!("unknown configuration key: {key}"),
-                        Some("run 'irosh config list' to see all valid keys"),
+                        Some(messages::TIP_CONFIG_LIST),
                     );
                     anyhow::bail!("Invalid key.");
                 }

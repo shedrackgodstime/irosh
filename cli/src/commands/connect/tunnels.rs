@@ -1,3 +1,4 @@
+use crate::ui::messages;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::Session;
@@ -18,7 +19,10 @@ pub async fn setup_forwarding(session: &mut Session, forward_str: Option<String>
                 Ok((_handle, bound)) => Ui::info(&format!(
                     "Forwarding {bound} -> {remote_host}:{remote_port}"
                 )),
-                Err(e) => Ui::error(&format!("port forwarding failed: {e}"), None),
+                Err(e) => Ui::error(
+                    &format!("port forwarding failed: {e}"),
+                    Some(messages::TIP_DAEMON_STATUS),
+                ),
             }
         }
     }

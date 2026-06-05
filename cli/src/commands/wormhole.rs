@@ -1,4 +1,5 @@
 use crate::context::CliContext;
+use crate::ui::messages;
 use crate::ui::Ui;
 use anyhow::Result;
 use console::style;
@@ -81,7 +82,7 @@ pub async fn exec(
         // Rule 2: Vault NOT empty and no password set -> BLOCKED.
         Ui::error(
             "wormhole blocked: trusted devices exist but no Node Password is set",
-            Some("run 'irosh passwd set' or use '--passwd' to issue a one-time invite"),
+            Some(messages::TIP_WORMHOLE_PASSWD),
         );
         anyhow::bail!("Security initiation block.");
     }
@@ -98,7 +99,7 @@ pub async fn exec(
                     custom_code,
                     custom_code.len()
                 ),
-                Some("use a longer code, or add a password with --passwd"),
+                Some(messages::TIP_WORMHOLE_CODE_LENGTH),
             );
             anyhow::bail!("Wormhole code too short.");
         }
@@ -234,7 +235,7 @@ async fn handle_enable_daemon(
             }
             Ui::error(
                 &format!("daemon rejected wormhole request: {e}"),
-                Some("run 'irosh system status' for daemon health details"),
+                Some(messages::TIP_DAEMON_WORMHOLE),
             );
         }
         _ => anyhow::bail!("Unexpected response from daemon"),

@@ -1,5 +1,6 @@
 use crate::context::CliContext;
 use crate::output::Output;
+use crate::ui::messages;
 use crate::ui::Ui;
 use anyhow::Result;
 use irosh::{Server, ServerOptions};
@@ -77,7 +78,7 @@ pub async fn exec(
                     }
                     Ui::error(
                         "failed to start: the irosh daemon is already running in the background",
-                        Some("run 'irosh system status' to inspect it, or 'irosh wormhole' to pair without stopping the daemon"),
+                        Some(messages::TIP_DAEMON_STATUS),
                     );
                     anyhow::bail!("Identity conflict.");
                 }
