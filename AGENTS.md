@@ -1,7 +1,19 @@
-# irosh — AI Agent Guide
+# irosh - AI Agent Guide
 
-All rules, conventions, and quality gates are defined in:
+Project-specific rules live in:
 
-- **`docs_dev/rust-skills/AGENTS.md`** — irosh Cardinal Rules, project standards, test conventions, code style, commit convention, CI expectations, and domain-specific invariants.
+- `scratch/AGENTS.md` - irosh standards, validation gate, domain invariants, and project-specific constraints.
 
-This file exists only as a redirect. Edit the file above, not this one.
+Shared reusable rules live in:
+
+- `.agent-rules/behavior/agent-standards.md` - cross-project agent behavior.
+- `.agent-rules/skills/rust/core/SKILL.md` - generic Rust engineering rules.
+
+Local symlinks:
+
+```text
+scratch      -> /home/kristency/knowledge-base/projects/irosh
+.agent-rules -> /home/kristency/knowledge-base/agent-rules
+```
+
+Load shared rules first, then `scratch/AGENTS.md`.

@@ -41,3 +41,12 @@ docs_dev/
 
 # Local AI tooling metadata
 .antigravitycli/
+
+# User-specific
+.kilo
+
+# Scratch symlink to private project memory
+/scratch
+
+# Local shared agent-rules symlink
+/.agent-rules
