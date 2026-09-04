@@ -5,7 +5,7 @@ mod pty;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard};
 
-use russh::{Channel, ChannelId, server};
+use russh::{Channel, ChannelId, ChannelOpenFailure, server};
 use russh::{MethodKind, MethodSet};
 use tracing::{debug, info, warn};
 
@@ -132,14 +132,16 @@ impl server::Handler for ServerHandler {
     async fn channel_open_session(
         &mut self,
         channel: Channel<server::Msg>,
+        reply: server::ChannelOpenHandle,
         _session: &mut server::Session,
-    ) -> std::result::Result<bool, Self::Error> {
+    ) -> std::result::Result<(), Self::Error> {
         debug!(
             "channel_open_session request for channel {:?}",
             channel.id()
         );
         self.lock_channels().entry(channel.id()).or_default();
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn channel_open_direct_tcpip(
@@ -149,8 +151,9 @@ impl server::Handler for ServerHandler {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: server::ChannelOpenHandle,
         session: &mut server::Session,
-    ) -> std::result::Result<bool, Self::Error> {
+    ) -> std::result::Result<(), Self::Error> {
         info!(
             "Incoming direct-tcpip request for {}:{}",
             host_to_connect, port_to_connect
@@ -164,7 +167,8 @@ impl server::Handler for ServerHandler {
                     "Failed to connect to direct-tcpip target {}: {}",
                     target, err
                 );
-                return Ok(false);
+                reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                return Ok(());
             }
         };
 
@@ -176,13 +180,15 @@ impl server::Handler for ServerHandler {
             }
         }
 
+        reply.accept().await;
+
         tokio::spawn(async move {
             let mut channel_stream = channel.into_stream();
             let _ = tokio::io::copy_bidirectional(&mut stream, &mut channel_stream).await;
             let _ = handle.close(channel_id).await;
         });
 
-        Ok(true)
+        Ok(())
     }
 
     async fn pty_request(

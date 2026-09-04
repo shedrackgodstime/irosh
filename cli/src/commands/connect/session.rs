@@ -110,11 +110,7 @@ pub async fn drive_session(
                         stderr.write_all(&data).await?;
                         stderr.flush().await?;
                     }
-                    Some(SessionEvent::Closed) => {
-                        let _ = session.disconnect().await;
-                        return Ok(DisconnectReason::RemoteClosed);
-                    }
-                    None => {
+                    Some(SessionEvent::Closed) | None => {
                         let _ = session.disconnect().await;
                         return Ok(DisconnectReason::RemoteClosed);
                     }

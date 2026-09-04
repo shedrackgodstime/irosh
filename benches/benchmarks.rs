@@ -231,7 +231,9 @@ fn bench_password_verify(c: &mut Criterion) {
     c.bench_function("auth/argon2_verify", |b| {
         b.to_async(&rt).iter(|| async {
             let auth = irosh::auth::PasswordAuth::new(&hash);
-            let _ = auth.check_password("someone", "correct-horse-battery-staple").await;
+            let _ = auth
+                .check_password("someone", "correct-horse-battery-staple")
+                .await;
         })
     });
 }

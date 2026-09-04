@@ -6,7 +6,7 @@
 
 use crate::error::{Result, TransportError};
 use crate::transport::ticket::Ticket;
-use pkarr::{Client, Keypair, SignedPacket, dns::rdata::RData, dns::rdata::TXT};
+use pkarr::{Client, Keypair, ResolvePolicy, SignedPacket, dns::rdata::RData, dns::rdata::TXT};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -48,7 +48,7 @@ pub async fn listen_for_ticket(_endpoint: &iroh::Endpoint, code: &str) -> Result
     // Poll the relays until we find the record.
     for i in 0..60 {
         // Try for 5 minutes (5s intervals)
-        if let Some(signed_packet) = client.resolve(&public_key).await {
+        if let Ok(signed_packet) = client.resolve(&public_key, ResolvePolicy::CacheFirst).await {
             for record in signed_packet.all_resource_records() {
                 if let RData::TXT(txt) = &record.rdata {
                     if let Ok(content) = String::try_from(txt.clone()) {
@@ -114,8 +114,11 @@ pub async fn broadcast_ticket_loop(code: &str, ticket: Ticket) -> Result<()> {
     info!("Publishing wormhole to Pkarr rendezvous: {}", code);
 
     loop {
-        match client.publish(&signed_packet, None).await {
-            Ok(()) => debug!("Successfully published to Pkarr rendezvous"),
+        match client.publish(&signed_packet).await {
+            Ok(count) => debug!(
+                "Successfully published to Pkarr rendezvous ({} nodes)",
+                count
+            ),
             Err(e) => warn!("Failed to publish to Pkarr rendezvous: {}", e),
         }
 
@@ -149,7 +152,7 @@ pub async fn unpublish_ticket(code: &str) -> Result<()> {
     debug!("Unpublishing wormhole from Pkarr: {}", code);
 
     // We only try once. If it fails, the TTL will naturally expire it anyway.
-    let _ = client.publish(&signed_packet, None).await;
+    let _ = client.publish(&signed_packet).await;
 
     Ok(())
 }
@@ -167,7 +170,7 @@ const WORDS: &[&str] = &[
 /// Example: `apple-banana-7`
 #[must_use]
 pub fn generate_code() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
 
     let w1 = WORDS[rng.random_range(0..WORDS.len())];

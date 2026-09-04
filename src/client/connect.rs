@@ -385,7 +385,7 @@ impl Client {
 
                 if let Some(ref creds) = credentials {
                     let user = creds.user.clone();
-                    let password = creds.password.expose_secret().clone();
+                    let password = creds.password.expose_secret();
                     let res = handle
                         .authenticate_password(user, password)
                         .await

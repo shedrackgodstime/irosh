@@ -22,8 +22,8 @@ use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use argon2::password_hash::SaltString;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::password_hash::Error as PasswordError;
+use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use russh::keys::ssh_key::{HashAlg, PublicKey};
 use tracing::{info, warn};
 
@@ -70,6 +70,7 @@ pub enum AuthMode {
 /// ```no_run
 /// use irosh::auth::{Authenticator, AuthMethod};
 /// use russh::keys::ssh_key::PublicKey;
+/// use async_trait::async_trait;
 ///
 /// struct MyAuth;
 ///
@@ -79,14 +80,15 @@ pub enum AuthMode {
 ///     }
 /// }
 ///
+/// #[async_trait]
 /// impl Authenticator for MyAuth {
-///     fn supported_methods(&self) -> Vec<AuthMethod> {
+///     async fn supported_methods(&self) -> Vec<AuthMethod> {
 ///         vec![AuthMethod::Password]
 ///     }
-///     fn check_public_key(&self, _user: &str, _key: &PublicKey) -> irosh::Result<bool> {
+///     async fn check_public_key(&self, _user: &str, _key: &PublicKey) -> irosh::Result<bool> {
 ///         Ok(false)
 ///     }
-///     fn check_password(&self, _user: &str, password: &str) -> irosh::Result<bool> {
+///     async fn check_password(&self, _user: &str, password: &str) -> irosh::Result<bool> {
 ///         Ok(password == "secret")
 ///     }
 /// }
@@ -260,12 +262,11 @@ impl Authenticator for PasswordAuth {
         let this = self.clone();
         let password = password.to_string();
         tokio::task::spawn_blocking(move || {
-            let parsed_hash = PasswordHash::new(&this.password_hash)
-                .map_err(|reason| AuthError::VerificationFailed { reason })?;
-
-            match Argon2::default().verify_password(password.as_bytes(), &parsed_hash) {
+            match Argon2::default()
+                .verify_password(password.as_bytes(), this.password_hash.as_str())
+            {
                 Ok(()) => Ok(true),
-                Err(argon2::password_hash::Error::Password) => Ok(false),
+                Err(PasswordError::PasswordInvalid) => Ok(false),
                 Err(reason) => Err(AuthError::VerificationFailed { reason }.into()),
             }
         })
@@ -285,18 +286,9 @@ impl Authenticator for PasswordAuth {
 /// Returns a [`crate::error::StorageError::PasswordHash`] if salt generation or hashing fails.
 #[must_use]
 pub fn hash_password(password: &str) -> Result<String> {
-    let mut salt_bytes = [0u8; 16];
-
-    // Securely fill the salt buffer using the OS RNG.
-    // In rand 0.9, rand::fill is the idiomatic way to fill a buffer with OS-provided entropy.
-    rand::fill(&mut salt_bytes);
-
-    let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|reason| crate::error::StorageError::PasswordHash { reason })?;
-
     let argon2 = Argon2::default();
     let password_hash = argon2
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map_err(|reason| crate::error::StorageError::PasswordHash { reason })?
         .to_string();
 
@@ -370,7 +362,7 @@ impl Credentials {
     pub fn new(user: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             user: user.into(),
-            password: SecretString::new(password.into()),
+            password: SecretString::from(password.into()),
         }
     }
 }
@@ -526,16 +518,13 @@ impl UnifiedAuthenticator {
         // Only fail-closed if the file exists but cannot be read.
         match crate::storage::load_shadow_file(&self.state) {
             Ok(Some(hash)) => {
-                if let Ok(parsed_hash) = PasswordHash::new(&hash) {
-                    if argon2
-                        .verify_password(password.as_bytes(), &parsed_hash)
-                        .is_ok()
-                    {
-                        return Some(false);
-                    }
-                } else {
-                    warn!("Invalid shadow file hash format.");
+                if argon2
+                    .verify_password(password.as_bytes(), hash.as_str())
+                    .is_ok()
+                {
+                    return Some(false);
                 }
+                warn!("Invalid shadow file hash format.");
             }
             Ok(None) => {} // no password configured, continue
             Err(_) => {
@@ -546,16 +535,13 @@ impl UnifiedAuthenticator {
 
         // 2. Check Temp Password (Invite Pattern)
         if let Some(hash) = &self.temp_password_hash {
-            if let Ok(parsed_hash) = PasswordHash::new(hash) {
-                if argon2
-                    .verify_password(password.as_bytes(), &parsed_hash)
-                    .is_ok()
-                {
-                    return Some(true);
-                }
-            } else {
-                warn!("Invalid temp password hash format.");
+            if argon2
+                .verify_password(password.as_bytes(), hash.as_str())
+                .is_ok()
+            {
+                return Some(true);
             }
+            warn!("Invalid temp password hash format.");
         }
 
         None

@@ -179,6 +179,7 @@ impl client::Handler for ClientHandler {
         connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
+        _channel_handle: russh::ChannelOpenHandleInner<russh::client::Msg>,
         _session: &mut client::Session,
     ) -> std::result::Result<(), Self::Error> {
         let target = {

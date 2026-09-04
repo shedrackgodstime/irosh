@@ -131,7 +131,7 @@ jobs:
             exit 1
           fi
       - name: Verify output traceability table exists
-        run: test -f docs_dev/output-traceability.md
+        run: test -f scratch/docs_dev/output-traceability.md
 
   fuzz:
     name: Fuzz
