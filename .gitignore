@@ -36,17 +36,12 @@ api-guidelines
 /irosh.service
 /irosh.plist
 
-# Internal development docs
-docs_dev/
-
-# Local AI tooling metadata
-.antigravitycli/
-
-# User-specific
-.kilo
-
 # Scratch symlink to private project memory
 /scratch
 
 # Local shared agent-rules symlink
 /.agent-rules
+
+# Local AI tooling metadata
+.antigravitycli/
+.kilo
