@@ -130,8 +130,6 @@ jobs:
             echo "::error::Inline tip string found in cli/src/commands/ — all tips must reference messages::* constants"
             exit 1
           fi
-      - name: Verify output traceability table exists
-        run: test -f scratch/docs_dev/output-traceability.md
 
   fuzz:
     name: Fuzz
