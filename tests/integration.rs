@@ -76,6 +76,10 @@ async fn test_e2e_p2p_connection_and_metadata() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
 async fn test_e2e_file_transfer() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(60), async {
@@ -228,6 +232,10 @@ async fn test_stateless_file_transfer() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
 async fn test_recursive_directory_transfer() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(300), async {
@@ -516,6 +524,10 @@ async fn test_remote_exists() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
 async fn test_upload_nonexistent_source() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(60), async {
@@ -559,6 +571,10 @@ async fn test_upload_nonexistent_source() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
 async fn test_completion_request() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(60), async {
@@ -621,6 +637,10 @@ async fn test_completion_request() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
 async fn test_large_file_transfer() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(120), async {

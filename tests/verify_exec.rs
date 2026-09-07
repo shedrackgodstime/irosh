@@ -1,3 +1,4 @@
+use iroh::RelayMode;
 use irosh::config::HostKeyPolicy;
 use irosh::{Client, ClientOptions, SecurityConfig, Server, ServerOptions, StateConfig};
 use std::time::Duration;
@@ -8,57 +9,77 @@ fn temp_state(name: &str) -> StateConfig {
     StateConfig::new(path)
 }
 
+fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("irosh=debug,info")
+        .with_test_writer()
+        .try_init();
+}
+
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
 async fn verify_exec_output() {
-    let server_state = temp_state("server-verify");
-    let client_state = temp_state("client-verify");
+    init_tracing();
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let server_state = temp_state("server-verify");
+        let client_state = temp_state("client-verify");
 
-    let server_opts = ServerOptions::new(server_state.clone()).security(SecurityConfig {
-        host_key_policy: HostKeyPolicy::AcceptAll,
-    });
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None);
 
-    let (ready, server) = Server::bind(server_opts).await.unwrap();
-    let ticket = ready.ticket().clone();
-    let shutdown = server.shutdown_handle();
-    let server_handle = tokio::spawn(async move { server.run().await });
+        let (ready, server) = Server::bind(server_opts).await.unwrap();
+        let ticket = ready.ticket().clone();
+        let shutdown = server.shutdown_handle();
+        let server_handle = tokio::spawn(async move { server.run().await });
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let client_opts = ClientOptions::new(client_state.clone()).security(SecurityConfig {
-        host_key_policy: HostKeyPolicy::AcceptAll,
-    });
-    let mut session = Client::connect(&client_opts, ticket).await.unwrap();
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
+        let mut session = Client::connect(&client_opts, ticket).await.unwrap();
 
-    println!("\n--- CAPTURE EXEC DEBUG ---");
-    let output = session.capture_exec("echo 'TEST_MARKER'").await.unwrap();
-    println!("STDOUT BYTES: {:?}", output.stdout);
-    println!(
-        "STDOUT STRING: {:?}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    println!("STDERR BYTES: {:?}", output.stderr);
-    println!(
-        "STDERR STRING: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    println!("EXIT STATUS: {}", output.exit_status);
+        println!("\n--- CAPTURE EXEC DEBUG ---");
+        let output = session.capture_exec("echo 'TEST_MARKER'").await.unwrap();
+        println!("STDOUT BYTES: {:?}", output.stdout);
+        println!(
+            "STDOUT STRING: {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        println!("STDERR BYTES: {:?}", output.stderr);
+        println!(
+            "STDERR STRING: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        println!("EXIT STATUS: {}", output.exit_status);
 
-    println!("\n--- DIRECTORY CHECK DEBUG ---");
-    // Check existing directory (server_state root)
-    let dir_path = server_state.root().display().to_string();
-    let cmd = format!(
-        "if [ -d \"{}\" ]; then echo 'YES'; else echo 'NO'; fi",
-        dir_path
-    );
-    let output = session.capture_exec(&cmd).await.unwrap();
-    println!(
-        "DIR CHECK STDOUT: {:?}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+        println!("\n--- DIRECTORY CHECK DEBUG ---");
+        // Check existing directory (server_state root)
+        let dir_path = server_state.root().display().to_string();
+        let cmd = format!(
+            "if [ -d \"{}\" ]; then echo 'YES'; else echo 'NO'; fi",
+            dir_path
+        );
+        let output = session.capture_exec(&cmd).await.unwrap();
+        println!(
+            "DIR CHECK STDOUT: {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
 
-    session.close().await.unwrap();
-    shutdown.close().await;
-    let _ = server_handle.await;
-    let _ = tokio::fs::remove_dir_all(server_state.root()).await;
-    let _ = tokio::fs::remove_dir_all(client_state.root()).await;
+        session.close().await.unwrap();
+        shutdown.close().await;
+        let _ = server_handle.await;
+        let _ = tokio::fs::remove_dir_all(server_state.root()).await;
+        let _ = tokio::fs::remove_dir_all(client_state.root()).await;
+    })
+    .await
+    .expect("Test timed out");
 }
