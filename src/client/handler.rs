@@ -82,9 +82,10 @@ impl client::Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        key: &PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> std::result::Result<bool, Self::Error> {
         use crate::config::HostKeyPolicy;
+        let key = &server_public_key.public_key();
 
         if self.security.host_key_policy == HostKeyPolicy::AcceptAll {
             info!("AcceptAll policy is active. Automatically accepting server key.");
