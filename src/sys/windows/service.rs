@@ -21,6 +21,11 @@ use windows_service::{
 const SERVICE_NAME: &str = "irosh";
 const SERVICE_DISPLAY_NAME: &str = "Irosh P2P SSH Service";
 
+/// Queries the Windows Service Control Manager for the irosh service status.
+///
+/// Returns [`ServiceStatus::Unknown`] when the SCM cannot be reached or the
+/// service state cannot be determined, and [`ServiceStatus::NotFound`] when no
+/// irosh service is installed.
 pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     let _ = state; // Windows uses a global service name for now
     let manager = match ServiceManager::local_computer(
@@ -379,14 +384,13 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
 
         // Initialize file logging for the service in the user root for better visibility
         let log_path = state_root.join("daemon.log");
-        if let Ok(file) = tokio::fs::OpenOptions::new()
+        if let Ok(file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path)
-            .await
         {
             let _ = tracing_subscriber::fmt()
-                .with_writer(file)
+                .with_writer(move || file.try_clone().expect("clone daemon log writer"))
                 .with_env_filter("irosh=debug,info")
                 .try_init();
         }

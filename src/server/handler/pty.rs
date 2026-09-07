@@ -515,9 +515,7 @@ impl ServerHandler {
                                 // block_on is safe here because spawn_blocking
                                 // threads are not Tokio worker threads.
                                 if rt_handle
-                                    .block_on(
-                                        handle_for_task.data(channel, buf[..n].to_vec().into()),
-                                    )
+                                    .block_on(handle_for_task.data(channel, buf[..n].to_vec()))
                                     .is_err()
                                 {
                                     break;
