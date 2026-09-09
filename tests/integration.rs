@@ -416,6 +416,10 @@ async fn test_port_forwarding() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
+)]
 async fn test_empty_file_transfer() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(60), async {

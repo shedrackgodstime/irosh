@@ -5,9 +5,13 @@
 //! main Irosh process exits.
 
 use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::*;
-use windows_sys::Win32::System::JobObjects::*;
-use windows_sys::Win32::System::Threading::*;
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject,
+};
+use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 /// A Windows Job Object that groups child processes for automatic cleanup.
 ///
@@ -22,6 +26,8 @@ pub struct JobObject {
 // (`AssignProcessToJobObject`, `SetInformationJobObject`, `CloseHandle`), which
 // are safe to call from any thread for a given job handle.
 unsafe impl Send for JobObject {}
+// SAFETY: A job object handle can be shared and used concurrently on multiple
+// threads; the Win32 job APIs serialize internally per handle.
 unsafe impl Sync for JobObject {}
 
 impl JobObject {
@@ -32,6 +38,11 @@ impl JobObject {
     ///
     /// Returns an error if the underlying Win32 `CreateJobObjectW` or
     /// `SetInformationJobObject` calls fail.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the size of [`JOBOBJECT_EXTENDED_LIMIT_INFORMATION`] does not
+    /// fit in a `u32`. This is guaranteed by the Win32 definition of the struct.
     #[must_use]
     pub fn new() -> std::io::Result<Self> {
         // SAFETY: Win32 API calls for job object creation and configuration.
@@ -50,8 +61,9 @@ impl JobObject {
             let res = SetInformationJobObject(
                 handle,
                 JobObjectExtendedLimitInformation,
-                &info as *const _ as *const _,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                std::ptr::addr_of!(info).cast(),
+                u32::try_from(std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
+                    .expect("JOBOBJECT_EXTENDED_LIMIT_INFORMATION size fits in u32"),
             );
 
             if res == 0 {

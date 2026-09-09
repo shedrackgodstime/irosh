@@ -4,7 +4,12 @@ use crate::error::{ClientError, IroshError, Result};
 pub use portable_pty::PtySize;
 use std::fmt;
 use tokio::sync::mpsc;
-use windows_sys::Win32::System::Console::*;
+use windows_sys::Win32::System::Console::{
+    CONSOLE_SCREEN_BUFFER_INFO, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT,
+    ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+    GetConsoleMode, GetConsoleScreenBufferInfo, GetStdHandle, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    SetConsoleCP, SetConsoleMode, SetConsoleOutputCP,
+};
 
 /// Places the current physical Windows terminal into raw mode and restores it
 /// automatically on `Drop`. This captures keystrokes without local processing.
@@ -25,6 +30,8 @@ impl fmt::Debug for RawTerminal {
 // documented to be safe to use from any thread. The handles are only read/written
 // through synchronized Win32 console API calls.
 unsafe impl Send for RawTerminal {}
+// SAFETY: Standard console handles can be shared across threads; console mode
+// reads/writes are atomic Win32 API calls safe for concurrent use.
 unsafe impl Sync for RawTerminal {}
 
 impl RawTerminal {
@@ -54,7 +61,7 @@ impl RawTerminal {
             SetConsoleOutputCP(65001);
 
             let mut in_mode = 0;
-            if GetConsoleMode(in_handle, &mut in_mode) == 0 {
+            if GetConsoleMode(in_handle, std::ptr::addr_of_mut!(in_mode)) == 0 {
                 return Err(IroshError::Client(ClientError::TerminalIo {
                     source: std::io::Error::last_os_error(),
                 }));
@@ -62,15 +69,16 @@ impl RawTerminal {
             let in_original_mode = in_mode;
 
             let mut out_mode = 0;
-            let out_original_mode = if GetConsoleMode(out_handle, &mut out_mode) != 0 {
-                let out_original = out_mode;
-                let new_out_mode =
-                    out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
-                let _ = SetConsoleMode(out_handle, new_out_mode);
-                out_original
-            } else {
-                0
-            };
+            let out_original_mode =
+                if GetConsoleMode(out_handle, std::ptr::addr_of_mut!(out_mode)) != 0 {
+                    let out_original = out_mode;
+                    let new_out_mode =
+                        out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+                    let _ = SetConsoleMode(out_handle, new_out_mode);
+                    out_original
+                } else {
+                    0
+                };
 
             // For raw mode, we want to disable line input, echo, and processed input.
             // We also enable VT input to get sequences like arrows as VT codes natively from the driver.
@@ -111,15 +119,22 @@ impl Drop for RawTerminal {
 }
 
 /// Probes the physical terminal size.
+#[must_use]
 pub fn current_terminal_size() -> PtySize {
     // SAFETY: Querying standard output handle for console buffer information.
     unsafe {
         let handle = GetStdHandle(STD_OUTPUT_HANDLE);
         let mut info = std::mem::zeroed::<CONSOLE_SCREEN_BUFFER_INFO>();
-        if GetConsoleScreenBufferInfo(handle, &mut info) != 0 {
+        if GetConsoleScreenBufferInfo(handle, std::ptr::addr_of_mut!(info)) != 0 {
             return PtySize {
-                rows: (info.srWindow.Bottom - info.srWindow.Top + 1) as u16,
-                cols: (info.srWindow.Right - info.srWindow.Left + 1) as u16,
+                rows: u16::try_from(
+                    i32::from(info.srWindow.Bottom) - i32::from(info.srWindow.Top) + 1,
+                )
+                .unwrap_or(0),
+                cols: u16::try_from(
+                    i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1,
+                )
+                .unwrap_or(0),
                 pixel_width: 0,
                 pixel_height: 0,
             };
@@ -152,6 +167,11 @@ impl AsyncStdin {
     /// # Errors
     ///
     /// Returns a `TerminalIo` error if the background input thread cannot be spawned.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fixed input buffer size does not fit in a `u32`. This is
+    /// guaranteed for the constant `[0u8; 1024]` buffer.
     #[must_use]
     pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -175,9 +195,9 @@ impl AsyncStdin {
                     if unsafe {
                         windows_sys::Win32::Storage::FileSystem::ReadFile(
                             handle,
-                            buf.as_mut_ptr() as *mut _,
-                            buf.len() as u32,
-                            &mut read,
+                            buf.as_mut_ptr().cast(),
+                            u32::try_from(buf.len()).expect("input buffer length fits in u32"),
+                            std::ptr::addr_of_mut!(read),
                             std::ptr::null_mut(),
                         )
                     } == 0
@@ -228,7 +248,7 @@ impl AsyncStdin {
         loop {
             match self.rx.recv().await? {
                 TerminalEvent::Data(data) => return Some(data),
-                TerminalEvent::Resize(_) => continue, // resize handled separately via next_event
+                TerminalEvent::Resize(_) => {} // resize handled separately via next_event
             }
         }
     }
@@ -247,6 +267,7 @@ impl AsyncStdin {
 /// Windows does not have a native POSIX signal model, so SSH signals
 /// (e.g., SIGINT, SIGTERM) are ignored here. The remote peer will not
 /// receive process-level signals through the SSH channel on Windows hosts.
+#[must_use]
 pub fn map_sig(_signal: &russh::Sig) -> Option<i32> {
     None
 }

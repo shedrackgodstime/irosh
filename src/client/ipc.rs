@@ -72,7 +72,7 @@ impl IpcClient {
             ))
         })?;
 
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("127.0.0.1:{port}");
         tokio::net::TcpStream::connect(&addr)
             .await
             .map_err(crate::error::IroshError::Io)

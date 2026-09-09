@@ -27,6 +27,31 @@ use commands::{CommandExec, Commands};
 use context::CliContext;
 use ui::Ui;
 
+/// Wraps a writer to convert bare line feeds (`\n`) to CRLF (`\r\n`).
+///
+/// Windows consoles require CRLF; other platforms pass the writer through
+/// unchanged so this adaptor is only compiled on Windows.
+#[cfg(windows)]
+struct CrlfWriter<W: std::io::Write>(W);
+#[cfg(windows)]
+impl<W: std::io::Write> std::io::Write for CrlfWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut last = 0;
+        for (i, &byte) in buf.iter().enumerate() {
+            if byte == b'\n' {
+                self.0.write_all(&buf[last..i])?;
+                self.0.write_all(b"\r\n")?;
+                last = i + 1;
+            }
+        }
+        self.0.write_all(&buf[last..])?;
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 /// Command-line arguments for the irosh CLI.
 #[derive(Parser)]
 #[command(name = "irosh")]
@@ -94,27 +119,6 @@ async fn main() {
     } else {
         "irosh=warn,error"
     };
-
-    #[cfg(windows)]
-    struct CrlfWriter<W: std::io::Write>(W);
-    #[cfg(windows)]
-    impl<W: std::io::Write> std::io::Write for CrlfWriter<W> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let mut last = 0;
-            for (i, &byte) in buf.iter().enumerate() {
-                if byte == b'\n' {
-                    self.0.write_all(&buf[last..i])?;
-                    self.0.write_all(b"\r\n")?;
-                    last = i + 1;
-                }
-            }
-            self.0.write_all(&buf[last..])?;
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.0.flush()
-        }
-    }
 
     let builder = tracing_subscriber::fmt().with_env_filter(filter);
 

@@ -75,9 +75,10 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 let status = NtQueryInformationProcess(
                     handle,
                     0, // ProcessBasicInformation
-                    pbi.as_mut_ptr() as _,
-                    std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
-                    &mut ret_len,
+                    pbi.as_mut_ptr().cast(),
+                    u32::try_from(std::mem::size_of::<PROCESS_BASIC_INFORMATION>())
+                        .expect("PROCESS_BASIC_INFORMATION size fits in u32"),
+                    std::ptr::addr_of_mut!(ret_len),
                 );
 
                 if status != 0 {
@@ -98,7 +99,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 let ok = ReadProcessMemory(
                     handle,
                     peb_base.add(proc_params_offset),
-                    &mut proc_params_ptr as *mut _ as _,
+                    std::ptr::addr_of_mut!(proc_params_ptr).cast(),
                     std::mem::size_of::<*mut std::ffi::c_void>(),
                     std::ptr::null_mut(),
                 );
@@ -118,7 +119,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 let ok = ReadProcessMemory(
                     handle,
                     proc_params_ptr.add(cur_dir_offset),
-                    unicode_str.as_mut_ptr() as _,
+                    unicode_str.as_mut_ptr().cast(),
                     std::mem::size_of::<UNICODE_STRING>(),
                     std::ptr::null_mut(),
                 );
@@ -133,8 +134,8 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 let mut buffer = vec![0u16; (unicode_str.Length / 2) as usize];
                 let ok = ReadProcessMemory(
                     handle,
-                    unicode_str.Buffer as _,
-                    buffer.as_mut_ptr() as _,
+                    unicode_str.Buffer.cast(),
+                    buffer.as_mut_ptr().cast(),
                     unicode_str.Length as usize,
                     std::ptr::null_mut(),
                 );
@@ -184,6 +185,12 @@ pub(crate) fn configure_live_shell_context(command: &mut Command, pid: u32) {
                 Ok(())
             });
         }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        // No-op on non-Linux targets: neither the namespace setup nor the PID is
+        // relevant to how the shell command is launched there.
+        let _ = (command, pid);
     }
 }
 

@@ -256,6 +256,7 @@ impl ShellContext {
         Ok(true)
     }
 
+    #[allow(clippy::unused_async)]
     pub(super) async fn chmod(self, path: &str, mode: u32) {
         #[cfg(target_os = "linux")]
         if let Self::Live { .. } = self {
@@ -277,7 +278,7 @@ impl ShellContext {
         }
     }
 
-    fn home_dir(_shell_state: &ConnectionShellState) -> Option<PathBuf> {
+    fn home_dir(shell_state: &ConnectionShellState) -> Option<PathBuf> {
         #[cfg(unix)]
         {
             std::env::var_os("HOME").map(PathBuf::from)
@@ -292,7 +293,7 @@ impl ShellContext {
                     // We are likely a service. Deriving home from state_root.
                     // State root is usually: C:\Users\Ghost\.irosh\server
                     // We want: C:\Users\Ghost
-                    let mut current = _shell_state.state_root.as_path();
+                    let mut current = shell_state.state_root.as_path();
                     while let Some(parent) = current.parent() {
                         if current.file_name().and_then(|n| n.to_str()) == Some(".irosh") {
                             return Some(parent.to_path_buf());

@@ -5,7 +5,7 @@ use crate::transport::transfer::{
     MAX_CHUNK_BYTES, TransferComplete, TransferFailure, TransferFailureCode, TransferReady,
     write_get_chunk, write_get_complete, write_get_ready, write_transfer_error,
 };
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 
 use crate::server::transfer::ShellContext;
 use crate::server::transfer::helpers::{
@@ -205,6 +205,7 @@ async fn handle_recursive_get_request(
             // In a Live context on Linux, we MUST use an external 'find' command to see the
             // filesystem from the perspective of the target namespace.
             // We use null terminators to handle filenames with spaces, colons, or newlines.
+            use tokio::io::{AsyncBufReadExt, BufReader};
             let mut find_cmd = tokio::process::Command::new("sh");
             find_cmd
                 .arg("-c")

@@ -67,14 +67,14 @@ enum ConnectPhase {
     },
     /// Setup the session (auto-save, PTY, shell, forwarding).
     Setup {
-        session: Session,
+        session: Box<Session>,
         ticket: irosh::transport::ticket::Ticket,
         is_pairing: bool,
     },
     /// Active shell session.
     Shell {
-        session: Session,
-        engine: input::InputEngine,
+        session: Box<Session>,
+        engine: Box<input::InputEngine>,
         guard: Option<TerminalGuard>,
     },
     /// Disconnect and render summary.
@@ -138,7 +138,7 @@ async fn exec_internal(
                 session,
                 ticket,
                 is_pairing,
-            } => phase_setup(session, ticket, is_pairing, &mut sm).await?,
+            } => phase_setup(*session, ticket, is_pairing, &mut sm).await?,
             ConnectPhase::Shell {
                 session,
                 engine,
@@ -290,7 +290,7 @@ async fn phase_dial(
     pb.finish_with_message("Done");
 
     Ok(ConnectPhase::Setup {
-        session,
+        session: Box::new(session),
         ticket,
         is_pairing,
     })
@@ -357,8 +357,8 @@ async fn phase_setup(
     let engine = input::InputEngine::new(&sm.state, remote_is_windows);
 
     Ok(ConnectPhase::Shell {
-        session,
-        engine,
+        session: Box::new(session),
+        engine: Box::new(engine),
         guard,
     })
 }
@@ -366,12 +366,12 @@ async fn phase_setup(
 // ── Phase: Shell ─────────────────────────────────────────────────────────────
 
 async fn phase_shell(
-    session: Session,
-    engine: input::InputEngine,
+    session: Box<Session>,
+    engine: Box<input::InputEngine>,
     _guard: Option<TerminalGuard>,
     _sm: &ConnectCtx,
 ) -> ConnectPhase {
-    let reason = match session::drive_session(session, engine).await {
+    let reason = match session::drive_session(*session, *engine).await {
         Ok(reason) => reason,
         Err(_) => DisconnectReason::Error,
     };

@@ -146,11 +146,10 @@ impl ServerHandler {
                 // Enforce UTF-8 encoding for the remote session to ensure compatibility with irosh output
                 let final_command = if is_powershell {
                     format!(
-                        "$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {}",
-                        command
+                        "$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
                     )
                 } else {
-                    format!("chcp 65001 >nul && {}", command)
+                    format!("chcp 65001 >nul && {command}")
                 };
 
                 let mut command_builder = CommandBuilder::new(exe);
@@ -701,7 +700,9 @@ impl ServerHandler {
         }
         #[cfg(not(unix))]
         {
-            use windows_sys::Win32::System::Console::*;
+            use windows_sys::Win32::System::Console::{
+                CTRL_BREAK_EVENT, CTRL_C_EVENT, GenerateConsoleCtrlEvent,
+            };
             let channels = self.lock_channels();
             if let Some(state_entry) = channels.get(&channel)
                 && let Some(process) = state_entry.process.as_ref()
@@ -789,10 +790,7 @@ fn detect_windows_shell() -> String {
 
     // 2. Try to find Windows PowerShell in standard location
     if let Ok(systemroot) = std::env::var("SystemRoot") {
-        let ps_path = format!(
-            r"{}\System32\WindowsPowerShell\v1.0\powershell.exe",
-            systemroot
-        );
+        let ps_path = format!(r"{systemroot}\System32\WindowsPowerShell\v1.0\powershell.exe");
         if Path::new(&ps_path).exists() {
             return ps_path;
         }
@@ -807,7 +805,7 @@ fn detect_windows_shell() -> String {
 
     // Absolute fallback
     if let Ok(systemroot) = std::env::var("SystemRoot") {
-        return format!(r"{}\System32\cmd.exe", systemroot);
+        return format!(r"{systemroot}\System32\cmd.exe");
     }
     "C:\\Windows\\System32\\cmd.exe".to_string()
 }

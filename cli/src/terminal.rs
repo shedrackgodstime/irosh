@@ -16,7 +16,7 @@ impl TerminalGuard {
     #[must_use]
     pub fn new() -> Result<Self> {
         #[cfg(windows)]
-        Self::ensure_windows_vt()?;
+        Self::ensure_windows_vt();
 
         enable_raw_mode()?;
         Ok(Self { is_raw: true })
@@ -37,12 +37,19 @@ impl TerminalGuard {
     }
 
     #[cfg(windows)]
-    fn ensure_windows_vt() -> Result<()> {
-        use windows_sys::Win32::System::Console::*;
+    fn ensure_windows_vt() {
+        use windows_sys::Win32::System::Console::{
+            DISABLE_NEWLINE_AUTO_RETURN, ENABLE_VIRTUAL_TERMINAL_INPUT,
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE,
+            STD_OUTPUT_HANDLE, SetConsoleMode,
+        };
+        // SAFETY: `GetStdHandle` returns standard console handles and
+        // `GetConsoleMode`/`SetConsoleMode` are documented to be safe to call
+        // with them. Failures are tolerated by ignoring the return codes.
         unsafe {
             let stdout_handle = GetStdHandle(STD_OUTPUT_HANDLE);
             let mut mode = 0;
-            if GetConsoleMode(stdout_handle, &mut mode) != 0 {
+            if GetConsoleMode(stdout_handle, std::ptr::addr_of_mut!(mode)) != 0 {
                 SetConsoleMode(
                     stdout_handle,
                     mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN,
@@ -50,11 +57,10 @@ impl TerminalGuard {
             }
 
             let stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
-            if GetConsoleMode(stdin_handle, &mut mode) != 0 {
+            if GetConsoleMode(stdin_handle, std::ptr::addr_of_mut!(mode)) != 0 {
                 SetConsoleMode(stdin_handle, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
             }
         }
-        Ok(())
     }
 }
 

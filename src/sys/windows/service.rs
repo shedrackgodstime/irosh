@@ -26,14 +26,13 @@ const SERVICE_DISPLAY_NAME: &str = "Irosh P2P SSH Service";
 /// Returns [`ServiceStatus::Unknown`] when the SCM cannot be reached or the
 /// service state cannot be determined, and [`ServiceStatus::NotFound`] when no
 /// irosh service is installed.
+#[allow(clippy::unused_async)]
 pub async fn query_service_status(state: Option<PathBuf>) -> ServiceStatus {
     let _ = state; // Windows uses a global service name for now
-    let manager = match ServiceManager::local_computer(
-        None::<&std::ffi::OsStr>,
-        ServiceManagerAccess::CONNECT,
-    ) {
-        Ok(m) => m,
-        Err(_) => return ServiceStatus::Unknown,
+    let Ok(manager) =
+        ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT)
+    else {
+        return ServiceStatus::Unknown;
     };
 
     let service = match manager.open_service(
@@ -77,9 +76,10 @@ pub async fn handle_service(action: ServiceAction, state: Option<PathBuf>) -> Re
     }
 }
 
+#[allow(clippy::unused_async)]
 async fn install_service(state: Option<PathBuf>) -> Result<()> {
     let exe_path = std::env::current_exe().map_err(|e| ServerError::ServiceManagement {
-        details: format!("failed to get current executable path: {}", e),
+        details: format!("failed to get current executable path: {e}"),
     })?;
 
     // Perform SCM installation in a synchronous scope to ensure non-Send types are dropped
@@ -89,19 +89,20 @@ async fn install_service(state: Option<PathBuf>) -> Result<()> {
             ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
         )
         .map_err(|e| {
-            let details = if format!("{:?}", e).contains("Access is denied") {
+            let details = if format!("{e:?}").contains("Access is denied") {
                 "failed to open SCM: Access denied. Please run this command as Administrator."
                     .to_string()
             } else {
-                format!("failed to open SCM: {}", e)
+                format!("failed to open SCM: {e}")
             };
             ServerError::ServiceManagement { details }
         })?;
 
         let state_dir = state.clone().unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(".irosh").join("server"))
-                .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
+            dirs::home_dir().map_or_else(
+                || PathBuf::from(".irosh").join("server"),
+                |h| h.join(".irosh").join("server"),
+            )
         });
 
         let service_info = windows_service::service::ServiceInfo {
@@ -114,7 +115,7 @@ async fn install_service(state: Option<PathBuf>) -> Result<()> {
             dependencies: vec![],
             account_name: None,
             account_password: None,
-            launch_arguments: vec!["host".into(), "--state".into(), state_dir.into_os_string()],
+            launch_arguments: vec!["--state".into(), state_dir.into_os_string(), "host".into()],
         };
 
         let _service = manager
@@ -123,7 +124,7 @@ async fn install_service(state: Option<PathBuf>) -> Result<()> {
                 windows_service::service::ServiceAccess::START,
             )
             .map_err(|e| ServerError::ServiceManagement {
-                details: format!("failed to create service: {}", e),
+                details: format!("failed to create service: {e}"),
             })?;
     }
 
@@ -136,11 +137,11 @@ fn uninstall_service() -> Result<()> {
     let manager =
         ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT)
             .map_err(|e| {
-                let details = if format!("{:?}", e).contains("Access is denied") {
+                let details = if format!("{e:?}").contains("Access is denied") {
                     "failed to open SCM: Access denied. Please run this command as Administrator."
                         .to_string()
                 } else {
-                    format!("failed to open SCM: {}", e)
+                    format!("failed to open SCM: {e}")
                 };
                 ServerError::ServiceManagement { details }
             })?;
@@ -152,14 +153,14 @@ fn uninstall_service() -> Result<()> {
                 | windows_service::service::ServiceAccess::STOP,
         )
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to open service: {}", e),
+            details: format!("failed to open service: {e}"),
         })?;
 
     let _ = service.stop();
     service
         .delete()
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to delete service: {}", e),
+            details: format!("failed to delete service: {e}"),
         })?;
 
     info!("Service '{}' uninstalled.", SERVICE_NAME);
@@ -170,11 +171,11 @@ fn start_service() -> Result<()> {
     let manager =
         ServiceManager::local_computer(None::<&std::ffi::OsStr>, ServiceManagerAccess::CONNECT)
             .map_err(|e| {
-                let details = if format!("{:?}", e).contains("Access is denied") {
+                let details = if format!("{e:?}").contains("Access is denied") {
                     "failed to open SCM: Access denied. Please run this command as Administrator."
                         .to_string()
                 } else {
-                    format!("failed to open SCM: {}", e)
+                    format!("failed to open SCM: {e}")
                 };
                 ServerError::ServiceManagement { details }
             })?;
@@ -182,13 +183,13 @@ fn start_service() -> Result<()> {
     let service = manager
         .open_service(SERVICE_NAME, windows_service::service::ServiceAccess::START)
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to open service: {}", e),
+            details: format!("failed to open service: {e}"),
         })?;
 
     service
         .start::<&std::ffi::OsStr>(&[])
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to start service: {}", e),
+            details: format!("failed to start service: {e}"),
         })?;
 
     info!("Service '{}' started.", SERVICE_NAME);
@@ -198,9 +199,10 @@ fn start_service() -> Result<()> {
 async fn stop_service(state: Option<PathBuf>) -> Result<()> {
     // Try IPC shutdown first for grace
     let state_dir = state.clone().unwrap_or_else(|| {
-        dirs::home_dir()
-            .map(|h| h.join(".irosh").join("server"))
-            .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
+        dirs::home_dir().map_or_else(
+            || PathBuf::from(".irosh").join("server"),
+            |h| h.join(".irosh").join("server"),
+        )
     });
 
     let client = crate::IpcClient::new(&state_dir);
@@ -218,11 +220,11 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
             ServiceManagerAccess::CONNECT,
         )
         .map_err(|e| {
-            let details = if format!("{:?}", e).contains("Access is denied") {
+            let details = if format!("{e:?}").contains("Access is denied") {
                 "failed to open SCM: Access denied. Please run this command as Administrator."
                     .to_string()
             } else {
-                format!("failed to open SCM: {}", e)
+                format!("failed to open SCM: {e}")
             };
             ServerError::ServiceManagement { details }
         })?;
@@ -230,11 +232,11 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
         let service = manager
             .open_service(SERVICE_NAME, windows_service::service::ServiceAccess::STOP)
             .map_err(|e| ServerError::ServiceManagement {
-                details: format!("failed to open service: {}", e),
+                details: format!("failed to open service: {e}"),
             })?;
 
         service.stop().map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to stop service: {}", e),
+            details: format!("failed to stop service: {e}"),
         })?;
     }
 
@@ -250,9 +252,10 @@ async fn stop_service(state: Option<PathBuf>) -> Result<()> {
 #[must_use]
 pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     let state_dir = state.unwrap_or_else(|| {
-        dirs::home_dir()
-            .map(|h| h.join(".irosh").join("server"))
-            .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
+        dirs::home_dir().map_or_else(
+            || PathBuf::from(".irosh").join("server"),
+            |h| h.join(".irosh").join("server"),
+        )
     });
     let log_path = state_dir.join("daemon.log");
 
@@ -264,7 +267,7 @@ pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
     let file = File::open(&log_path)
         .await
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to open log file: {}", e),
+            details: format!("failed to open log file: {e}"),
         })?;
     let mut reader = BufReader::new(file);
     let mut line = String::new();
@@ -335,7 +338,7 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
     let status_handle =
         service_control_handler::register(SERVICE_NAME, event_handler).map_err(|e| {
             ServerError::ServiceManagement {
-                details: format!("failed to register service handler: {}", e),
+                details: format!("failed to register service handler: {e}"),
             }
         })?;
 
@@ -350,12 +353,12 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
             process_id: None,
         })
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to set service status: {}", e),
+            details: format!("failed to set service status: {e}"),
         })?;
 
     // Start a tokio runtime for the server
     let rt = tokio::runtime::Runtime::new().map_err(|e| ServerError::ServiceManagement {
-        details: format!("failed to start tokio runtime: {}", e),
+        details: format!("failed to start tokio runtime: {e}"),
     })?;
 
     rt.block_on(async {
@@ -372,9 +375,10 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
         }
 
         let state_root = state_dir.unwrap_or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(".irosh").join("server"))
-                .unwrap_or_else(|| PathBuf::from(".irosh").join("server"))
+            dirs::home_dir().map_or_else(
+                || PathBuf::from(".irosh").join("server"),
+                |h| h.join(".irosh").join("server"),
+            )
         });
 
         // Catch panics and log them to the daemon log
@@ -437,7 +441,7 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
             crate::Server::bind(options)
                 .await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("server bind failed: {}", e),
+                    details: format!("server bind failed: {e}"),
                 })?;
 
         let shutdown = server.shutdown_handle();
@@ -470,7 +474,7 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
             process_id: None,
         })
         .map_err(|e| ServerError::ServiceManagement {
-            details: format!("failed to set service status: {}", e),
+            details: format!("failed to set service status: {e}"),
         })?;
 
     Ok(())

@@ -56,11 +56,6 @@ pub async fn wait_for_shutdown_signal() {
         static NOTIFIER: std::sync::OnceLock<Arc<Notify>> = std::sync::OnceLock::new();
         static SECOND_SIGNAL: AtomicBool = AtomicBool::new(false);
 
-        let notify = Arc::new(Notify::new());
-        // Store in the global so the Win32 callback can access it.
-        // If set() fails the slot was already filled (shouldn't happen in practice).
-        let _ = NOTIFIER.set(notify.clone());
-
         // SAFETY: This is a Win32 console control handler callback registered
         // with `SetConsoleCtrlHandler`. It runs on a dedicated system thread and
         // must follow the standard calling convention. The handler only touches
@@ -82,6 +77,11 @@ pub async fn wait_for_shutdown_signal() {
                 _ => 0, // Let the OS default handler run for other events.
             }
         }
+
+        let notify = Arc::new(Notify::new());
+        // Store in the global so the Win32 callback can access it.
+        // If set() fails the slot was already filled (shouldn't happen in practice).
+        let _ = NOTIFIER.set(notify.clone());
 
         // SAFETY: `ctrl_handler` only touches atomics and a Notify, which are
         // both safe to call from any thread.

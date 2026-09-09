@@ -19,27 +19,23 @@ pub async fn exec(
     let ipc_client = IpcClient::new(&state_root);
 
     // Check if daemon is running. On slow machines (like Windows services starting up),
-    // we retry a few times if the service is known to be active but IPC fails.
+    // we retry a few times to give the daemon time to become reachable via IPC.
     let mut daemon_running = matches!(
         ipc_client.send(IpcCommand::GetStatus).await,
         Ok(IpcResponse::Status(_))
     );
-    if !daemon_running && ctx.args.state.is_none() {
-        if let irosh::sys::service::ServiceStatus::Active(_) =
-            irosh::sys::service::query_service_status(Some(state_root.clone())).await
-        {
-            let mut retries = 0;
-            while retries < 6 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if matches!(
-                    ipc_client.send(IpcCommand::GetStatus).await,
-                    Ok(IpcResponse::Status(_))
-                ) {
-                    daemon_running = true;
-                    break;
-                }
-                retries += 1;
+    if !daemon_running {
+        let mut retries = 0;
+        while retries < 10 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if matches!(
+                ipc_client.send(IpcCommand::GetStatus).await,
+                Ok(IpcResponse::Status(_))
+            ) {
+                daemon_running = true;
+                break;
             }
+            retries += 1;
         }
     }
 
@@ -123,7 +119,13 @@ pub async fn exec(
         None
     };
 
-    if daemon_running && ctx.args.state.is_none() {
+    // Dispatch to the daemon whenever IPC answers at the resolved state dir, even
+    // when --state was passed explicitly. daemon_running was determined via the IPC
+    // endpoint INSIDE this state dir, so an explicit --state pointing at the daemon's
+    // dir must still use IPC. Otherwise the CLI would fall back to a foreground
+    // Server::bind that conflicts with the running daemon (and hangs on Windows,
+    // where redb's LockFileEx blocks indefinitely on the daemon's held DB lock).
+    if daemon_running {
         handle_enable_daemon(&ipc_client, code, password_hash, persistent).await
     } else {
         handle_foreground_wormhole(&state_root, code, password_hash, persistent).await
@@ -258,7 +260,15 @@ async fn handle_foreground_wormhole(
     let options = ServerOptions::new(state)
         .disable_ipc()
         .shutdown_on_wormhole_success();
-    let (_ready, server) = Server::bind(options).await?;
+    let (_ready, server) =
+        tokio::time::timeout(std::time::Duration::from_secs(15), Server::bind(options))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Server bind timed out after 15s — is another irosh daemon already running? \
+             Stop it with 'irosh system stop' or use a different --state directory."
+                )
+            })??;
     let control = server.control_handle();
 
     let (tx, _) = tokio::sync::oneshot::channel();
