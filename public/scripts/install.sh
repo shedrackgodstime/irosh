@@ -22,6 +22,7 @@ show_help() {
 
 # --- Configuration ---
 REPO="shedrackgodstime/irosh"
+VERSION="${IROSH_VERSION:-latest}"
 
 # --- Parse Arguments ---
 INSTALL_SERVICE=false
@@ -63,14 +64,50 @@ case "$OS" in
 esac
 
 ASSET_NAME="irosh-${TARGET_ARCH}-${PLATFORM}.tar.gz"
-RELEASE_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
-# --- 2. Resolve Latest Version ---
-printf "[*] Fetching latest release info...\n"
-DOWNLOAD_URL=$(curl -s "$RELEASE_URL" | grep "browser_download_url" | grep "$ASSET_NAME" | cut -d '"' -f 4)
+# --- 2. Resolve Release ---
+if [ "$VERSION" = "latest" ]; then
+  RELEASE_URL="https://api.github.com/repos/${REPO}/releases/latest"
+  RELEASE_LABEL="latest"
+else
+  case "$VERSION" in
+    v*) RELEASE_TAG="$VERSION" ;;
+    *) RELEASE_TAG="v$VERSION" ;;
+  esac
+  RELEASE_URL="https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}"
+  RELEASE_LABEL="$RELEASE_TAG"
+fi
+
+printf "[*] Fetching release $RELEASE_LABEL info...\n"
+HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$RELEASE_URL")" || HTTP_CODE="000"
+case "$HTTP_CODE" in
+  200) ;;
+  404)
+    printf "\n\033[0;31m[-] Error: No GitHub release ${RELEASE_LABEL} found for ${REPO}.\033[0m\n"
+    printf "Releases are published automatically when a v* tag is pushed.\n"
+    printf "While no release exists, install from source instead:\n"
+    printf "  git clone https://github.com/${REPO}.git && cd irosh\n"
+    printf "  cargo install --locked --path . && cargo install --locked --path cli\n"
+    exit 1
+    ;;
+  *)
+    printf "\n\033[0;31m[-] Error: GitHub API returned HTTP ${HTTP_CODE} (rate limit? transient?).\033[0m\n"
+    printf "Retry in a few minutes, or browse releases manually:\n"
+    printf "  https://github.com/${REPO}/releases\n"
+    exit 1
+    ;;
+esac
+
+RELEASE_JSON="$(curl -s "$RELEASE_URL")" || true
+DOWNLOAD_URL="$(printf '%s\n' "$RELEASE_JSON" | grep 'browser_download_url' | grep "/${ASSET_NAME}\"" | cut -d '"' -f 4 | head -n 1)"
 
 if [ -z "$DOWNLOAD_URL" ]; then
-  printf "\n\033[0;31m[-] Error: Could not find asset $ASSET_NAME in the latest release.\033[0m\n"
+  printf "\n\033[0;31m[-] Error: Asset ${ASSET_NAME} is not published in release ${RELEASE_LABEL}.\033[0m\n"
+  AVAILABLE="$(printf '%s\n' "$RELEASE_JSON" | grep 'browser_download_url' | cut -d '"' -f 4 | sed 's#.*/##' | tr '\n' ' ')"
+  if [ -n "$AVAILABLE" ]; then
+    printf "    Published assets: %s\n" "$AVAILABLE"
+  fi
+  printf "Expected asset naming is irosh-<arch>-<platform>.tar.gz; check the release notes.\n"
   exit 1
 fi
 

@@ -31,6 +31,8 @@ if ($args -contains "help" -or $args -contains "-h" -or $args -contains "/?") {
 
 # --- Configuration ---
 $Repo = "shedrackgodstime/irosh"
+$Version = if ($env:IROSH_VERSION) { $env:IROSH_VERSION } else { "latest" }
+if ($Version -ne "latest" -and -not $Version.StartsWith("v")) { $Version = "v$Version" }
 
 Write-Host "`n[*] Installing irosh P2P SSH Tool for Windows..." -ForegroundColor Cyan
 Write-Host "--------------------------------------------------" -ForegroundColor Blue
@@ -46,15 +48,47 @@ if ($Arch -eq "AMD64") {
 }
 
 $AssetName = "irosh-$TargetArch-pc-windows-msvc.tar.gz"
-$ReleaseUrl = "https://api.github.com/repos/$Repo/releases/latest"
 
-# --- 2. Resolve Latest Version ---
-Write-Host "[*] Fetching latest release info..."
-$ReleaseInfo = Invoke-RestMethod -Uri $ReleaseUrl
-$DownloadUrl = ($ReleaseInfo.assets | Where-Object { $_.name -eq $AssetName }).browser_download_url
+if ($Version -eq "latest") {
+    $ReleaseUrl = "https://api.github.com/repos/$Repo/releases/latest"
+    $ReleaseLabel = "latest"
+} else {
+    $ReleaseUrl = "https://api.github.com/repos/$Repo/releases/tags/$Version"
+    $ReleaseLabel = $Version
+}
+
+# --- 2. Resolve Release ---
+Write-Host "[*] Fetching release $ReleaseLabel info..."
+
+$ReleaseInfo = $null
+try {
+    $ReleaseInfo = Invoke-RestMethod -Uri $ReleaseUrl -ErrorAction Stop
+} catch {
+    $status = if ($null -ne $_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+    if ($status -eq 404) {
+        Write-Host "`n[-] Error: No GitHub release $ReleaseLabel found for $Repo." -ForegroundColor Red
+        Write-Host "Releases are published automatically when a v* tag is pushed." -ForegroundColor Yellow
+        Write-Host "While no release exists, install from source instead:" -ForegroundColor Yellow
+        Write-Host "  git clone https://github.com/$Repo.git && cd irosh"
+        Write-Host "  cargo install --locked --path . && cargo install --locked --path cli"
+        exit 1
+    }
+    Write-Host "`n[-] Error: GitHub API request failed (HTTP $status). Retry in a few minutes." -ForegroundColor Red
+    Write-Host "  https://github.com/$Repo/releases" -ForegroundColor Yellow
+    throw
+}
+
+$Asset = $ReleaseInfo.assets | Where-Object { $_.name -eq $AssetName }
+$DownloadUrl = if ($Asset) { $Asset.browser_download_url } else { $null }
 
 if (-not $DownloadUrl) {
-    Write-Error "[-] Error: Could not find asset $AssetName in the latest release."
+    Write-Host "`n[-] Error: Asset $AssetName is not published in release $ReleaseLabel." -ForegroundColor Red
+    $available = ($ReleaseInfo.assets | ForEach-Object { $_.name }) -join ", "
+    if ($available) {
+        Write-Host "    Published assets: $available" -ForegroundColor Yellow
+    }
+    Write-Host "Expected asset naming is irosh-<arch>-<platform>.tar.gz; check the release notes." -ForegroundColor Yellow
+    exit 1
 }
 
 # --- 3. Secure Download & Unpack ---
@@ -84,7 +118,7 @@ if ($LASTEXITCODE -eq 0) {
     $ServiceWasInstalled = $true
     if ($svc -match "STATE\s*:\s*4\s+RUNNING") {
         $ServiceWasRunning = $true
-        Write-Host "[*] irosh service is currently running — will restart after update..." -ForegroundColor Yellow
+        Write-Host "[*] irosh service is currently running - will restart after update..." -ForegroundColor Yellow
         sc.exe stop "irosh" | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "[-] Failed to stop irosh service. Trying force-stop..."
