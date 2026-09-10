@@ -49,6 +49,16 @@ struct CleanupGuard {
     channels: Arc<StdMutex<HashMap<ChannelId, ChannelState>>>,
 }
 
+#[cfg(unix)]
+struct RawFdWrapper(std::os::unix::io::RawFd);
+
+#[cfg(unix)]
+impl std::os::unix::io::AsRawFd for RawFdWrapper {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        self.0
+    }
+}
+
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
         debug!("Performing PTY cleanup for channel {:?}", self.channel);
@@ -128,67 +138,7 @@ impl ServerHandler {
                     details: format!("failed to open PTY: {e}"),
                 })?;
 
-        let mut builder = if let Some(command) = command {
-            #[cfg(unix)]
-            {
-                let mut command_builder = CommandBuilder::new("sh");
-                command_builder.arg("-lc");
-                command_builder.arg(command);
-                command_builder
-            }
-            #[cfg(windows)]
-            {
-                let exe = windows_command_processor();
-                let is_powershell = exe.to_lowercase().contains("powershell")
-                    || exe.to_lowercase().contains("pwsh");
-                let flag = if is_powershell { "-Command" } else { "/C" };
-
-                // Enforce UTF-8 encoding for the remote session to ensure compatibility with irosh output
-                let final_command = if is_powershell {
-                    format!(
-                        "$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
-                    )
-                } else {
-                    format!("chcp 65001 >nul && {command}")
-                };
-
-                let mut command_builder = CommandBuilder::new(exe);
-                command_builder.arg(flag);
-                command_builder.arg(final_command);
-                command_builder
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                let mut command_builder = CommandBuilder::new("sh");
-                command_builder.arg("-c");
-                command_builder.arg(command);
-                command_builder
-            }
-        } else {
-            #[cfg(windows)]
-            {
-                let exe = windows_command_processor();
-                let is_powershell = exe.to_lowercase().contains("powershell")
-                    || exe.to_lowercase().contains("pwsh");
-
-                let mut builder = CommandBuilder::new(exe);
-                if is_powershell {
-                    // For PowerShell, we set the output encoding globally for the session.
-                    builder.arg("-NoExit");
-                    builder.arg("-Command");
-                    builder.arg("$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;");
-                } else {
-                    // For CMD, we use /K to run chcp and stay open.
-                    builder.arg("/K");
-                    builder.arg("chcp 65001 >nul");
-                }
-                builder
-            }
-            #[cfg(not(windows))]
-            {
-                CommandBuilder::new_default_prog()
-            }
-        };
+        let mut builder = build_command(command);
 
         builder.env("TERM", &state_entry.pty.term);
 
@@ -411,12 +361,6 @@ impl ServerHandler {
             let reader_future = async {
                 if let Some(fd) = maybe_fd {
                     use tokio::io::unix::AsyncFd;
-                    struct RawFdWrapper(std::os::unix::io::RawFd);
-                    impl std::os::unix::io::AsRawFd for RawFdWrapper {
-                        fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
-                            self.0
-                        }
-                    }
 
                     if let Ok(async_fd) = AsyncFd::new(RawFdWrapper(fd)) {
                         let mut buf = [0u8; 8192];
@@ -764,6 +708,70 @@ fn windows_command_processor() -> String {
     use std::sync::OnceLock;
     static SHELL: OnceLock<String> = OnceLock::new();
     SHELL.get_or_init(detect_windows_shell).clone()
+}
+
+fn build_command(command: Option<&str>) -> CommandBuilder {
+    if let Some(command) = command {
+        #[cfg(unix)]
+        {
+            let mut command_builder = CommandBuilder::new("sh");
+            command_builder.arg("-lc");
+            command_builder.arg(command);
+            command_builder
+        }
+        #[cfg(windows)]
+        {
+            let exe = windows_command_processor();
+            let is_powershell =
+                exe.to_lowercase().contains("powershell") || exe.to_lowercase().contains("pwsh");
+            let flag = if is_powershell { "-Command" } else { "/C" };
+
+            // Enforce UTF-8 encoding for the remote session to ensure compatibility with irosh output
+            let final_command = if is_powershell {
+                format!(
+                    "$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}"
+                )
+            } else {
+                format!("chcp 65001 >nul && {command}")
+            };
+
+            let mut command_builder = CommandBuilder::new(exe);
+            command_builder.arg(flag);
+            command_builder.arg(final_command);
+            command_builder
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let mut command_builder = CommandBuilder::new("sh");
+            command_builder.arg("-c");
+            command_builder.arg(command);
+            command_builder
+        }
+    } else {
+        #[cfg(windows)]
+        {
+            let exe = windows_command_processor();
+            let is_powershell =
+                exe.to_lowercase().contains("powershell") || exe.to_lowercase().contains("pwsh");
+
+            let mut builder = CommandBuilder::new(exe);
+            if is_powershell {
+                // For PowerShell, we set the output encoding globally for the session.
+                builder.arg("-NoExit");
+                builder.arg("-Command");
+                builder.arg("$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;");
+            } else {
+                // For CMD, we use /K to run chcp and stay open.
+                builder.arg("/K");
+                builder.arg("chcp 65001 >nul");
+            }
+            builder
+        }
+        #[cfg(not(windows))]
+        {
+            CommandBuilder::new_default_prog()
+        }
+    }
 }
 
 #[cfg(windows)]

@@ -86,239 +86,252 @@ pub fn ensure_dir_secure(path: &Path) -> Result<()> {
 fn apply_secure_permissions(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::metadata(path).map_err(|source| StorageError::DirectoryRead {
+        apply_secure_permissions_unix(path)
+    }
+    #[cfg(windows)]
+    {
+        apply_secure_permissions_windows(path)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn apply_secure_permissions_unix(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = fs::metadata(path).map_err(|source| StorageError::DirectoryRead {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut perms = metadata.permissions();
+    let target_mode = if metadata.is_dir() { 0o700 } else { 0o600 };
+
+    if perms.mode() & 0o777 != target_mode {
+        perms.set_mode(target_mode);
+        fs::set_permissions(path, perms).map_err(|source| StorageError::FileWrite {
             path: path.to_path_buf(),
             source,
         })?;
-        let mut perms = metadata.permissions();
-        let target_mode = if metadata.is_dir() { 0o700 } else { 0o600 };
-
-        if perms.mode() & 0o777 != target_mode {
-            perms.set_mode(target_mode);
-            fs::set_permissions(path, perms).map_err(|source| StorageError::FileWrite {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        }
     }
+    Ok(())
+}
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_ALL, HANDLE};
-        use windows_sys::Win32::Security::{
-            ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, AllocateAndInitializeSid,
-            DACL_SECURITY_INFORMATION, FreeSid, GetLengthSid, GetTokenInformation, InitializeAcl,
-            InitializeSecurityDescriptor, SECURITY_DESCRIPTOR, SID_IDENTIFIER_AUTHORITY,
-            SetFileSecurityW, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY,
-            TOKEN_USER, TokenUser,
-        };
-        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+#[cfg(windows)]
+fn apply_secure_permissions_windows(path: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_ALL, HANDLE};
+    use windows_sys::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, AllocateAndInitializeSid,
+        DACL_SECURITY_INFORMATION, FreeSid, GetLengthSid, GetTokenInformation, InitializeAcl,
+        InitializeSecurityDescriptor, SECURITY_DESCRIPTOR, SID_IDENTIFIER_AUTHORITY,
+        SetFileSecurityW, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY,
+        TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-        const SECURITY_LOCAL_SYSTEM_RID: u32 = 0x0000_0012;
-        const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x0000_0020;
-        const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x0000_0220;
+    const SECURITY_LOCAL_SYSTEM_RID: u32 = 0x0000_0012;
+    const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x0000_0020;
+    const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x0000_0220;
 
-        // SAFETY:
-        // - `OpenProcessToken` and `GetTokenInformation` follow the standard
-        //   Win32 pattern: call with null/zero to query required size, allocate,
-        //   then call again with the allocated buffer. This ensures `buf` is
-        //   correctly sized before the second call.
-        // - `buf.as_mut_ptr()` is a valid, aligned pointer to a properly sized
-        //   allocation. The cast `*mut _` is required by the Win32 API and is
-        //   safe because `TOKEN_USER` is a standard Windows structure.
-        // - `CloseHandle` is called with a valid handle obtained from
-        //   `OpenProcessToken`. The handle is non-null if `OpenProcessToken`
-        //   succeeded.
-        // - Pre-condition: Caller must ensure the process has a valid token
-        //   (i.e., not run in an environment where `OpenProcessToken` is
-        //   unsupported). No `.await` points exist while these handles are
-        //   live; all Win32 calls complete synchronously within this block.
-        unsafe {
-            let mut process_token: HANDLE = std::ptr::null_mut();
-            if OpenProcessToken(
-                GetCurrentProcess(),
-                TOKEN_QUERY,
-                std::ptr::addr_of_mut!(process_token),
-            ) == 0
-            {
-                return Err(StorageError::FileWrite {
-                    path: path.to_path_buf(),
-                    source: io::Error::last_os_error(),
-                }
-                .into());
+    // SAFETY:
+    // - `OpenProcessToken` and `GetTokenInformation` follow the standard
+    //   Win32 pattern: call with null/zero to query required size, allocate,
+    //   then call again with the allocated buffer. This ensures `buf` is
+    //   correctly sized before the second call.
+    // - `buf.as_mut_ptr()` is a valid, aligned pointer to a properly sized
+    //   allocation. The cast `*mut _` is required by the Win32 API and is
+    //   safe because `TOKEN_USER` is a standard Windows structure.
+    // - `CloseHandle` is called with a valid handle obtained from
+    //   `OpenProcessToken`. The handle is non-null if `OpenProcessToken`
+    //   succeeded.
+    // - Pre-condition: Caller must ensure the process has a valid token
+    //   (i.e., not run in an environment where `OpenProcessToken` is
+    //   unsupported). No `.await` points exist while these handles are
+    //   live; all Win32 calls complete synchronously within this block.
+    unsafe {
+        let mut process_token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_QUERY,
+            std::ptr::addr_of_mut!(process_token),
+        ) == 0
+        {
+            return Err(StorageError::FileWrite {
+                path: path.to_path_buf(),
+                source: io::Error::last_os_error(),
             }
+            .into());
+        }
 
-            let mut len = 0;
-            let _ = GetTokenInformation(
-                process_token,
-                TokenUser,
-                std::ptr::null_mut(),
-                0,
-                std::ptr::addr_of_mut!(len),
-            );
-            let mut buf = vec![0u64; (len as usize).div_ceil(8)];
-            if GetTokenInformation(
-                process_token,
-                TokenUser,
-                buf.as_mut_ptr().cast(),
-                len,
-                std::ptr::addr_of_mut!(len),
-            ) == 0
-            {
-                let _ = CloseHandle(process_token);
-                return Err(StorageError::FileWrite {
-                    path: path.to_path_buf(),
-                    source: io::Error::last_os_error(),
-                }
-                .into());
-            }
+        let mut len = 0;
+        let _ = GetTokenInformation(
+            process_token,
+            TokenUser,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::addr_of_mut!(len),
+        );
+        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+        if GetTokenInformation(
+            process_token,
+            TokenUser,
+            buf.as_mut_ptr().cast(),
+            len,
+            std::ptr::addr_of_mut!(len),
+        ) == 0
+        {
             let _ = CloseHandle(process_token);
+            return Err(StorageError::FileWrite {
+                path: path.to_path_buf(),
+                source: io::Error::last_os_error(),
+            }
+            .into());
+        }
+        let _ = CloseHandle(process_token);
 
-            let token_user = buf.as_ptr().cast::<TOKEN_USER>();
-            let user_sid = (*token_user).User.Sid;
+        let token_user = buf.as_ptr().cast::<TOKEN_USER>();
+        let user_sid = (*token_user).User.Sid;
 
-            // Define SIDs for SYSTEM and Administrators
-            let mut system_sid: *mut std::ffi::c_void = std::ptr::null_mut();
-            let mut admin_sid: *mut std::ffi::c_void = std::ptr::null_mut();
-            let system_authority = SID_IDENTIFIER_AUTHORITY {
-                Value: [0, 0, 0, 0, 0, 5],
-            };
-            let nt_authority = SID_IDENTIFIER_AUTHORITY {
-                Value: [0, 0, 0, 0, 0, 5],
-            };
+        // Define SIDs for SYSTEM and Administrators
+        let mut system_sid: *mut std::ffi::c_void = std::ptr::null_mut();
+        let mut admin_sid: *mut std::ffi::c_void = std::ptr::null_mut();
+        let system_authority = SID_IDENTIFIER_AUTHORITY {
+            Value: [0, 0, 0, 0, 0, 5],
+        };
+        let nt_authority = SID_IDENTIFIER_AUTHORITY {
+            Value: [0, 0, 0, 0, 0, 5],
+        };
 
-            let res_system = AllocateAndInitializeSid(
-                std::ptr::addr_of!(system_authority),
-                1,
-                SECURITY_LOCAL_SYSTEM_RID,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                std::ptr::addr_of_mut!(system_sid),
-            );
-            let res_admin = AllocateAndInitializeSid(
-                std::ptr::addr_of!(nt_authority),
-                2,
-                SECURITY_BUILTIN_DOMAIN_RID,
-                DOMAIN_ALIAS_RID_ADMINS,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                std::ptr::addr_of_mut!(admin_sid),
-            );
+        let res_system = AllocateAndInitializeSid(
+            std::ptr::addr_of!(system_authority),
+            1,
+            SECURITY_LOCAL_SYSTEM_RID,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            std::ptr::addr_of_mut!(system_sid),
+        );
+        let res_admin = AllocateAndInitializeSid(
+            std::ptr::addr_of!(nt_authority),
+            2,
+            SECURITY_BUILTIN_DOMAIN_RID,
+            DOMAIN_ALIAS_RID_ADMINS,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            std::ptr::addr_of_mut!(admin_sid),
+        );
 
-            // Use a closure or a helper to handle cleanup and return errors
-            let result: Result<()> = (|| {
-                if res_system == 0 || res_admin == 0 {
-                    return Err(StorageError::FileWrite {
-                        path: path.to_path_buf(),
-                        source: io::Error::last_os_error(),
-                    }
-                    .into());
+        // Use a closure or a helper to handle cleanup and return errors
+        let result: Result<()> = (|| {
+            if res_system == 0 || res_admin == 0 {
+                return Err(StorageError::FileWrite {
+                    path: path.to_path_buf(),
+                    source: io::Error::last_os_error(),
                 }
+                .into());
+            }
 
-                // Initialize a security descriptor
-                let mut sd: SECURITY_DESCRIPTOR = std::mem::zeroed();
-                if InitializeSecurityDescriptor(std::ptr::addr_of_mut!(sd).cast(), 1) == 0 {
-                    return Err(StorageError::FileWrite {
-                        path: path.to_path_buf(),
-                        source: io::Error::last_os_error(),
-                    }
-                    .into());
+            // Initialize a security descriptor
+            let mut sd: SECURITY_DESCRIPTOR = std::mem::zeroed();
+            if InitializeSecurityDescriptor(std::ptr::addr_of_mut!(sd).cast(), 1) == 0 {
+                return Err(StorageError::FileWrite {
+                    path: path.to_path_buf(),
+                    source: io::Error::last_os_error(),
                 }
+                .into());
+            }
 
-                // Create a DACL that allows the user, SYSTEM, and Administrators.
-                let mut dacl_size = std::mem::size_of::<ACL>()
-                    + (std::mem::size_of::<ACCESS_ALLOWED_ACE>() * 3)
-                    + GetLengthSid(user_sid) as usize;
+            // Create a DACL that allows the user, SYSTEM, and Administrators.
+            let mut dacl_size = std::mem::size_of::<ACL>()
+                + (std::mem::size_of::<ACCESS_ALLOWED_ACE>() * 3)
+                + GetLengthSid(user_sid) as usize;
 
-                if !system_sid.is_null() {
-                    dacl_size += GetLengthSid(system_sid) as usize;
-                }
-                if !admin_sid.is_null() {
-                    dacl_size += GetLengthSid(admin_sid) as usize;
-                }
-
-                let mut dacl_buf = vec![0u32; dacl_size.div_ceil(4)];
-                let dacl = dacl_buf.as_mut_ptr().cast::<ACL>();
-
-                // SAFETY: `InitializeAcl` writes into `dacl` (the properly aligned
-                // `u32` buffer cast to `*mut ACL`). The buffer is tiny and the byte
-                // length always fits in a `u32`.
-                let acl_len = u32::try_from(dacl_buf.len() * 4).expect("ACL length fits u32");
-                if InitializeAcl(dacl, acl_len, ACL_REVISION) == 0 {
-                    return Err(StorageError::FileWrite {
-                        path: path.to_path_buf(),
-                        source: io::Error::last_os_error(),
-                    }
-                    .into());
-                }
-
-                // Add ACEs for User, SYSTEM, and Administrators
-                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, user_sid);
-                if !system_sid.is_null() {
-                    AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, system_sid);
-                }
-                if !admin_sid.is_null() {
-                    AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, admin_sid);
-                }
-
-                // Set the DACL to the security descriptor.
-                if SetSecurityDescriptorDacl(std::ptr::addr_of_mut!(sd).cast(), 1, dacl, 0) == 0 {
-                    return Err(StorageError::FileWrite {
-                        path: path.to_path_buf(),
-                        source: io::Error::last_os_error(),
-                    }
-                    .into());
-                }
-
-                // Protect the DACL from inheritance (break inheritance).
-                // 0x1000 is SE_DACL_PROTECTED
-                let _ =
-                    SetSecurityDescriptorControl(std::ptr::addr_of_mut!(sd).cast(), 0x1000, 0x1000);
-
-                // Apply the security descriptor to the path.
-                let path_u16: Vec<u16> = path
-                    .as_os_str()
-                    .encode_wide()
-                    .chain(std::iter::once(0))
-                    .collect();
-
-                if SetFileSecurityW(
-                    path_u16.as_ptr(),
-                    DACL_SECURITY_INFORMATION,
-                    std::ptr::addr_of_mut!(sd).cast(),
-                ) == 0
-                {
-                    return Err(StorageError::FileWrite {
-                        path: path.to_path_buf(),
-                        source: io::Error::last_os_error(),
-                    }
-                    .into());
-                }
-
-                Ok(())
-            })();
-
-            // ALWAYS free SIDs, even if the closure returned an error
             if !system_sid.is_null() {
-                FreeSid(system_sid);
+                dacl_size += GetLengthSid(system_sid) as usize;
             }
             if !admin_sid.is_null() {
-                FreeSid(admin_sid);
+                dacl_size += GetLengthSid(admin_sid) as usize;
             }
 
-            result?;
+            let mut dacl_buf = vec![0u32; dacl_size.div_ceil(4)];
+            let dacl = dacl_buf.as_mut_ptr().cast::<ACL>();
+
+            // SAFETY: `InitializeAcl` writes into `dacl` (the properly aligned
+            // `u32` buffer cast to `*mut ACL`). The buffer is tiny and the byte
+            // length always fits in a `u32`.
+            let acl_len = u32::try_from(dacl_buf.len() * 4).expect("ACL length fits u32");
+            if InitializeAcl(dacl, acl_len, ACL_REVISION) == 0 {
+                return Err(StorageError::FileWrite {
+                    path: path.to_path_buf(),
+                    source: io::Error::last_os_error(),
+                }
+                .into());
+            }
+
+            // Add ACEs for User, SYSTEM, and Administrators
+            AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, user_sid);
+            if !system_sid.is_null() {
+                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, system_sid);
+            }
+            if !admin_sid.is_null() {
+                AddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, admin_sid);
+            }
+
+            // Set the DACL to the security descriptor.
+            if SetSecurityDescriptorDacl(std::ptr::addr_of_mut!(sd).cast(), 1, dacl, 0) == 0 {
+                return Err(StorageError::FileWrite {
+                    path: path.to_path_buf(),
+                    source: io::Error::last_os_error(),
+                }
+                .into());
+            }
+
+            // Protect the DACL from inheritance (break inheritance).
+            // 0x1000 is SE_DACL_PROTECTED
+            let _ = SetSecurityDescriptorControl(std::ptr::addr_of_mut!(sd).cast(), 0x1000, 0x1000);
+
+            // Apply the security descriptor to the path.
+            let path_u16: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            if SetFileSecurityW(
+                path_u16.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                std::ptr::addr_of_mut!(sd).cast(),
+            ) == 0
+            {
+                return Err(StorageError::FileWrite {
+                    path: path.to_path_buf(),
+                    source: io::Error::last_os_error(),
+                }
+                .into());
+            }
+
+            Ok(())
+        })();
+
+        // ALWAYS free SIDs, even if the closure returned an error
+        if !system_sid.is_null() {
+            FreeSid(system_sid);
         }
+        if !admin_sid.is_null() {
+            FreeSid(admin_sid);
+        }
+
+        result?;
     }
 
     Ok(())
