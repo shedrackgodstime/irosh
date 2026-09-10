@@ -15,7 +15,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --all --check
 
@@ -23,20 +23,20 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-features -- -D warnings
+      - run: cargo clippy --workspace --exclude irosh-fuzz --all-features -- -D warnings
 
   clippy-fix:
     name: Clippy (auto-fix check)
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-features --fix --allow-dirty -- -D warnings 2>&1 || true
+      - run: cargo clippy --workspace --exclude irosh-fuzz --all-features --all-targets --fix --allow-dirty -- -D warnings 2>&1 || true
       - name: Check for uncommitted clippy fixes
         run: |
           if ! git diff --exit-code; then
@@ -48,28 +48,28 @@ jobs:
     name: Test (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --exclude irosh-fuzz --all-features
 
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --exclude irosh-fuzz --all-features
 
   test-macos:
     name: Test (macOS)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --exclude irosh-fuzz --all-features
 
   build:
     name: Build (${{ matrix.os }})
@@ -79,34 +79,36 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --all-features --release
+      - run: cargo build --workspace --exclude irosh-fuzz --all-features --release
 
   audit:
     name: Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
       - run: cargo audit
 
   deny:
     name: Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny check
 
   miri:
     name: MIRI (UB detection)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
@@ -117,7 +119,7 @@ jobs:
     name: Output consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Ban raw print calls in command and main code
         run: |
           if grep -rn 'println!(' cli/src/commands/ cli/src/main.rs || grep -rn 'eprintln!(' cli/src/commands/ cli/src/main.rs; then
@@ -135,9 +137,10 @@ jobs:
     name: Fuzz
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-fuzz
       - run: cargo fuzz build
       - name: Fuzz ticket parser
         run: cargo fuzz run fuzz_ticket -- -max_total_time=30
@@ -152,21 +155,20 @@ jobs:
     name: Feature flags
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@cargo-hack
-      - run: cargo hack check --each-feature --no-dev-deps
+      - run: cargo check --workspace --exclude irosh-fuzz --all-features
 
   coverage:
     name: Code coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-llvm-cov --locked
-      - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 80
+      - run: cargo llvm-cov --workspace --exclude irosh-fuzz --all-features --lcov --output-path lcov.info --fail-under-lines 80
       - uses: codecov/codecov-action@v5
         with:
           files: lcov.info

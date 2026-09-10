@@ -4,6 +4,7 @@ use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::process::Command;
 use tokio::task;
+#[cfg(any(target_os = "linux", target_os = "android", windows))]
 use tracing::warn;
 
 use crate::error::{IroshError, Result, ServerError};
@@ -154,6 +155,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         {
+            let _ = pid;
             Ok(fallback_dir)
         }
     })

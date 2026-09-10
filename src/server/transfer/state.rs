@@ -282,6 +282,7 @@ impl ShellContext {
         }
     }
 
+    #[cfg_attr(unix, allow(unused_variables))]
     fn home_dir(shell_state: &ConnectionShellState) -> Option<PathBuf> {
         #[cfg(unix)]
         {
