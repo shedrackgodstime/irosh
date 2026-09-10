@@ -259,7 +259,9 @@ impl Session {
         write_get_request(
             &mut stream,
             &crate::transport::transfer::GetRequest {
-                path: remote.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &remote.display().to_string(),
+                ),
                 recursive: false,
             },
         )
@@ -396,7 +398,9 @@ impl Session {
         crate::transport::transfer::write_get_request(
             &mut stream,
             &crate::transport::transfer::GetRequest {
-                path: remote_root.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &remote_root.display().to_string(),
+                ),
                 recursive: true,
             },
         )

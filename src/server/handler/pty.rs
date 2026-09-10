@@ -797,9 +797,10 @@ fn detect_windows_shell() -> String {
 
     // 2. Try to find Windows PowerShell in standard location
     if let Ok(systemroot) = std::env::var("SystemRoot") {
-        let ps_path = format!(r"{systemroot}\System32\WindowsPowerShell\v1.0\powershell.exe");
-        if Path::new(&ps_path).exists() {
-            return ps_path;
+        let ps_path = std::path::PathBuf::from(&systemroot)
+            .join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        if ps_path.exists() {
+            return ps_path.to_string_lossy().into_owned();
         }
     }
 
@@ -812,7 +813,10 @@ fn detect_windows_shell() -> String {
 
     // Absolute fallback
     if let Ok(systemroot) = std::env::var("SystemRoot") {
-        return format!(r"{systemroot}\System32\cmd.exe");
+        return std::path::PathBuf::from(systemroot)
+            .join(r"System32\cmd.exe")
+            .to_string_lossy()
+            .into_owned();
     }
     "C:\\Windows\\System32\\cmd.exe".to_string()
 }

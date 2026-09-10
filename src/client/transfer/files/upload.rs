@@ -519,7 +519,9 @@ impl Session {
         write_put_request(
             &mut stream,
             &crate::transport::transfer::PutRequest {
-                path: remote.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &remote.display().to_string(),
+                ),
                 size,
                 mode,
                 recursive: false,
@@ -629,7 +631,9 @@ impl Session {
         write_put_request(
             &mut stream,
             &crate::transport::transfer::PutRequest {
-                path: remote_root.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &remote_root.display().to_string(),
+                ),
                 size: 0, // Size is cumulative in recursive mode
                 mode: None,
                 recursive: true,
@@ -699,7 +703,9 @@ impl Session {
             crate::transport::transfer::write_new_entry(
                 &mut stream,
                 &crate::transport::transfer::EntryHeader {
-                    path: relative.display().to_string(),
+                    path: crate::transport::transfer::normalize_path_separators(
+                        &relative.display().to_string(),
+                    ),
                     size,
                     mode,
                     is_dir,

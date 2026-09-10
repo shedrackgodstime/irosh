@@ -1,6 +1,7 @@
 //! Shell process access and namespace handling.
 use std::path::PathBuf;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::process::Command;
 use tokio::task;
 use tracing::warn;
@@ -165,6 +166,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
     })?
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) fn configure_live_shell_context(command: &mut Command, pid: u32) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {

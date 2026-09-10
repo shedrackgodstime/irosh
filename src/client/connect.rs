@@ -555,7 +555,10 @@ impl Client {
 fn lock_or_recover<T>(mutex: &Arc<StdMutex<T>>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
+        Err(poisoned) => {
+            tracing::warn!("client state mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
     }
 }
 

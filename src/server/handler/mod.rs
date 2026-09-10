@@ -160,17 +160,24 @@ impl server::Handler for ServerHandler {
         );
 
         let target = format!("{host_to_connect}:{port_to_connect}");
-        let mut stream = match tokio::net::TcpStream::connect(&target).await {
-            Ok(stream) => stream,
-            Err(err) => {
-                warn!(
-                    "Failed to connect to direct-tcpip target {}: {}",
-                    target, err
-                );
-                reply.reject(ChannelOpenFailure::ConnectFailed).await;
-                return Ok(());
-            }
-        };
+        let connect = tokio::net::TcpStream::connect(&target);
+        let mut stream =
+            match tokio::time::timeout(std::time::Duration::from_secs(15), connect).await {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(err)) => {
+                    warn!(
+                        "Failed to connect to direct-tcpip target {}: {}",
+                        target, err
+                    );
+                    reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                    return Ok(());
+                }
+                Err(_) => {
+                    warn!("Timed out connecting to direct-tcpip target {}", target);
+                    reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                    return Ok(());
+                }
+            };
 
         let channel_id = channel.id();
         let handle = session.handle();

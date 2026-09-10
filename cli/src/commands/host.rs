@@ -62,9 +62,9 @@ pub async fn exec(
     let stealth_mode = options.secret_value().is_some();
 
     let (ready, server) = tokio::select! {
-        res = Server::bind(options) => match res {
-            Ok(res) => res,
-            Err(e) => {
+        res = tokio::time::timeout(std::time::Duration::from_secs(15), Server::bind(options)) => match res {
+            Ok(Ok(res)) => res,
+            Ok(Err(e)) => {
                 // Check for Identity Conflict (Double Instance)
                 let state_root = ctx.server_state_root()?;
                 let daemon_running = irosh::IpcClient::new(&state_root)
@@ -84,6 +84,15 @@ pub async fn exec(
                     anyhow::bail!("Identity conflict.");
                 }
                 return Err(e.into());
+            }
+            Err(_) => {
+                if !ctx.args.json {
+                    Ui::error(
+                        "server bind timed out after 15s — is another irosh instance already running?",
+                        Some(messages::TIP_DAEMON_STATUS),
+                    );
+                }
+                anyhow::bail!("Server bind timed out after 15s.");
             }
         },
         _ = tokio::signal::ctrl_c() => {

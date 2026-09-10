@@ -35,7 +35,11 @@ pub fn sanitize_remote_path(raw: &str) -> Result<PathBuf> {
     let mut sanitized = PathBuf::new();
     for component in raw_path.components() {
         match component {
-            Component::Normal(c) => sanitized.push(c),
+            Component::Normal(c) => {
+                #[cfg(windows)]
+                validate_windows_component(c)?;
+                sanitized.push(c);
+            }
             Component::CurDir => {}
             Component::ParentDir => {
                 // We do not allow '..' to pop above the current sanitized root.
@@ -71,6 +75,66 @@ pub fn sanitize_remote_path(raw: &str) -> Result<PathBuf> {
     }
 
     Ok(sanitized)
+}
+
+/// Normalizes a path to forward-slash separators for wire transmission.
+///
+/// Path separators are platform-specific, but the transfer protocol always uses
+/// `/` between components regardless of the sender's OS. Without this, a
+/// Windows peer serializes `dir\file` (backslash), which a Unix receiver would
+/// treat as a single literal filename containing a backslash.
+#[must_use]
+pub fn normalize_path_separators(raw: &str) -> String {
+    if cfg!(windows) {
+        raw.replace('\\', "/")
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Windows reserved device filenames (compared case-insensitively against the
+/// stem before the first `.`).
+#[cfg(windows)]
+const WINDOWS_RESERVED_NAMES: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// Rejects path components that are invalid or dangerous on the Windows
+/// filesystem: reserved device names (`NUL`, `CON`, ...) and characters that
+/// are illegal in file names (`< > " | ? * :`).
+#[cfg(windows)]
+fn validate_windows_component(component: &std::ffi::OsStr) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const ILLEGAL: [u16; 7] = [
+        b'<' as u16,
+        b'>' as u16,
+        b'"' as u16,
+        b'|' as u16,
+        b'?' as u16,
+        b'*' as u16,
+        b':' as u16,
+    ];
+
+    if component.encode_wide().any(|unit| ILLEGAL.contains(&unit)) {
+        return Err(crate::error::IroshError::Transport(
+            TransportError::Transfer(crate::transport::transfer::TransferError::InvalidPath(
+                format!("component {component:?} contains characters illegal on Windows"),
+            )),
+        ));
+    }
+
+    let text = component.to_string_lossy();
+    let stem = text.split('.').next().unwrap_or_default();
+    if WINDOWS_RESERVED_NAMES.contains(&stem.to_ascii_lowercase().as_str()) {
+        return Err(crate::error::IroshError::Transport(
+            TransportError::Transfer(crate::transport::transfer::TransferError::InvalidPath(
+                format!("component {text:?} is a reserved Windows filename"),
+            )),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

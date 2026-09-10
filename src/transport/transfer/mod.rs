@@ -19,7 +19,7 @@ pub use codec::{
     write_get_chunk, write_get_complete, write_get_ready, write_get_request, write_new_entry,
     write_put_chunk, write_put_complete, write_put_ready, write_put_request, write_transfer_error,
 };
-pub use helpers::sanitize_remote_path;
+pub use helpers::{normalize_path_separators, sanitize_remote_path};
 #[cfg(test)]
 pub(crate) use types::MAX_CONTROL_BYTES;
 pub use types::{

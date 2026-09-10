@@ -820,6 +820,22 @@ impl Server {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
 
+        // Abort any still-running wormhole broadcast/expiry tasks and unpublish
+        // the ticket so the code stops resolving after the endpoint is closed.
+        let mut wh_lock = wormhole.lock().await;
+        if let Some(wh) = wh_lock.take() {
+            info!(
+                "Server exiting; aborting wormhole broadcast for code {:?}",
+                wh.code
+            );
+            wh.task.abort();
+            wh.expiry_task.abort();
+            let code = wh.code.clone();
+            tokio::spawn(async move {
+                let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
+            });
+        }
+
         let _ = router.shutdown().await;
         self.endpoint.close().await;
         info!("Server shut down gracefully.");

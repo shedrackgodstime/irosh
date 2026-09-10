@@ -69,7 +69,7 @@ fn auto_rename_download_target(path: PathBuf) -> PathBuf {
         .unwrap_or("download");
     let ext = path.extension().and_then(|s| s.to_str());
 
-    for index in 1.. {
+    for index in 1..=1_000_000 {
         let candidate_name = match ext {
             Some(ext) => format!("{stem} ({index}).{ext}"),
             None => format!("{stem} ({index})"),
@@ -79,7 +79,10 @@ fn auto_rename_download_target(path: PathBuf) -> PathBuf {
             return candidate;
         }
     }
-    unreachable!("infinite candidate iterator should always find a free path")
+
+    // Practically unreachable (1M numbered candidates colliding); fall back to
+    // the original target name rather than panicking.
+    path
 }
 
 #[must_use]

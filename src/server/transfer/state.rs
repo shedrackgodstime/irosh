@@ -3,11 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 use std::sync::{Arc, MutexGuard};
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::process::Command;
 use tracing::warn;
 
 use crate::error::{Result, ServerError};
-use crate::server::shell_access::{configure_live_shell_context, resolve_process_cwd};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::server::shell_access::configure_live_shell_context;
+use crate::server::shell_access::resolve_process_cwd;
 use crate::transport::transfer::{TransferFailure, TransferFailureCode};
 
 /// State shared across server-side transfer operations for a single connection.
@@ -97,6 +100,7 @@ impl ShellContext {
     }
 
     /// Configures a command to run within this context.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) fn configure(self, command: &mut Command) {
         if let Self::Live { pid } = self {
             configure_live_shell_context(command, pid);

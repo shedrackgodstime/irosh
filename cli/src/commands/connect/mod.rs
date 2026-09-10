@@ -233,7 +233,9 @@ async fn phase_dial(
                     pb.set_message(format!("Searching for wormhole: {code}..."));
                     Client::connect_wormhole(&opts, code).await.map(|t| (t, true))
                 }
-                _ => unreachable!(),
+                _ => Err(irosh::IroshError::InvalidTarget {
+                        raw: format!("{target:?}"),
+                    }),
             }
         } => res?,
         _ = tokio::signal::ctrl_c() => {

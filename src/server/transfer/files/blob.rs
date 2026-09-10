@@ -102,14 +102,45 @@ pub async fn handle_blob_put_request(
                             len_bytes[6],
                             len_bytes[7],
                         ]);
-                        if let Ok(cap) = usize::try_from(expected_remaining) {
-                            current_blob.reserve(cap);
+                        if let Ok(cap) = usize::try_from(expected_remaining)
+                            && current_blob.try_reserve(cap).is_err()
+                        {
+                            return Err(ServerError::TransferFailed {
+                                failure: crate::transport::transfer::TransferFailure::new(
+                                    crate::transport::transfer::TransferFailureCode::Internal,
+                                    format!(
+                                        "failed to allocate declared blob size {expected_remaining}"
+                                    ),
+                                ),
+                            }
+                            .into());
                         }
                         current_blob.extend_from_slice(blob_start);
-                        expected_remaining -= blob_start.len() as u64;
+                        let Some(remaining) =
+                            expected_remaining.checked_sub(blob_start.len() as u64)
+                        else {
+                            return Err(ServerError::TransferFailed {
+                                failure: crate::transport::transfer::TransferFailure::new(
+                                    crate::transport::transfer::TransferFailureCode::Internal,
+                                    "declared blob length exceeded by received data".to_string(),
+                                ),
+                            }
+                            .into());
+                        };
+                        expected_remaining = remaining;
                     } else {
                         current_blob.extend_from_slice(&data);
-                        expected_remaining -= data.len() as u64;
+                        let Some(remaining) = expected_remaining.checked_sub(data.len() as u64)
+                        else {
+                            return Err(ServerError::TransferFailed {
+                                failure: crate::transport::transfer::TransferFailure::new(
+                                    crate::transport::transfer::TransferFailureCode::Internal,
+                                    "declared blob length exceeded by received data".to_string(),
+                                ),
+                            }
+                            .into());
+                        };
+                        expected_remaining = remaining;
                     }
                     received += data.len() as u64;
 

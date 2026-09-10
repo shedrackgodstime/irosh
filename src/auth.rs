@@ -495,7 +495,10 @@ impl UnifiedAuthenticator {
     fn lock_keys(&self) -> std::sync::MutexGuard<'_, Vec<PublicKey>> {
         match self.authorized_keys.lock() {
             Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+            Err(poisoned) => {
+                warn!("authorized keys mutex poisoned; recovering");
+                poisoned.into_inner()
+            }
         }
     }
 

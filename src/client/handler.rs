@@ -204,12 +204,21 @@ impl client::Handler for ClientHandler {
         };
 
         if let Some((local_host, local_port)) = target {
+            let addr = format!("{local_host}:{local_port}");
             tokio::spawn(async move {
-                if let Ok(mut stream) =
-                    tokio::net::TcpStream::connect(format!("{local_host}:{local_port}")).await
-                {
-                    let mut channel_stream = channel.into_stream();
-                    let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut stream).await;
+                let connect = tokio::net::TcpStream::connect(&addr);
+                match tokio::time::timeout(std::time::Duration::from_secs(15), connect).await {
+                    Ok(Ok(mut stream)) => {
+                        let mut channel_stream = channel.into_stream();
+                        let _ =
+                            tokio::io::copy_bidirectional(&mut channel_stream, &mut stream).await;
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Failed to connect to local forward target {addr}: {e}");
+                    }
+                    Err(_) => {
+                        warn!("Timed out connecting to local forward target {addr}");
+                    }
                 }
             });
         } else {

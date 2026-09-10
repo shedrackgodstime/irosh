@@ -85,7 +85,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                             daemon: daemon_info,
                             message: "Service status is unknown.",
                         },
-                        _ => unreachable!(),
+                        _ => anyhow::bail!("unsupported service status variant"),
                     };
                     crate::output::print_success(response);
                     return Ok(());
@@ -130,7 +130,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                     ServiceStatus::Unknown => {
                         Ui::status("Service", "UNKNOWN", None);
                     }
-                    _ => unreachable!(),
+                    _ => anyhow::bail!("unsupported service status variant"),
                 }
                 Ui::blank();
             }

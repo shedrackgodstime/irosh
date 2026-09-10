@@ -394,7 +394,18 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
             .open(&log_path)
         {
             let _ = tracing_subscriber::fmt()
-                .with_writer(move || file.try_clone().expect("clone daemon log writer"))
+                .with_writer(move || {
+                    file.try_clone().map_or_else(
+                        |e| -> Box<dyn std::io::Write + Send + Sync> {
+                            eprintln!(
+                                "WARN: unable to open daemon log writer for {}: {e}",
+                                log_path.display()
+                            );
+                            Box::new(std::io::sink())
+                        },
+                        |f| -> Box<dyn std::io::Write + Send + Sync> { Box::new(f) },
+                    )
+                })
                 .with_env_filter("irosh=debug,info")
                 .try_init();
         }

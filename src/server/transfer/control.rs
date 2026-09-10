@@ -85,33 +85,54 @@ pub(super) async fn handle_completion_request(
             }
         }
         ShellContext::Live { .. } => {
-            // In Live context, use 'find' inside the namespace
-            let mut cmd = tokio::process::Command::new("sh");
-            // find . -maxdepth 1 -name 'prefix*' -printf '%P%y\n'
-            // %y is type (f, d, etc.)
-            let find_script = format!(
-                "find . -maxdepth 1 -name '{}*' -printf '%P:%y\\n'",
-                prefix.replace('\'', "'\\''")
-            );
-            cmd.arg("-c")
-                .arg(find_script)
-                .current_dir(&search_dir)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null());
-            context.configure(&mut cmd);
+            #[cfg(target_os = "linux")]
+            {
+                // In Live context, use 'find' inside the namespace.
+                // GNU find's -printf is Linux-specific; BSD find (macOS) lacks it.
+                let mut cmd = tokio::process::Command::new("sh");
+                // find . -maxdepth 1 -name 'prefix*' -printf '%P%y\n'
+                // %y is type (f, d, etc.)
+                let find_script = format!(
+                    "find . -maxdepth 1 -name '{}*' -printf '%P:%y\\n'",
+                    prefix.replace('\'', "'\\''")
+                );
+                cmd.arg("-c")
+                    .arg(find_script)
+                    .current_dir(&search_dir)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null());
+                context.configure(&mut cmd);
 
-            if let Ok(child) = cmd.spawn() {
-                if let Some(stdout) = child.stdout {
-                    use tokio::io::{AsyncBufReadExt, BufReader};
-                    let mut lines = BufReader::new(stdout).lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        let parts: Vec<&str> = line.splitn(2, ':').collect();
-                        if parts.len() == 2 {
-                            let mut name = parts[0].to_string();
-                            if parts[1] == "d" {
-                                name.push('/');
+                if let Ok(child) = cmd.spawn() {
+                    if let Some(stdout) = child.stdout {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let mut lines = BufReader::new(stdout).lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            let parts: Vec<&str> = line.splitn(2, ':').collect();
+                            if parts.len() == 2 {
+                                let mut name = parts[0].to_string();
+                                if parts[1] == "d" {
+                                    name.push('/');
+                                }
+                                matches.push(name);
                             }
-                            matches.push(name);
+                        }
+                    }
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                if let Ok(mut entries) = tokio::fs::read_dir(&search_dir).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with(&prefix) {
+                            let mut match_name = name;
+                            if let Ok(meta) = entry.metadata().await
+                                && meta.is_dir()
+                            {
+                                match_name.push('/');
+                            }
+                            matches.push(match_name);
                         }
                     }
                 }

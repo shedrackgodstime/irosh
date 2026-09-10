@@ -187,7 +187,9 @@ async fn handle_recursive_get_request(
             crate::transport::transfer::write_new_entry(
                 stream,
                 &crate::transport::transfer::EntryHeader {
-                    path: relative.display().to_string(),
+                    path: crate::transport::transfer::normalize_path_separators(
+                        &relative.display().to_string(),
+                    ),
                     size,
                     mode,
                     is_dir,
