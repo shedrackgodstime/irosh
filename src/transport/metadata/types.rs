@@ -34,15 +34,6 @@ impl PeerMetadata {
         s
     }
 
-    /// Replaces `user` and `os` fields with sanitized values from a remote peer.
-    /// Preserves the local hostname.
-    #[must_use]
-    pub fn with_remote_user_os(mut self, user: String, os: String) -> Self {
-        self.user = Self::sanitize_field(user);
-        self.os = Self::sanitize_field(os);
-        self
-    }
-
     /// Generates a friendly default alias like "kristency-linux".
     #[must_use]
     pub fn default_alias(&self) -> String {

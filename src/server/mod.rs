@@ -296,12 +296,6 @@ impl ServerReady {
     pub fn direct_addresses(&self) -> &[String] {
         &self.direct_addresses
     }
-
-    /// Returns the OpenSSH-formatted host key.
-    #[must_use]
-    pub fn host_key_openssh(&self) -> &str {
-        &self.host_key_openssh
-    }
 }
 
 /// The running SSH server primitive.

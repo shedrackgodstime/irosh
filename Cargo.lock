@@ -2450,7 +2450,6 @@ dependencies = [
  "argon2",
  "async-trait",
  "chrono",
- "console",
  "criterion",
  "dirs",
  "futures-util",
