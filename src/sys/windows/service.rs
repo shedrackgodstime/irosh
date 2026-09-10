@@ -361,7 +361,7 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
         details: format!("failed to start tokio runtime: {e}"),
     })?;
 
-    rt.block_on(async {
+    let run_result: std::result::Result<(), ServerError> = rt.block_on(async {
         // Parse arguments to find state directory.
         let mut state_dir = None;
         let env_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
@@ -452,27 +452,51 @@ fn irosh_service_run(_arguments: Vec<OsString>) -> Result<()> {
             crate::Server::bind(options)
                 .await
                 .map_err(|e| ServerError::ServiceManagement {
-                    details: format!("server bind failed: {e}"),
+                    details: format!(
+                        "server bind failed: {e}; is another irosh instance already using this state dir? Stop it and retry."
+                    ),
                 })?;
 
         let shutdown = server.shutdown_handle();
 
         // Use a blocking recv on the standard channel in a spawned blocking task
-        // to avoid blocking the main async loop.
-        tokio::select! {
+        // to avoid blocking the main async loop. Any error from the run loop is
+        // propagated so the daemon fails loudly instead of exiting cleanly.
+        let run_result: std::result::Result<(), ServerError> = tokio::select! {
             _ = tokio::task::spawn_blocking(move || rx.recv()) => {
                 info!("Service stop requested via SCM.");
                 shutdown.close().await;
+                Ok(())
             }
-            res = server.run() => {
-                if let Err(e) = res {
-                    error!("Server run loop exited with error: {}", e);
-                }
-            }
-        }
+            res = server.run() => res.map_err(|e| ServerError::ServiceManagement {
+                details: format!("server run loop exited with error: {e}"),
+            }),
+        };
 
+        run_result?;
         Ok::<(), ServerError>(())
-    })?;
+    });
+
+    // Any bind or run-loop failure must be reported loudly to the SCM: report a
+    // stopped service with a non-zero service exit code and terminate with a
+    // non-zero process exit code so a degraded daemon is never mistaken for a
+    // clean stop.
+    match run_result {
+        Ok(()) => {}
+        Err(e) => {
+            error!("Service execution failed: {:?}", e);
+            let _ = status_handle.set_service_status(WinServiceStatus {
+                service_type: ServiceType::OWN_PROCESS,
+                current_state: ServiceState::Stopped,
+                controls_accepted: ServiceControlAccept::empty(),
+                exit_code: ServiceExitCode::Win32(1),
+                checkpoint: 0,
+                wait_hint: std::time::Duration::default(),
+                process_id: None,
+            });
+            std::process::exit(1);
+        }
+    }
 
     status_handle
         .set_service_status(WinServiceStatus {

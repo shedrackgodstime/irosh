@@ -1,5 +1,6 @@
 //! Irosh CLI - The thin frontend for P2P SSH.
 #![deny(unused_lifetimes)]
+#![deny(unused_import_braces)]
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::doc_markdown)]

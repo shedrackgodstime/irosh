@@ -1,5 +1,6 @@
 #![doc = include_str!("README.md")]
 #![deny(unused_lifetimes)]
+#![deny(unused_import_braces)]
 #![deny(missing_docs)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::doc_markdown)]
