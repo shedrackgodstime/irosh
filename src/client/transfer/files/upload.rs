@@ -254,8 +254,8 @@ impl Session {
         })?;
         entries.sort();
 
-        for relative in &entries {
-            let file_path = local.join(relative);
+        for relative in entries {
+            let file_path = local.join(&relative);
             let data = tokio::fs::read(&file_path)
                 .await
                 .map_err(|e| ClientError::FileIo {
@@ -282,7 +282,7 @@ impl Session {
             let file_hash = file_hash.ok_or_else(|| ClientError::UploadFailed {
                 details: "add_bytes finished without hash".to_string(),
             })?;
-            collection.push(relative.clone(), file_hash);
+            collection.push(relative, file_hash);
         }
 
         // 2. Store collection blobs; last one is the root hash
@@ -290,12 +290,7 @@ impl Session {
         for blob_data in collection.to_blobs() {
             let blob_len = blob_data.len() as u64;
             total_size += blob_len;
-            let mut add_stream = self
-                .blobs
-                .blobs()
-                .add_bytes(blob_data.to_vec())
-                .stream()
-                .await;
+            let mut add_stream = self.blobs.blobs().add_bytes(blob_data).stream().await;
             while let Some(item) = add_stream.next().await {
                 match item {
                     iroh_blobs::api::blobs::AddProgressItem::Done(tag) => {
@@ -661,6 +656,7 @@ impl Session {
         }
 
         let mut total_sent = 0u64;
+        let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
         let walk = walkdir::WalkDir::new(local_root);
 
         for entry in walk {
@@ -722,7 +718,6 @@ impl Session {
                             source: e,
                         })?;
 
-                let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
                 loop {
                     let count = file
                         .read(&mut buffer)

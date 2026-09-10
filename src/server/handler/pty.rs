@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use russh::{ChannelId, server};
+#[cfg(windows)]
+use tracing::trace;
 use tracing::{debug, info, warn};
 
 use crate::error::{Result, ServerError};
@@ -448,11 +450,9 @@ impl ServerHandler {
                                 break;
                             }
                             Ok(n) => {
-                                info!(
-                                    "PTY reader thread read {} bytes for channel {:?}: {}",
-                                    n,
-                                    channel,
-                                    preview_bytes(&buf[..n])
+                                trace!(
+                                    "PTY reader thread read {} bytes for channel {:?}",
+                                    n, channel
                                 );
                                 // Drive the SSH send directly from this thread.
                                 // block_on is safe here because spawn_blocking
@@ -559,10 +559,9 @@ impl ServerHandler {
 
     pub(super) fn write_channel_data(&self, channel: ChannelId, data: &[u8]) {
         debug!(
-            "Writing {} SSH bytes into PTY channel {:?}: {}",
-            data.len(),
-            channel,
-            preview_bytes(data)
+            bytes = data.len(),
+            ?channel,
+            "writing SSH data bytes into PTY channel"
         );
         let mut channels = self.lock_channels();
         if let Some(state_entry) = channels.get_mut(&channel)
@@ -816,25 +815,4 @@ fn detect_windows_shell() -> String {
         return format!(r"{systemroot}\System32\cmd.exe");
     }
     "C:\\Windows\\System32\\cmd.exe".to_string()
-}
-
-fn preview_bytes(bytes: &[u8]) -> String {
-    const MAX_PREVIEW: usize = 24;
-    let preview = &bytes[..bytes.len().min(MAX_PREVIEW)];
-    let rendered = preview
-        .iter()
-        .map(|byte| match byte {
-            b'\r' => "\\r".to_string(),
-            b'\n' => "\\n".to_string(),
-            b'\t' => "\\t".to_string(),
-            0x20..=0x7e => (*byte as char).to_string(),
-            _ => format!("\\x{byte:02x}"),
-        })
-        .collect::<String>();
-
-    if bytes.len() > MAX_PREVIEW {
-        format!("{rendered}...")
-    } else {
-        rendered
-    }
 }

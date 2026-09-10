@@ -456,7 +456,7 @@ impl Session {
             return Ok(None);
         };
         if let Some(msg) = channel.wait().await {
-            tracing::debug!("Received low-level SSH message: {:?}", msg);
+            tracing::debug!("received SSH channel message");
             Ok(Some(SessionEvent::from(msg)))
         } else {
             tracing::debug!("Low-level SSH event stream ended (None)");
@@ -583,9 +583,9 @@ impl Session {
 #[non_exhaustive]
 pub enum SessionEvent {
     /// Raw data received from remote stdout.
-    Data(Vec<u8>),
+    Data(bytes::Bytes),
     /// Raw data received from remote stderr or other extended streams.
-    ExtendedData(Vec<u8>, u32),
+    ExtendedData(bytes::Bytes, u32),
     /// The remote process has exited with the given status code.
     ExitStatus(u32),
     /// The remote process was terminated by a signal.
@@ -608,8 +608,8 @@ pub enum SessionEvent {
 impl From<ChannelMsg> for SessionEvent {
     fn from(msg: ChannelMsg) -> Self {
         match msg {
-            ChannelMsg::Data { data } => Self::Data(data.to_vec()),
-            ChannelMsg::ExtendedData { data, ext } => Self::ExtendedData(data.to_vec(), ext),
+            ChannelMsg::Data { data } => Self::Data(data),
+            ChannelMsg::ExtendedData { data, ext } => Self::ExtendedData(data, ext),
             ChannelMsg::ExitStatus { exit_status } => Self::ExitStatus(exit_status),
             ChannelMsg::ExitSignal {
                 signal_name,

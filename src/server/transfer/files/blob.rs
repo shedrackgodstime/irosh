@@ -416,8 +416,8 @@ async fn add_directory_to_store(
 
     entries.sort();
 
-    for relative in &entries {
-        let file_path = dir_path.join(relative);
+    for relative in entries {
+        let file_path = dir_path.join(&relative);
         let data = tokio::fs::read(&file_path)
             .await
             .map_err(|e| ServerError::TransferFailed {
@@ -451,7 +451,7 @@ async fn add_directory_to_store(
                 "add_bytes finished without hash".to_string(),
             ),
         })?;
-        collection.push(relative.clone(), file_hash);
+        collection.push(relative, file_hash);
     }
 
     // Store collection blobs; the last blob (links) is the collection root
@@ -459,12 +459,7 @@ async fn add_directory_to_store(
     for data in collection.to_blobs() {
         let data_len = data.len() as u64;
         total_size += data_len;
-        let mut add_stream = shell_state
-            .blobs
-            .blobs()
-            .add_bytes(data.to_vec())
-            .stream()
-            .await;
+        let mut add_stream = shell_state.blobs.blobs().add_bytes(data).stream().await;
         while let Some(item) = add_stream.next().await {
             match item {
                 iroh_blobs::api::blobs::AddProgressItem::Done(tag) => {

@@ -134,6 +134,7 @@ async fn handle_recursive_get_request(
     .map_err(TransportError::from)?;
 
     let mut total_sent = 0u64;
+    let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
 
     // Reason: `use_native_walk` is only mutated on Linux.
     #[allow(unused_mut)]
@@ -196,7 +197,8 @@ async fn handle_recursive_get_request(
             .map_err(TransportError::from)?;
 
             if !is_dir {
-                stream_file_content(stream, context, entry.path(), &mut total_sent).await?;
+                stream_file_content(stream, context, entry.path(), &mut total_sent, &mut buffer)
+                    .await?;
             }
         }
     } else {
@@ -274,7 +276,8 @@ async fn handle_recursive_get_request(
 
                 if !is_dir {
                     let full_path = source_root.join(relative_path.as_ref());
-                    stream_file_content(stream, context, &full_path, &mut total_sent).await?;
+                    stream_file_content(stream, context, &full_path, &mut total_sent, &mut buffer)
+                        .await?;
                 }
             }
 
@@ -294,6 +297,7 @@ async fn stream_file_content(
     context: ShellContext,
     path: &std::path::Path,
     total_sent: &mut u64,
+    buffer: &mut Vec<u8>,
 ) -> Result<()> {
     let (mut source, _) = spawn_download_helper(context, path).await?;
     let mut stdout = source.stdout().ok_or_else(|| ServerError::TransferFailed {
@@ -303,17 +307,17 @@ async fn stream_file_content(
         ),
     })?;
 
-    let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
     loop {
-        let count = stdout
-            .read(&mut buffer)
-            .await
-            .map_err(|e| ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::Internal,
-                    format!("reading download source failed: {e}"),
-                ),
-            })?;
+        let count =
+            stdout
+                .read(buffer.as_mut_slice())
+                .await
+                .map_err(|e| ServerError::TransferFailed {
+                    failure: TransferFailure::new(
+                        TransferFailureCode::Internal,
+                        format!("reading download source failed: {e}"),
+                    ),
+                })?;
         if count == 0 {
             break;
         }
