@@ -988,64 +988,73 @@ async fn test_blob_dir_upload() {
 
 #[tokio::test]
 async fn test_wormhole_rendezvous() {
-    let _ = tracing_subscriber::fmt::try_init();
-    let server_state = temp_state("wormhole-server");
-    let client_state = temp_state("wormhole-client");
-    let code = "crystal-piano-7";
+    let test = async {
+        let _ = tracing_subscriber::fmt::try_init();
+        let server_state = temp_state("wormhole-server");
+        let client_state = temp_state("wormhole-client");
+        let code = "crystal-piano-7";
 
-    // 1. Start Server
-    let server_opts =
-        ServerOptions::new(server_state.clone()).relay_mode(RelayMode::Disabled, None);
-    let (_ready, server) = Server::bind(server_opts).await.unwrap();
-    let shutdown_handle = server.shutdown_handle();
-    let control_tx = server.control_handle();
+        // 1. Start Server
+        let server_opts =
+            ServerOptions::new(server_state.clone()).relay_mode(RelayMode::Disabled, None);
+        let (_ready, server) = Server::bind(server_opts).await.unwrap();
+        let shutdown_handle = server.shutdown_handle();
+        let control_tx = server.control_handle();
 
-    let server_task = tokio::spawn(async move {
-        server.run().await.unwrap();
-    });
+        let server_task = tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
 
-    // 2. Enable Wormhole on Server
-    let (tx, _) = tokio::sync::oneshot::channel();
-    control_tx
-        .send(irosh::InternalCommand::EnableWormhole {
-            code: code.to_string(),
-            password: None,
-            persistent: false,
-            tx,
-        })
-        .await
-        .unwrap();
-
-    // 3. Connect Client using the code (retry for network flakiness)
-    let client_opts = ClientOptions::new(client_state.clone())
-        .security(SecurityConfig {
-            host_key_policy: HostKeyPolicy::AcceptAll,
-        })
-        .relay_mode(RelayMode::Disabled);
-
-    let session = 'retry: loop {
-        for attempt in 1..=3 {
-            match Client::connect(
-                &client_opts,
-                irosh::ResolvedTarget::WormholeCode(code.to_string()),
-            )
+        // 2. Enable Wormhole on Server
+        let (tx, _) = tokio::sync::oneshot::channel();
+        control_tx
+            .send(irosh::InternalCommand::EnableWormhole {
+                code: code.to_string(),
+                password: None,
+                persistent: false,
+                tx,
+            })
             .await
-            {
-                Ok(session) => break 'retry session,
-                Err(e) if attempt < 3 => {
-                    tracing::warn!("Wormhole attempt {attempt} failed: {e}. Retrying...");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+            .unwrap();
+
+        // 3. Connect Client using the code (retry for network flakiness)
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
+
+        let session = 'retry: loop {
+            for attempt in 1..=3 {
+                match Client::connect(
+                    &client_opts,
+                    irosh::ResolvedTarget::WormholeCode(code.to_string()),
+                )
+                .await
+                {
+                    Ok(session) => break 'retry session,
+                    Err(e) if attempt < 3 => {
+                        tracing::warn!("Wormhole attempt {attempt} failed: {e}. Retrying...");
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                    Err(e) => panic!("Wormhole discovery failed after 3 attempts: {e}"),
                 }
-                Err(e) => panic!("Wormhole discovery failed after 3 attempts: {e}"),
             }
-        }
+        };
+
+        // 4. Verify Connection
+        assert!(session.remote_metadata().is_some());
+
+        // 5. Cleanup
+        session.close().await.unwrap();
+        shutdown_handle.close().await;
+        server_task.await.unwrap();
     };
 
-    // 4. Verify Connection
-    assert!(session.remote_metadata().is_some());
-
-    // 5. Cleanup
-    session.close().await.unwrap();
-    shutdown_handle.close().await;
-    server_task.await.unwrap();
+    // The rendezvous path depends on the public iroh relay (pkarr + DERP), so
+    // bound it explicitly to avoid multi-minute hangs when the relay is
+    // unreachable (e.g. networks without outbound access).
+    tokio::time::timeout(Duration::from_secs(180), test)
+        .await
+        .expect("test_wormhole_rendezvous timed out");
 }

@@ -52,6 +52,19 @@ pub struct IpcEnvelope {
     pub command: IpcCommand,
 }
 
+/// Compares the presented IPC token against the expected token in constant
+/// time.
+///
+/// The token is a shared secret between the daemon and its CLI, so a plain
+/// `==` would let a local attacker distinguish a correct prefix (or otherwise
+/// probe the token byte-by-byte) through response timing. `subtle`'s
+/// `ConstantTimeEq` also covers length mismatches without short-circuiting.
+#[cfg(windows)]
+fn tokens_match(expected: &str, candidate: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    expected.as_bytes().ct_eq(candidate.as_bytes()).into()
+}
+
 /// Internal version of IpcCommand that includes a response channel.
 #[non_exhaustive]
 pub enum InternalCommand {
@@ -312,7 +325,7 @@ where
     #[cfg(windows)]
     let command: IpcCommand = {
         let envelope: IpcEnvelope = serde_json::from_slice(&buf)?;
-        if expected_token.as_deref() != Some(envelope.token.as_str()) {
+        if !expected_token.is_some_and(|expected| tokens_match(&expected, &envelope.token)) {
             debug!("Rejecting IPC command with invalid auth token");
             let res_buf = serde_json::to_vec(&IpcResponse::Error(
                 "unauthorized: invalid ipc token".to_string(),
@@ -362,4 +375,33 @@ where
     stream.flush().await?;
 
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::tokens_match;
+
+    #[test]
+    fn tokens_match_accepts_only_exact_token() {
+        assert!(tokens_match(
+            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+        ));
+    }
+
+    #[test]
+    fn tokens_match_rejects_length_mismatch() {
+        assert!(!tokens_match(
+            "a1b2c3d4e5f6a7b8",
+            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+        ));
+    }
+
+    #[test]
+    fn tokens_match_rejects_any_substitution() {
+        assert!(!tokens_match(
+            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d7"
+        ));
+    }
 }

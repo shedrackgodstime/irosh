@@ -12,6 +12,7 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 #![warn(trivial_casts)]
 #![warn(trivial_numeric_casts)]
+#![deny(variant_size_differences)]
 //!
 //! # Examples
 //!
