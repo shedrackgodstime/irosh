@@ -17,10 +17,6 @@ fn init_tracing() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
-)]
 async fn verify_exec_output() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(120), async {
@@ -64,10 +60,17 @@ async fn verify_exec_output() {
         println!("\n--- DIRECTORY CHECK DEBUG ---");
         // Check existing directory (server_state root)
         let dir_path = server_state.root().display().to_string();
-        let cmd = format!(
-            "if [ -d \"{}\" ]; then echo 'YES'; else echo 'NO'; fi",
-            dir_path
-        );
+        let cmd = if cfg!(windows) {
+            format!(
+                "if (Test-Path '{}') {{ Write-Output 'YES' }} else {{ Write-Output 'NO' }}",
+                dir_path.replace('\'', "''")
+            )
+        } else {
+            format!(
+                "if [ -d \"{}\" ]; then echo 'YES'; else echo 'NO'; fi",
+                dir_path
+            )
+        };
         let output = session.capture_exec(&cmd).await.unwrap();
         println!(
             "DIR CHECK STDOUT: {:?}",

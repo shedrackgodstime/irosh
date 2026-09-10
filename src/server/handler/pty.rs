@@ -265,6 +265,11 @@ impl ServerHandler {
             })?;
 
         let (pty_tx, mut pty_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        // Clone used only by the Windows reader thread to inject automatic
+        // replies into the PTY input stream (e.g. the cursor-position report
+        // that cmd.exe blocks on before it will run anything).
+        #[cfg(not(unix))]
+        let pty_tx_reader = pty_tx.clone();
         let writer_done = shutdown.clone();
 
         let channel_id_for_writer = channel;
@@ -436,6 +441,11 @@ impl ServerHandler {
                 // Handle::block_on, eliminating the intermediate queue entirely.
                 tokio::task::spawn_blocking(move || {
                     let mut buf = [0u8; 8192];
+                    // Sliding window for detecting the cursor-position query
+                    // `ESC [ 6 n` that cmd.exe issues on startup and blocks on
+                    // until a terminal emulator replies.
+                    #[cfg(not(unix))]
+                    let mut dsr_pending: Vec<u8> = Vec::new();
                     loop {
                         if reader_done_task.is_cancelled() {
                             info!(
@@ -454,6 +464,24 @@ impl ServerHandler {
                                     "PTY reader thread read {} bytes for channel {:?}",
                                     n, channel
                                 );
+                                #[cfg(not(unix))]
+                                {
+                                    for &b in &buf[..n] {
+                                        dsr_pending.push(b);
+                                        if dsr_pending.len() > 8 {
+                                            dsr_pending.remove(0);
+                                        }
+                                        if dsr_pending.len() >= 4
+                                            && dsr_pending[dsr_pending.len() - 4..] == *b"\x1b[6n"
+                                        {
+                                            // Reply with a cursor position report.
+                                            // The row/col don't matter here; cmd
+                                            // only needs a response to unblock.
+                                            let _ = pty_tx_reader.send(b"\x1b[1;1R".to_vec());
+                                            dsr_pending.clear();
+                                        }
+                                    }
+                                }
                                 // Drive the SSH send directly from this thread.
                                 // block_on is safe here because spawn_blocking
                                 // threads are not Tokio worker threads.

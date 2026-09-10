@@ -146,3 +146,60 @@ async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
     shutdown.close().await;
     let _ = run_task.await;
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_ipc_rejects_requests_without_valid_token() {
+    use crate::client::ipc::IpcClient;
+    use crate::server::ipc::{IpcCommand, IpcEnvelope, IpcResponse};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let state = temp_state_dir("server-ipc-token");
+    let options = ServerOptions::new(state.clone());
+    let (_ready, server) = Server::bind(options).await.unwrap();
+    let shutdown = server.shutdown_handle();
+    let run_task = tokio::spawn(server.run());
+
+    // Give the IPC server time to bind and write the port/token files.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let port: u16 = tokio::fs::read_to_string(state.root().join("ipc.port"))
+        .await
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+
+    // A local process guessing a wrong token must be rejected.
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let envelope = IpcEnvelope {
+        token: "bogus-token".to_string(),
+        command: IpcCommand::GetStatus,
+    };
+    stream
+        .write_all(&serde_json::to_vec(&envelope).unwrap())
+        .await
+        .unwrap();
+    stream.shutdown().await.unwrap();
+
+    let mut res_buf = Vec::new();
+    stream.read_to_end(&mut res_buf).await.unwrap();
+    let response: IpcResponse = serde_json::from_slice(&res_buf).unwrap();
+    assert!(
+        matches!(response, IpcResponse::Error(ref msg) if msg.contains("unauthorized")),
+        "expected unauthorized error, got {response:?}"
+    );
+
+    // The CLI path with the real token still works.
+    let ipc = IpcClient::new(state.root());
+    let status = ipc.send(IpcCommand::GetStatus).await.unwrap();
+    assert!(
+        matches!(status, IpcResponse::Status(_)),
+        "expected Status response"
+    );
+
+    shutdown.close().await;
+    let _ = run_task.await;
+}

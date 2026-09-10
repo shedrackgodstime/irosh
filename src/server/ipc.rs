@@ -1,8 +1,15 @@
 //! Local Inter-Process Communication (IPC) for daemon control.
 //!
 //! This module provides a local socket listener (Unix Domain Socket on Unix,
-//! Named Pipe on Windows) that allows the CLI to send commands to a running
+//! TCP loopback on Windows) that allows the CLI to send commands to a running
 //! irosh background service.
+//!
+//! On Windows every command must carry a per-instance auth token. The listener
+//! binds to `127.0.0.1`, which any local process can reach, so without the
+//! token a random user could otherwise disable wormholes or shut the daemon
+//! down. The token is written to the state directory (`ipc.token`) and read by
+//! [`crate::client::ipc::IpcClient`]. Unix relies on socket permissions and
+//! sends bare commands.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -28,6 +35,21 @@ pub enum IpcCommand {
     GetStatus,
     /// Request a graceful shutdown of the daemon.
     Shutdown,
+}
+
+/// Envelope wrapping an IPC command with the instance auth token on Windows.
+///
+/// The Windows listener is a TCP loopback socket that is reachable by any
+/// local process, so the daemon generates a random token per instance and
+/// requires every command to carry it. The token file lives next to
+/// `ipc.port` in the state directory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(windows)]
+pub struct IpcEnvelope {
+    /// Per-instance secret authorizing the wrapped command.
+    pub token: String,
+    /// The command to execute.
+    pub command: IpcCommand,
 }
 
 /// Internal version of IpcCommand that includes a response channel.
@@ -192,7 +214,8 @@ impl IpcServer {
                             Ok((mut stream, _)) => {
                                 let tx = self.control_tx.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) = handle_ipc_connection(&mut stream, tx).await {
+                                    if let Err(e) = handle_ipc_connection(&mut stream, tx, None).await
+                                    {
                                         debug!("IPC connection error: {}", e);
                                     }
                                 });
@@ -224,6 +247,11 @@ impl IpcServer {
             })?;
             let _ = tokio::fs::write(&path, local_addr.port().to_string()).await;
 
+            // Write a per-instance auth token for the loopback listener.
+            let token: [u8; 32] = rand::random();
+            let token_hex = hex::encode(token);
+            let _ = tokio::fs::write(path.with_file_name("ipc.token"), &token_hex).await;
+
             info!("IPC listener active on {}", local_addr);
 
             loop {
@@ -236,8 +264,15 @@ impl IpcServer {
                         match accepted {
                             Ok((mut stream, _)) => {
                                 let tx = self.control_tx.clone();
+                                let expected_token = token_hex.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) = handle_ipc_connection(&mut stream, tx).await {
+                                    if let Err(e) = handle_ipc_connection(
+                                        &mut stream,
+                                        tx,
+                                        Some(expected_token),
+                                    )
+                                    .await
+                                    {
                                         debug!("IPC connection error: {}", e);
                                     }
                                 });
@@ -251,15 +286,21 @@ impl IpcServer {
             }
 
             let _ = tokio::fs::remove_file(&path).await;
+            let _ = tokio::fs::remove_file(path.with_file_name("ipc.token")).await;
             Ok(())
         }
     }
 }
 
 /// Handles a single IPC connection.
+///
+/// On Windows `expected_token` is the per-instance auth token that every
+/// command must carry. On Unix it is `None` and socket permissions provide
+/// the access control.
 async fn handle_ipc_connection<S>(
     stream: &mut S,
     control_tx: tokio::sync::mpsc::Sender<InternalCommand>,
+    expected_token: Option<String>,
 ) -> std::result::Result<(), IpcError>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -268,7 +309,26 @@ where
     let mut buf = Vec::with_capacity(4096);
     stream.take(1024 * 64).read_to_end(&mut buf).await?;
 
+    #[cfg(windows)]
+    let command: IpcCommand = {
+        let envelope: IpcEnvelope = serde_json::from_slice(&buf)?;
+        if expected_token.as_deref() != Some(envelope.token.as_str()) {
+            debug!("Rejecting IPC command with invalid auth token");
+            let res_buf = serde_json::to_vec(&IpcResponse::Error(
+                "unauthorized: invalid ipc token".to_string(),
+            ))?;
+            stream.write_all(&res_buf).await?;
+            stream.flush().await?;
+            return Ok(());
+        }
+        envelope.command
+    };
+
+    #[cfg(unix)]
     let command: IpcCommand = serde_json::from_slice(&buf)?;
+    #[cfg(unix)]
+    let _ = expected_token;
+
     debug!("Received IPC command: {:?}", command);
 
     let (res_tx, res_rx) = tokio::sync::oneshot::channel();

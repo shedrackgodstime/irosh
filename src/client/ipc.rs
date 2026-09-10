@@ -8,6 +8,9 @@ use crate::server::ipc::{IpcCommand, IpcResponse};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(windows)]
+use crate::server::ipc::IpcEnvelope;
+
 /// A client for communicating with a running irosh daemon.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IpcClient {
@@ -35,11 +38,39 @@ impl IpcClient {
     pub async fn send(&self, command: IpcCommand) -> Result<IpcResponse> {
         let mut stream = self.connect().await?;
 
-        let buf = serde_json::to_vec(&command).map_err(|e| {
+        #[cfg(windows)]
+        let payload = {
+            // Loopback IPC is reachable by any local process, so the daemon
+            // writes a per-instance auth token to `ipc.token` and requires
+            // every command to carry it.
+            let token = tokio::fs::read_to_string(self.socket_path.with_file_name("ipc.token"))
+                .await
+                .map_err(|e| {
+                    crate::error::IroshError::Io(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "IPC auth token unavailable (is an older irosh daemon running?): {e}"
+                        ),
+                    ))
+                })?;
+            let envelope = IpcEnvelope {
+                token: token.trim().to_string(),
+                command,
+            };
+            serde_json::to_vec(&envelope).map_err(|e| {
+                crate::error::IroshError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e,
+                ))
+            })?
+        };
+
+        #[cfg(unix)]
+        let payload = serde_json::to_vec(&command).map_err(|e| {
             crate::error::IroshError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
 
-        stream.write_all(&buf).await?;
+        stream.write_all(&payload).await?;
         // Shutdown writing so the server knows the command is complete.
         stream.shutdown().await?;
 

@@ -58,10 +58,6 @@ async fn session_pty_shell_and_disconnect_lifecycle() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
-)]
 async fn exec_emits_stdout_and_close_events() {
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let server_state = temp_state_dir("server-exec");
@@ -97,22 +93,25 @@ async fn exec_emits_stdout_and_close_events() {
 }
 
 #[tokio::test]
-#[cfg_attr(
-    windows,
-    ignore = "ConPTY frequently hangs on short-lived exec commands in Windows CI"
-)]
 async fn capture_exec_collects_stdout_and_stderr() {
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let server_state = temp_state_dir("server-exec-cap");
         let client_state = temp_state_dir("client-exec-cap");
         let (mut session, server_task) = connect_test_session(&server_state, &client_state).await;
 
+        // The default Windows shell is Windows PowerShell 5.1 (no `&&`/`>&2`),
+        // so use a shell-agnostic command that writes to both streams.
+        let command = if cfg!(windows) {
+            "Write-Output out-msg; [Console]::Error.WriteLine('err-msg')"
+        } else {
+            "echo out-msg && echo err-msg >&2"
+        };
         let output = session
-            .capture_exec("echo out-msg && echo err-msg >&2")
+            .capture_exec(command)
             .await
             .expect("capture_exec failed");
 
-        let combined_output = String::from_utf8(output.stdout).unwrap();
+        let combined_output = String::from_utf8(output.stdout.clone()).unwrap();
 
         assert!(
             combined_output.contains("out-msg"),

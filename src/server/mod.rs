@@ -606,6 +606,15 @@ impl Server {
     #[must_use]
     #[tracing::instrument(skip(self))]
     pub async fn run(mut self) -> Result<()> {
+        // On Windows, group all child processes (PTY shells) into a job object
+        // so they are terminated automatically when this process exits, even if
+        // it is killed via Task Manager or crashes. The service entry point also
+        // does this; the global job makes repeat assignment a no-op.
+        #[cfg(windows)]
+        if let Err(e) = crate::sys::windows::job::assign_current_process_to_job() {
+            warn!("failed to assign process to job object: {e}");
+        }
+
         info!("Server actively listening for connections.");
 
         let (ipc_shutdown_tx, ipc_shutdown_rx) = tokio::sync::mpsc::channel(1);
