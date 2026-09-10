@@ -22,6 +22,11 @@ curl -fsSL irosh.pages.dev/install | sh
 iwr irosh.pages.dev/ps | iex
 ```
 
+### Windows (cmd.exe)
+```cmd
+curl -fsSL https://irosh.pages.dev/install.cmd -o install.cmd && install.cmd
+```
+
 ---
 
 ## Quick Start
