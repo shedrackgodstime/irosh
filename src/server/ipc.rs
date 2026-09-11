@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 #[cfg(unix)]
 use std::hash::{Hash, Hasher};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
@@ -238,10 +240,9 @@ impl IpcServer {
         {
             // Deep state directories fall back to a per-user directory under
             // the temp dir; make sure it exists and is private.
-            if path.starts_with(&std::env::temp_dir()) {
+            if path.starts_with(std::env::temp_dir()) {
                 if let Some(parent) = path.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
-                    use std::os::unix::fs::PermissionsExt;
                     let _ =
                         tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
                             .await;
@@ -425,14 +426,14 @@ where
 #[cfg(all(test, unix))]
 mod unix_tests {
     use super::socket_path;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     const LONG_DIR: &str = "/var/folders/3c/9yk3dkb1qgm34xb7828lhhvhrlznsnz/T/irosh-test-server-rate-limit-1700000000123456789longer-than-the-limit";
 
     #[test]
     fn socket_path_uses_state_dir_for_short_paths() {
         let p = socket_path(Path::new("/tmp/irosh"));
-        assert_eq!(p, Path::new("/tmp/irosh").join("irosh.sock").into());
+        assert_eq!(p, PathBuf::from("/tmp/irosh/irosh.sock"));
     }
 
     #[test]
