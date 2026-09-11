@@ -987,6 +987,7 @@ async fn test_blob_dir_upload() {
 }
 
 #[tokio::test]
+#[ignore = "requires reachability of the iroh derp relay (derp1.iroh.network); run with `-- --ignored`"]
 async fn test_wormhole_rendezvous() {
     let test = async {
         let _ = tracing_subscriber::fmt::try_init();

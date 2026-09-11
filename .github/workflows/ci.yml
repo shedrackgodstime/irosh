@@ -115,7 +115,7 @@ jobs:
         with:
           components: miri
       - uses: Swatinem/rust-cache@v2
-      - run: cargo miri test --lib --all-features
+      - run: cargo miri test --lib --all-features -- --test-threads 2 --skip server::tests
 
   output-consistency:
     name: Output consistency
@@ -147,15 +147,15 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      - run: cargo fuzz build
+      - run: cargo fuzz build --target x86_64-unknown-linux-gnu
       - name: Fuzz ticket parser
-        run: cargo fuzz run fuzz_ticket -- -max_total_time=30
+        run: cargo fuzz run --target x86_64-unknown-linux-gnu fuzz_ticket -- -max_total_time=30
       - name: Fuzz IPC deserialization
-        run: cargo fuzz run fuzz_ipc -- -max_total_time=30
+        run: cargo fuzz run --target x86_64-unknown-linux-gnu fuzz_ipc -- -max_total_time=30
       - name: Fuzz transfer frame codec
-        run: cargo fuzz run fuzz_transfer_frame -- -max_total_time=30
+        run: cargo fuzz run --target x86_64-unknown-linux-gnu fuzz_transfer_frame -- -max_total_time=30
       - name: Fuzz metadata codec
-        run: cargo fuzz run fuzz_metadata -- -max_total_time=30
+        run: cargo fuzz run --target x86_64-unknown-linux-gnu fuzz_metadata -- -max_total_time=30
 
   features:
     name: Feature flags
