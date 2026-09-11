@@ -12,9 +12,49 @@
 //! sends bare commands.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::collections::hash_map::DefaultHasher;
+#[cfg(unix)]
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
+
+/// Conservative Unix domain socket path limit.
+///
+/// macOS allows 104 bytes for `sun_path`, Linux 108. Staying under 100
+/// keeps clear of both when appending NULs or platform quirks.
+#[cfg(unix)]
+const MAX_SOCKET_PATH_LEN: usize = 100;
+
+/// Returns the IPC control socket path for a given state directory.
+///
+/// The normal location is `<state_dir>/irosh.sock`, but deep state
+/// directories (for example CI runners under `/var/folders/...` on macOS)
+/// can push it past `sun_path`. In that case a short, deterministic path is
+/// derived from a hash of the would-be path and placed in a private per-user
+/// directory under the temp dir, so the daemon and the CLI stay in agreement
+/// and the control socket is not exposed to other local users.
+#[must_use]
+pub(crate) fn socket_path(state_dir: &Path) -> PathBuf {
+    #[cfg(unix)]
+    {
+        let candidate = state_dir.join("irosh.sock");
+        if candidate.as_os_str().len() <= MAX_SOCKET_PATH_LEN {
+            return candidate;
+        }
+        let mut hasher = DefaultHasher::new();
+        candidate.hash(&mut hasher);
+        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        std::env::temp_dir()
+            .join(format!("irosh-ipc-{user}"))
+            .join(format!("irosh-{:016x}.sock", hasher.finish()))
+    }
+    #[cfg(windows)]
+    {
+        state_dir.join("ipc.port")
+    }
+}
 
 /// Commands that can be sent to the irosh daemon via IPC.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -179,14 +219,7 @@ impl IpcServer {
 
     /// Returns the platform-specific socket path.
     fn socket_path(&self) -> PathBuf {
-        #[cfg(unix)]
-        {
-            self.state_dir.join("irosh.sock")
-        }
-        #[cfg(windows)]
-        {
-            self.state_dir.join("ipc.port")
-        }
+        socket_path(&self.state_dir)
     }
 
     /// Starts the IPC listener loop.
@@ -203,6 +236,18 @@ impl IpcServer {
 
         #[cfg(unix)]
         {
+            // Deep state directories fall back to a per-user directory under
+            // the temp dir; make sure it exists and is private.
+            if path.starts_with(&std::env::temp_dir()) {
+                if let Some(parent) = path.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ =
+                        tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+                            .await;
+                }
+            }
+
             // Remove existing socket file if it exists.
             if path.exists() {
                 let _ = tokio::fs::remove_file(&path).await;
@@ -375,6 +420,38 @@ where
     stream.flush().await?;
 
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::socket_path;
+    use std::path::Path;
+
+    const LONG_DIR: &str = "/var/folders/3c/9yk3dkb1qgm34xb7828lhhvhrlznsnz/T/irosh-test-server-rate-limit-1700000000123456789longer-than-the-limit";
+
+    #[test]
+    fn socket_path_uses_state_dir_for_short_paths() {
+        let p = socket_path(Path::new("/tmp/irosh"));
+        assert_eq!(p, Path::new("/tmp/irosh").join("irosh.sock").into());
+    }
+
+    #[test]
+    fn socket_path_shrinks_deep_state_dirs() {
+        let p = socket_path(Path::new(LONG_DIR));
+        assert!(
+            p.as_os_str().len() <= 100,
+            "socket path too long: {}",
+            p.display()
+        );
+        assert!(p.to_string_lossy().contains("irosh-ipc-"));
+    }
+
+    #[test]
+    fn socket_path_is_deterministic_for_same_state_dir() {
+        let a = socket_path(Path::new(LONG_DIR));
+        let b = socket_path(Path::new(LONG_DIR));
+        assert_eq!(a, b);
+    }
 }
 
 #[cfg(all(test, windows))]

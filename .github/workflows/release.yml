@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-musl'
@@ -58,11 +58,11 @@ jobs:
 
       - name: Clippy
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo clippy --workspace --all-features -- -D warnings
+        run: cargo clippy --workspace --exclude irosh-fuzz --all-features -- -D warnings
 
       - name: Test
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude irosh-fuzz
 
       - name: Build
         shell: bash
@@ -73,7 +73,7 @@ jobs:
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
           fi
-          cargo build --release --locked --workspace --target ${{ matrix.target }}
+          cargo build --release --locked --workspace --exclude irosh-fuzz --target ${{ matrix.target }}
 
       - name: Package
         shell: bash

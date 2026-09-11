@@ -4,7 +4,7 @@
 //! irosh background service via a local socket.
 
 use crate::error::Result;
-use crate::server::ipc::{IpcCommand, IpcResponse};
+use crate::server::ipc::{IpcCommand, IpcResponse, socket_path};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -21,12 +21,9 @@ impl IpcClient {
     /// Creates a new IPC client targeting the daemon in the specified state directory.
     #[must_use]
     pub fn new(state_dir: &std::path::Path) -> Self {
-        #[cfg(unix)]
-        let socket_path = state_dir.join("irosh.sock");
-        #[cfg(windows)]
-        let socket_path = state_dir.join("ipc.port");
-
-        Self { socket_path }
+        Self {
+            socket_path: socket_path(state_dir),
+        }
     }
 
     /// Sends a command to the daemon and waits for a response.
