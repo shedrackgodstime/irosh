@@ -300,7 +300,7 @@ impl server::Handler for ServerHandler {
             channel,
             data.len()
         );
-        self.write_channel_data(channel, data);
+        self.write_channel_data(channel, data).await;
         Ok(())
     }
 

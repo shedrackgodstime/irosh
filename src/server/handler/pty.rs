@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex as StdMutex};
 
+use bytes::{Bytes, BytesMut};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use russh::{ChannelId, server};
 #[cfg(windows)]
@@ -36,7 +37,7 @@ struct RunningPty {
     /// Shared master PTY handle. Kept here for `resize` and, on Windows, to allow
     /// the reader task to close the ConPTY when the child exits.
     master: SharedMaster,
-    pty_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+    pty_tx: Option<tokio::sync::mpsc::Sender<Bytes>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     pid: Option<u32>,
     #[cfg(unix)]
@@ -257,50 +258,41 @@ impl ServerHandler {
             })?;
         let shutdown = CancellationToken::new();
 
-        let mut writer = pair
+        let writer = pair
             .master
             .take_writer()
             .map_err(|e| ServerError::ShellError {
                 details: format!("failed to take PTY writer: {e}"),
             })?;
 
-        let (pty_tx, mut pty_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let (pty_tx, mut pty_rx) = tokio::sync::mpsc::channel::<Bytes>(256);
         // Clone used only by the Windows reader thread to inject automatic
         // replies into the PTY input stream (e.g. the cursor-position report
         // that cmd.exe blocks on before it will run anything).
         #[cfg(not(unix))]
         let pty_tx_reader = pty_tx.clone();
-        let writer_done = shutdown.clone();
 
-        let channel_id_for_writer = channel;
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    () = writer_done.cancelled() => break,
-                    data = pty_rx.recv() => {
-                        let Some(data) = data else { break };
-                        let res = tokio::task::spawn_blocking(move || {
-                            writer.write_all(&data).map(|()| {
-                                let _ = writer.flush();
-                                writer
-                            })
-                        }).await;
-
-                        match res {
-                            Ok(Ok(w)) => {
-                                writer = w;
-                            }
-                            _ => break,
-                        }
+        // Dedicated writer thread: avoids a spawn_blocking + Vec allocation
+        // per frame. The thread blocks on the bounded channel and writes
+        // directly to the PTY handle. Channel close (all Senders dropped)
+        // signals shutdown.
+        let writer_channel_id = channel;
+        std::thread::Builder::new()
+            .name(format!("pty-writer-{channel:?}"))
+            .spawn(move || {
+                let mut writer = writer;
+                while let Some(data) = pty_rx.blocking_recv() {
+                    if writer.write_all(&data).is_err() {
+                        break;
                     }
+                    let _ = writer.flush();
                 }
-            }
-            debug!(
-                "PTY writer task finished for channel {:?}",
-                channel_id_for_writer
-            );
-        });
+                debug!(
+                    "PTY writer thread finished for channel {:?}",
+                    writer_channel_id
+                );
+            })
+            .expect("failed to spawn PTY writer thread");
 
         #[cfg(unix)]
         let maybe_fd = pair.master.as_raw_fd();
@@ -370,7 +362,12 @@ impl ServerHandler {
                     use tokio::io::unix::AsyncFd;
 
                     if let Ok(async_fd) = AsyncFd::new(RawFdWrapper(fd)) {
-                        let mut buf = [0u8; 8192];
+                        // Pooled read buffer: `split_to(n).freeze()` produces an
+                        // owned Bytes in O(1) without copying, and the backing
+                        // allocation stays alive via `read_buf` across iterations.
+                        // Capacity is 2× the read quantum so `resize` after a
+                        // split never reallocates.
+                        let mut read_buf = BytesMut::with_capacity(8192 * 2);
                         loop {
                             tokio::select! {
                                 biased;
@@ -381,7 +378,8 @@ impl ServerHandler {
                                 res = async_fd.readable() => {
                                     match res {
                                         Ok(mut guard) => {
-                                            match reader.read(&mut buf) {
+                                            read_buf.resize(8192, 0);
+                                            match reader.read(&mut read_buf[..]) {
                                                 Ok(0) => {
                                                     debug!("PTY reader received EOF for channel {:?}", channel);
                                                     break;
@@ -389,7 +387,8 @@ impl ServerHandler {
                                                 Ok(n) => {
                                                     guard.retain_ready();
                                                     debug!("PTY reader read {} bytes from channel {:?}", n, channel);
-                                                    if let Err(e) = handle_for_task.data(channel, buf[..n].to_vec()).await {
+                                                    let chunk = read_buf.split_to(n).freeze();
+                                                    if let Err(e) = handle_for_task.data(channel, chunk).await {
                                                         warn!("PTY reader failed to send data to channel {:?}: {:?}", channel, e);
                                                         break;
                                                     }
@@ -440,12 +439,20 @@ impl ServerHandler {
                 // Now we read and send in the same blocking thread using
                 // Handle::block_on, eliminating the intermediate queue entirely.
                 tokio::task::spawn_blocking(move || {
-                    let mut buf = [0u8; 8192];
-                    // Sliding window for detecting the cursor-position query
+                    // Pooled read buffer: `split_to(n).freeze()` produces an
+                    // owned Bytes in O(1) without copying, and the backing
+                    // allocation stays alive via `read_buf` across iterations.
+                    // Capacity is 2× the read quantum so `resize` after a
+                    // split never reallocates.
+                    let mut read_buf = BytesMut::with_capacity(8192 * 2);
+                    // DSR state machine for detecting the cursor-position query
                     // `ESC [ 6 n` that cmd.exe issues on startup and blocks on
-                    // until a terminal emulator replies.
+                    // until a terminal emulator replies. Tracks the last few
+                    // input bytes in O(1) state transitions instead of scanning
+                    // every output byte with a sliding Vec (which re-shifts the
+                    // window on each byte).
                     #[cfg(not(unix))]
-                    let mut dsr_pending: Vec<u8> = Vec::new();
+                    let mut dsr_state: u8 = 0;
                     loop {
                         if reader_done_task.is_cancelled() {
                             info!(
@@ -454,7 +461,8 @@ impl ServerHandler {
                             );
                             break;
                         }
-                        match reader.read(&mut buf) {
+                        read_buf.resize(8192, 0);
+                        match reader.read(&mut read_buf[..]) {
                             Ok(0) => {
                                 info!("PTY reader thread received EOF for channel {:?}", channel);
                                 break;
@@ -466,27 +474,35 @@ impl ServerHandler {
                                 );
                                 #[cfg(not(unix))]
                                 {
-                                    for &b in &buf[..n] {
-                                        dsr_pending.push(b);
-                                        if dsr_pending.len() > 8 {
-                                            dsr_pending.remove(0);
-                                        }
-                                        if dsr_pending.len() >= 4
-                                            && dsr_pending[dsr_pending.len() - 4..] == *b"\x1b[6n"
-                                        {
-                                            // Reply with a cursor position report.
-                                            // The row/col don't matter here; cmd
-                                            // only needs a response to unblock.
-                                            let _ = pty_tx_reader.send(b"\x1b[1;1R".to_vec());
-                                            dsr_pending.clear();
+                                    for &b in &read_buf[..n] {
+                                        // Any ESC restarts the match from its own
+                                        // position, so `ESC [ 6 n` is still detected
+                                        // when interleaved with other escape output.
+                                        if b == 0x1b {
+                                            dsr_state = 1;
+                                        } else {
+                                            match dsr_state {
+                                                1 if b == b'[' => dsr_state = 2,
+                                                2 if b == b'6' => dsr_state = 3,
+                                                3 if b == b'n' => {
+                                                    // Reply with a cursor position report.
+                                                    // The row/col don't matter here; cmd
+                                                    // only needs a response to unblock.
+                                                    let _ = pty_tx_reader
+                                                        .try_send(Bytes::from_static(b"\x1b[1;1R"));
+                                                    dsr_state = 0;
+                                                }
+                                                _ => dsr_state = 0,
+                                            }
                                         }
                                     }
                                 }
                                 // Drive the SSH send directly from this thread.
                                 // block_on is safe here because spawn_blocking
                                 // threads are not Tokio worker threads.
+                                let chunk = read_buf.split_to(n).freeze();
                                 if rt_handle
-                                    .block_on(handle_for_task.data(channel, buf[..n].to_vec()))
+                                    .block_on(handle_for_task.data(channel, chunk))
                                     .is_err()
                                 {
                                     break;
@@ -585,18 +601,23 @@ impl ServerHandler {
         Ok(())
     }
 
-    pub(super) fn write_channel_data(&self, channel: ChannelId, data: &[u8]) {
+    pub(super) async fn write_channel_data(&self, channel: ChannelId, data: &[u8]) {
         debug!(
             bytes = data.len(),
             ?channel,
             "writing SSH data bytes into PTY channel"
         );
-        let mut channels = self.lock_channels();
-        if let Some(state_entry) = channels.get_mut(&channel)
-            && let Some(process) = state_entry.process.as_mut()
-            && let Some(pty_tx) = process.pty_tx.as_ref()
-        {
-            let _ = pty_tx.send(data.to_vec());
+        // Clone the sender out of the lock so the std::sync guard is not held
+        // across the await (russh handler futures must be Send).
+        let pty_tx = {
+            let mut channels = self.lock_channels();
+            channels
+                .get_mut(&channel)
+                .and_then(|state_entry| state_entry.process.as_mut())
+                .and_then(|process| process.pty_tx.clone())
+        };
+        if let Some(pty_tx) = pty_tx {
+            let _ = pty_tx.send(Bytes::copy_from_slice(data)).await;
         }
     }
 
@@ -713,7 +734,7 @@ impl ServerHandler {
                                 "Injecting CTRL+C byte (\\x03) into PTY input stream for channel {:?}",
                                 channel
                             );
-                            let _ = pty_tx.send(vec![0x03]);
+                            let _ = pty_tx.try_send(Bytes::from_static(b"\x03"));
                         }
                     } else if matches!(signal, russh::Sig::QUIT | russh::Sig::ABRT) {
                         if let Some(pty_tx) = process.pty_tx.as_ref() {
@@ -721,7 +742,7 @@ impl ServerHandler {
                                 "Injecting CTRL+BREAK byte (\\x1c) into PTY input stream for channel {:?}",
                                 channel
                             );
-                            let _ = pty_tx.send(vec![0x1c]);
+                            let _ = pty_tx.try_send(Bytes::from_static(b"\x1c"));
                         }
                     }
                 }
