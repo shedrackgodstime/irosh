@@ -90,7 +90,7 @@ targets = [
 
 [profile.release]
 opt-level = "z"
-lto = true
+lto = "thin"
 codegen-units = 1
 strip = true
 
@@ -104,7 +104,3 @@ opt-level = 0
 debug = false
 panic = "abort"
 strip = true
-
-[profile.release.package.irosh-fuzz]
-lto = false
-codegen-units = 16
