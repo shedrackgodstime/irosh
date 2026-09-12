@@ -309,7 +309,20 @@ impl IpcServer {
             // Write a per-instance auth token for the loopback listener.
             let token: [u8; 32] = rand::random();
             let token_hex = hex::encode(token);
-            let _ = tokio::fs::write(path.with_file_name("ipc.token"), &token_hex).await;
+            let token_path = path.with_file_name("ipc.token");
+            match tokio::task::spawn_blocking({
+                let token_path = token_path.clone();
+                let token_hex = token_hex.clone();
+                move || {
+                    crate::storage::utils::atomic_write_secure(&token_path, token_hex.as_bytes())
+                }
+            })
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!("failed to write IPC token file securely: {e}"),
+                Err(join_err) => warn!("IPC token write task failed: {join_err}"),
+            }
 
             info!("IPC listener active on {}", local_addr);
 

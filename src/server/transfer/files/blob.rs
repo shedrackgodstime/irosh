@@ -4,14 +4,39 @@ use std::str::FromStr;
 use tracing::{debug, info};
 
 use crate::error::{Result, ServerError};
-use crate::server::transfer::state::{ConnectionShellState, ShellContext};
+use crate::server::transfer::state::{ConnectionShellState, ShellContext, sanitize_relative_path};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
-    BlobGetReady, BlobGetRequest, BlobPutRequest, TransferComplete, TransferFrame, TransferReady,
-    read_next_frame, write_blob_get_ready, write_put_complete, write_put_ready,
+    BlobGetReady, BlobGetRequest, BlobPutRequest, TransferComplete, TransferFrame,
+    TransferFrameBorrowed, TransferReady, read_next_frame_into, write_blob_get_ready,
+    write_put_complete, write_put_ready,
 };
 use futures_util::StreamExt;
 use tokio::io::AsyncReadExt;
+
+/// Upper bound (in bytes) for accumulated in-memory blob data on the server.
+///
+/// A malicious peer must not be able to exhaust server RAM by streaming an
+/// unbounded blob: raw blobs, hash-seq inner blobs and declared length
+/// prefixes are all capped at this size.
+const MAX_IN_MEMORY_TRANSFER_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Rejects a transfer that would accumulate more than [`MAX_IN_MEMORY_TRANSFER_BYTES`]
+/// in server memory.
+fn ensure_within_cap(received: u64) -> Result<()> {
+    if received > MAX_IN_MEMORY_TRANSFER_BYTES {
+        return Err(ServerError::TransferFailed {
+            failure: crate::transport::transfer::TransferFailure::new(
+                crate::transport::transfer::TransferFailureCode::Internal,
+                format!(
+                    "transfer exceeds the in-memory limit of {MAX_IN_MEMORY_TRANSFER_BYTES} bytes; streaming file transfers are not supported yet"
+                ),
+            ),
+        }
+        .into());
+    }
+    Ok(())
+}
 
 #[must_use]
 pub async fn handle_blob_put_request(
@@ -62,6 +87,7 @@ pub async fn handle_blob_put_request(
     // For Raw format: all chunks form one blob → add_slice → verify hash → export.
     // For HashSeq format: length-prefixed blobs → each added to store individually.
     let mut received = 0u64;
+    let mut frame_buf = Vec::new();
 
     if format == BlobFormat::HashSeq {
         // Parse length-prefixed blobs from the data stream
@@ -70,7 +96,7 @@ pub async fn handle_blob_put_request(
         let mut blob_count = 0u64;
 
         loop {
-            match read_next_frame(stream)
+            match read_next_frame_into(stream, &mut frame_buf)
                 .await
                 .map_err(|e| ServerError::TransferFailed {
                     failure: crate::transport::transfer::TransferFailure::new(
@@ -78,7 +104,7 @@ pub async fn handle_blob_put_request(
                         format!("failed to read frame: {e}"),
                     ),
                 })? {
-                TransferFrame::PutChunk(data) => {
+                TransferFrameBorrowed::PutChunk(data) => {
                     if expected_remaining == 0 {
                         // No current blob — this chunk starts a new length prefix
                         // The first 8 bytes are the big-endian length of the next blob
@@ -102,6 +128,18 @@ pub async fn handle_blob_put_request(
                             len_bytes[6],
                             len_bytes[7],
                         ]);
+                        if expected_remaining > MAX_IN_MEMORY_TRANSFER_BYTES {
+                            return Err(ServerError::TransferFailed {
+                                failure: crate::transport::transfer::TransferFailure::new(
+                                    crate::transport::transfer::TransferFailureCode::Internal,
+                                    format!(
+                                        "declared blob length {expected_remaining} exceeds the in-memory limit of {MAX_IN_MEMORY_TRANSFER_BYTES} bytes"
+                                    ),
+                                ),
+                            }
+                            .into());
+                        }
+                        ensure_within_cap(received + expected_remaining)?;
                         if let Ok(cap) = usize::try_from(expected_remaining)
                             && current_blob.try_reserve(cap).is_err()
                         {
@@ -129,7 +167,7 @@ pub async fn handle_blob_put_request(
                         };
                         expected_remaining = remaining;
                     } else {
-                        current_blob.extend_from_slice(&data);
+                        current_blob.extend_from_slice(data);
                         let Some(remaining) = expected_remaining.checked_sub(data.len() as u64)
                         else {
                             return Err(ServerError::TransferFailed {
@@ -142,7 +180,15 @@ pub async fn handle_blob_put_request(
                         };
                         expected_remaining = remaining;
                     }
-                    received += data.len() as u64;
+                    received = received.checked_add(data.len() as u64).ok_or_else(|| {
+                        ServerError::TransferFailed {
+                            failure: crate::transport::transfer::TransferFailure::new(
+                                crate::transport::transfer::TransferFailureCode::Internal,
+                                "transfer size overflow".to_string(),
+                            ),
+                        }
+                    })?;
+                    ensure_within_cap(received)?;
 
                     if expected_remaining == 0 && !current_blob.is_empty() {
                         // Complete blob received — add to store
@@ -166,11 +212,20 @@ pub async fn handle_blob_put_request(
                         blob_count += 1;
                     }
                 }
-                TransferFrame::PutComplete(_) => break,
-                TransferFrame::Error(failure) => {
+                TransferFrameBorrowed::Owned(TransferFrame::PutComplete(_)) => break,
+                TransferFrameBorrowed::Owned(TransferFrame::Error(failure)) => {
                     return Err(ServerError::TransferFailed { failure }.into());
                 }
-                other => {
+                TransferFrameBorrowed::GetChunk(_) => {
+                    return Err(ServerError::TransferFailed {
+                        failure: crate::transport::transfer::TransferFailure::new(
+                            crate::transport::transfer::TransferFailureCode::UnexpectedFrame,
+                            "unexpected chunk frame during hashseq blob data".to_string(),
+                        ),
+                    }
+                    .into());
+                }
+                TransferFrameBorrowed::Owned(other) => {
                     return Err(ServerError::TransferFailed {
                         failure: crate::transport::transfer::TransferFailure::new(
                             crate::transport::transfer::TransferFailureCode::UnexpectedFrame,
@@ -222,7 +277,7 @@ pub async fn handle_blob_put_request(
         // Raw format: all chunks form one blob
         let mut all_data = Vec::new();
         loop {
-            match read_next_frame(stream)
+            match read_next_frame_into(stream, &mut frame_buf)
                 .await
                 .map_err(|e| ServerError::TransferFailed {
                     failure: crate::transport::transfer::TransferFailure::new(
@@ -230,15 +285,32 @@ pub async fn handle_blob_put_request(
                         format!("failed to read frame: {e}"),
                     ),
                 })? {
-                TransferFrame::PutChunk(data) => {
-                    all_data.extend_from_slice(&data);
-                    received += data.len() as u64;
+                TransferFrameBorrowed::PutChunk(data) => {
+                    received = received.checked_add(data.len() as u64).ok_or_else(|| {
+                        ServerError::TransferFailed {
+                            failure: crate::transport::transfer::TransferFailure::new(
+                                crate::transport::transfer::TransferFailureCode::Internal,
+                                "transfer size overflow".to_string(),
+                            ),
+                        }
+                    })?;
+                    ensure_within_cap(received)?;
+                    all_data.extend_from_slice(data);
                 }
-                TransferFrame::PutComplete(_) => break,
-                TransferFrame::Error(failure) => {
+                TransferFrameBorrowed::Owned(TransferFrame::PutComplete(_)) => break,
+                TransferFrameBorrowed::Owned(TransferFrame::Error(failure)) => {
                     return Err(ServerError::TransferFailed { failure }.into());
                 }
-                other => {
+                TransferFrameBorrowed::GetChunk(_) => {
+                    return Err(ServerError::TransferFailed {
+                        failure: crate::transport::transfer::TransferFailure::new(
+                            crate::transport::transfer::TransferFailureCode::UnexpectedFrame,
+                            "unexpected chunk frame during raw blob data".to_string(),
+                        ),
+                    }
+                    .into());
+                }
+                TransferFrameBorrowed::Owned(other) => {
                     return Err(ServerError::TransferFailed {
                         failure: crate::transport::transfer::TransferFailure::new(
                             crate::transport::transfer::TransferFailureCode::UnexpectedFrame,
@@ -449,6 +521,29 @@ async fn add_directory_to_store(
 
     for relative in entries {
         let file_path = dir_path.join(&relative);
+        let meta =
+            tokio::fs::metadata(&file_path)
+                .await
+                .map_err(|e| ServerError::TransferFailed {
+                    failure: crate::transport::transfer::TransferFailure::new(
+                        crate::transport::transfer::TransferFailureCode::Internal,
+                        format!("failed to stat {}: {e}", file_path.display()),
+                    ),
+                })?;
+        if meta.len() > MAX_IN_MEMORY_TRANSFER_BYTES {
+            return Err(ServerError::TransferFailed {
+                failure: crate::transport::transfer::TransferFailure::new(
+                    crate::transport::transfer::TransferFailureCode::Internal,
+                    format!(
+                        "file {} ({} bytes) exceeds the in-memory transfer limit of {} bytes",
+                        file_path.display(),
+                        meta.len(),
+                        MAX_IN_MEMORY_TRANSFER_BYTES
+                    ),
+                ),
+            }
+            .into());
+        }
         let data = tokio::fs::read(&file_path)
             .await
             .map_err(|e| ServerError::TransferFailed {
@@ -552,7 +647,17 @@ async fn export_collection(
         })?;
 
     for (name, item_hash) in collection.iter() {
-        let item_path = target_path.join(name);
+        // Collection entry names are supplied by a peer; a crafted collection
+        // must not be able to escape the target directory via `..` or absolute
+        // entry paths.
+        let safe_name =
+            sanitize_relative_path(name).map_err(|reason| ServerError::TransferFailed {
+                failure: crate::transport::transfer::TransferFailure::new(
+                    crate::transport::transfer::TransferFailureCode::PathInvalid,
+                    format!("unsafe collection entry '{name}': {reason}"),
+                ),
+            })?;
+        let item_path = target_path.join(safe_name);
         if let Some(parent) = item_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }

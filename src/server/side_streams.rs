@@ -12,6 +12,7 @@ pub(crate) fn spawn_side_stream_listener(
     connection: iroh::endpoint::Connection,
     shell_state: ConnectionShellState,
     metrics: Metrics,
+    auth_gate: tokio::sync::watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
         tracing::debug!("Side-stream listener started");
@@ -28,8 +29,9 @@ pub(crate) fn spawn_side_stream_listener(
                             let shell_state = shell_state.clone();
                             let metrics = metrics.clone();
                             let conn = connection.clone();
+                            let gate = auth_gate.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = handle_side_stream_dispatch(conn, send, recv, shell_state, metrics).await {
+                                if let Err(err) = handle_side_stream_dispatch(conn, send, recv, shell_state, metrics, gate).await {
                                     warn!("Side-stream handler failed: {}", err);
                                 }
                             });
@@ -52,10 +54,26 @@ async fn handle_side_stream_dispatch(
     mut recv: iroh::endpoint::RecvStream,
     shell_state: ConnectionShellState,
     metrics: Metrics,
+    mut auth_gate: tokio::sync::watch::Receiver<bool>,
 ) -> crate::error::Result<()> {
     let mut magic = [0u8; 4];
     // Use tokio's AsyncReadExt explicitly to avoid conflict with Iroh's native read_exact
     AsyncReadExt::read_exact(&mut recv, &mut magic).await?;
+
+    // Never dispatch side streams before SSH authentication succeeds.
+    // An unauthenticated peer must not be able to read/write files or
+    // probe metadata through transfer side channels.
+    if !*auth_gate.borrow() {
+        tokio::select! {
+            _ = connection.closed() => {
+                return Err(IroshError::Io(std::io::Error::other(
+                    "side stream closed before authentication completed",
+                )));
+            }
+            // Fails with a channel-closed error after the session ends without auth.
+            _ = auth_gate.wait_for(|authed| *authed) => {}
+        }
+    }
 
     if magic == crate::transport::metadata::codec::MAGIC {
         let mut stream = IrohDuplex::with_prefix(send, recv, magic.to_vec());

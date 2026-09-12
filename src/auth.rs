@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 
 use argon2::password_hash::Error as PasswordError;
 use argon2::{Argon2, PasswordHasher, PasswordVerifier};
@@ -30,6 +31,12 @@ use tracing::{info, warn};
 use secrecy::SecretString;
 
 use crate::error::AuthError;
+
+/// Decay window for the authentication rate limiter.
+///
+/// After this timeout the failure counter resets even if no successful
+/// authentication occurred, preventing a permanent remote lockout.
+const LOCKOUT_WINDOW: Duration = Duration::from_secs(60);
 
 use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
 use crate::error::Result;
@@ -407,6 +414,11 @@ pub struct PairingMonitor {
 /// 2. Permanent Node Password challenges unknown keys.
 /// 3. Active Wormhole Temp Password (Invite Pattern) provides a one-time override.
 /// 4. Empty Vault + No Passwords allows TOFU.
+///
+/// Failed attempts are rate limited with a decaying window ([`LOCKOUT_WINDOW`]):
+/// the counter is reset on any successful authentication and expires on its own
+/// after the window, so a single malicious client cannot permanently brick auth
+/// for the whole node.
 #[derive(Debug, Clone)]
 pub struct UnifiedAuthenticator {
     state: StateConfig,
@@ -415,7 +427,12 @@ pub struct UnifiedAuthenticator {
     temp_password_hash: Option<String>,
     success_flag: Arc<std::sync::atomic::AtomicBool>,
     failed_attempts: Arc<AtomicU32>,
+    /// Timestamp of the most recent failed authentication attempt.
+    last_failure: Arc<StdMutex<Option<Instant>>>,
     /// Tracks the key currently attempting password auth.
+    /// This is a single shared slot bridged across the SSH pubkey→password
+    /// handshake within a connection; it is cleared after use (success or
+    /// failure) to prevent a stale key from being authorized later.
     cached_key: Arc<StdMutex<Option<PublicKey>>>,
     /// Optional notification channel for successful pairing.
     success_tx: Option<tokio::sync::mpsc::Sender<()>>,
@@ -439,6 +456,7 @@ impl UnifiedAuthenticator {
             temp_password_hash,
             success_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             failed_attempts: Arc::new(AtomicU32::new(0)),
+            last_failure: Arc::new(StdMutex::new(None)),
             cached_key: Arc::new(StdMutex::new(None)),
             success_tx: None,
             failure_tx: None,
@@ -462,6 +480,7 @@ impl UnifiedAuthenticator {
             temp_password_hash,
             success_flag: monitor.success_flag,
             failed_attempts: monitor.failed_attempts,
+            last_failure: Arc::new(StdMutex::new(None)),
             cached_key: Arc::new(StdMutex::new(None)),
             success_tx: monitor.success_tx,
             failure_tx: monitor.failure_tx,
@@ -480,9 +499,40 @@ impl UnifiedAuthenticator {
         self.failed_attempts.load(Ordering::Relaxed)
     }
 
+    /// Whether attempts are currently rate limited.
+    ///
+    /// Once [`LOCKOUT_WINDOW`] has passed since the last failure the counter
+    /// decays and authentication is allowed again, so a remote peer cannot
+    /// permanently lock out the node.
+    fn is_locked_out(&self) -> bool {
+        if self.failed_attempts.load(Ordering::Relaxed) < 3 {
+            return false;
+        }
+        let last = match self.last_failure.lock() {
+            Ok(guard) => guard.as_ref().copied(),
+            Err(poisoned) => poisoned.into_inner().as_ref().copied(),
+        };
+        let Some(last) = last else {
+            return true;
+        };
+        if last.elapsed() > LOCKOUT_WINDOW {
+            self.failed_attempts.store(0, Ordering::Relaxed);
+            return false;
+        }
+        true
+    }
+
+    /// Resets the failure counter (used on successful authentication).
+    fn reset_failures(&self) {
+        self.failed_attempts.store(0, Ordering::Relaxed);
+    }
+
     /// Records a failed authentication attempt and notifies the wormhole if the
-    /// rate limit (3 failures) has been reached.
+    /// rate limit (3 failures within [`LOCKOUT_WINDOW`]) has been reached.
     fn record_failure(&self) {
+        if let Ok(mut last) = self.last_failure.lock() {
+            *last = Some(Instant::now());
+        }
         let fails = self.failed_attempts.fetch_add(1, Ordering::Relaxed) + 1;
         if fails >= 3 {
             warn!("Authentication rate limit reached (3 failures). Burning wormhole.");
@@ -588,7 +638,7 @@ impl Authenticator for UnifiedAuthenticator {
         let this = self.clone();
         let key = key.clone();
         tokio::task::spawn_blocking(move || {
-            if this.failed_attempts.load(Ordering::Relaxed) >= 3 {
+            if this.is_locked_out() {
                 warn!("Authentication rejected: Rate limit exceeded.");
                 return Ok(false);
             }
@@ -604,6 +654,7 @@ impl Authenticator for UnifiedAuthenticator {
                 // 1. Established trust (Vault) always wins.
                 if authorized.contains(&key) {
                     info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
+                    this.reset_failures();
                     return Ok(true);
                 }
             }
@@ -614,6 +665,7 @@ impl Authenticator for UnifiedAuthenticator {
 
             if authorized.contains(&key) {
                 info!(%fingerprint, "Client matched key after vault refresh. Access granted.");
+                this.reset_failures();
                 return Ok(true);
             }
 
@@ -646,6 +698,7 @@ impl Authenticator for UnifiedAuthenticator {
                     crate::storage::trust::write_authorized_client(&this.state, &fingerprint, &key)?;
                 authorized.push(key.clone());
                 this.success_flag.store(true, Ordering::Relaxed);
+                this.reset_failures();
                 this.notify_success();
                 return Ok(true);
             }
@@ -663,7 +716,7 @@ impl Authenticator for UnifiedAuthenticator {
         let this = self.clone();
         let password = password.to_string();
         tokio::task::spawn_blocking(move || {
-            if this.failed_attempts.load(Ordering::Relaxed) >= 3 {
+            if this.is_locked_out() {
                 warn!("Authentication rejected: Rate limit exceeded.");
                 return Ok(false);
             }
@@ -672,13 +725,13 @@ impl Authenticator for UnifiedAuthenticator {
                 // Password accepted!
                 if is_wormhole {
                     // Wormhole code used: we must authorize the key that was cached during the publickey step.
-                    if let Ok(cache) = this.cached_key.lock() {
-                        if let Some(key) = &*cache {
+                    if let Ok(mut cache) = this.cached_key.lock() {
+                        if let Some(key) = cache.take() {
                             let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
                             let mut authorized = this.lock_keys();
-                            if !authorized.contains(key) {
+                            if !authorized.contains(&key) {
                                 info!(%fingerprint, "Wormhole code accepted: Adding new client to vault.");
-                                let _event = write_authorized_client(&this.state, &fingerprint, key)?;
+                                let _event = write_authorized_client(&this.state, &fingerprint, &key)?;
                                 authorized.push(key.clone());
                                 this.success_flag.store(true, Ordering::Relaxed);
                                 this.notify_success();
@@ -687,8 +740,19 @@ impl Authenticator for UnifiedAuthenticator {
                     }
                 } else {
                     info!("Node password accepted: Access granted for this session only.");
+                    // Node-password auth does not authorize any key; drop the
+                    // cached key so it cannot be consumed later.
+                    if let Ok(mut cache) = this.cached_key.lock() {
+                        *cache = None;
+                    }
                 }
+                this.reset_failures();
                 return Ok(true);
+            }
+            // Wrong or unknown password: drop the cached key so it cannot be
+            // authorized by a later, unrelated password attempt.
+            if let Ok(mut cache) = this.cached_key.lock() {
+                *cache = None;
             }
 
             this.record_failure();

@@ -29,6 +29,9 @@ pub struct ServerHandler {
     authenticator: Arc<dyn Authenticator>,
     shell_state: ConnectionShellState,
     metrics: Metrics,
+    /// Set once SSH authentication succeeds. Side streams (file transfer,
+    /// metadata) are gated on this so unauthenticated peers cannot drive them.
+    auth_gate: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 impl ServerHandler {
@@ -41,6 +44,7 @@ impl ServerHandler {
             authenticator,
             shell_state,
             metrics: Metrics::new(),
+            auth_gate: None,
         }
     }
 
@@ -57,6 +61,22 @@ impl ServerHandler {
             authenticator,
             shell_state,
             metrics,
+            auth_gate: None,
+        }
+    }
+
+    /// Associates this handler with an auth gate that is opened once the SSH
+    /// authentication succeeds. Used to gate side-stream dispatch.
+    #[must_use]
+    pub(crate) fn with_auth_gate(mut self, gate: tokio::sync::watch::Sender<bool>) -> Self {
+        self.auth_gate = Some(gate);
+        self
+    }
+
+    /// Opens the auth gate so side streams may be dispatched.
+    fn open_auth_gate(&self) {
+        if let Some(gate) = &self.auth_gate {
+            let _ = gate.send(true);
         }
     }
 
@@ -99,6 +119,7 @@ impl server::Handler for ServerHandler {
         debug!("auth_publickey request for user '{}'", user);
         let accepted = self.authenticator.check_public_key(user, key).await?;
         if accepted {
+            self.open_auth_gate();
             Ok(server::Auth::Accept)
         } else {
             self.metrics.record_error();
@@ -118,6 +139,7 @@ impl server::Handler for ServerHandler {
         debug!("auth_password request for user '{}'", user);
         let accepted = self.authenticator.check_password(user, password).await?;
         if accepted {
+            self.open_auth_gate();
             Ok(server::Auth::Accept)
         } else {
             self.metrics.record_error();

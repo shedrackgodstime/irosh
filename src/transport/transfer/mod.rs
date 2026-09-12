@@ -10,6 +10,7 @@ mod types;
 
 #[cfg(test)]
 pub(crate) use codec::{KIND_GET_CHUNK, KIND_PUT_REQUEST, MAGIC, VERSION};
+pub(crate) use codec::{TransferFrameBorrowed, read_next_frame_into};
 pub use codec::{
     read_exists_request, read_exists_response, read_get_chunk, read_get_complete, read_get_ready,
     read_get_request, read_next_frame, read_put_chunk, read_put_complete, read_put_ready,

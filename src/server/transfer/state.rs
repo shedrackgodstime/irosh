@@ -389,6 +389,45 @@ impl ShellContext {
     }
 }
 
+/// Sanitizes a client-supplied path component that is meant to be a *relative*
+/// entry inside a resolved target directory (recursive uploads and collection
+/// exports).
+///
+/// Returns the cleaned path or an error message describing the rejection.
+/// Rejects:
+/// - empty paths
+/// - absolute paths (both POSIX `/...` and Windows drive-letter / UNC forms)
+/// - any `..` component regardless of separator, preventing traversal
+pub(crate) fn sanitize_relative_path(raw: &str) -> std::result::Result<String, String> {
+    if raw.is_empty() {
+        return Err("entry path is empty".to_string());
+    }
+
+    if Path::new(raw).is_absolute() {
+        return Err("absolute entry paths are not allowed".to_string());
+    }
+
+    // Defense-in-depth for mixed-platform clients: explicitly reject the
+    // POSIX absolute prefix and Windows drive-letter / UNC forms even when
+    // running on a platform where `Path::is_absolute` would not flag them.
+    if raw.starts_with('/') || raw.starts_with('\\') {
+        return Err("absolute entry paths are not allowed".to_string());
+    }
+    let bytes = raw.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return Err("drive-letter entry paths are not allowed".to_string());
+    }
+    if bytes.len() >= 3 && bytes[0] == b'\\' && bytes[1] == b'\\' {
+        return Err("UNC entry paths are not allowed".to_string());
+    }
+
+    if raw.split(['/', '\\']).any(|component| component == "..") {
+        return Err("path traversal detected in entry path".to_string());
+    }
+
+    Ok(raw.to_string())
+}
+
 #[cfg(test)]
 mod send_sync_tests {
     use super::*;

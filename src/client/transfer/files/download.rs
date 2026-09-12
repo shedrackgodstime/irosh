@@ -5,7 +5,8 @@ use tracing::warn;
 use crate::client::{Session, TransferProgress};
 use crate::error::{ClientError, Result, TransportError};
 use crate::transport::transfer::{
-    BlobGetRequest, TransferFrame, read_next_frame, write_blob_get_request, write_get_request,
+    BlobGetRequest, TransferFrame, TransferFrameBorrowed, read_next_frame, read_next_frame_into,
+    write_blob_get_request, write_get_request,
 };
 use futures_util::StreamExt;
 use iroh_blobs::{BlobFormat, Hash};
@@ -304,14 +305,15 @@ impl Session {
             })?;
 
         let mut received = 0u64;
+        let mut frame_buf = Vec::new();
         loop {
-            match read_next_frame(&mut stream)
+            match read_next_frame_into(&mut stream, &mut frame_buf)
                 .await
                 .map_err(TransportError::from)?
             {
-                TransferFrame::GetChunk(chunk) => {
+                TransferFrameBorrowed::GetChunk(chunk) => {
                     received += chunk.len() as u64;
-                    dest.write_all(&chunk)
+                    dest.write_all(chunk)
                         .await
                         .map_err(|source| ClientError::FileIo {
                             operation: "write to temp download file",
@@ -320,7 +322,7 @@ impl Session {
                         })?;
                     on_progress(TransferProgress::new(received, expected_size));
                 }
-                TransferFrame::GetComplete(complete) => {
+                TransferFrameBorrowed::Owned(TransferFrame::GetComplete(complete)) => {
                     if complete.size != expected_size || received != expected_size {
                         let _ = tokio::fs::remove_file(&temp_path).await;
                         return Err(ClientError::DownloadFailed {
@@ -333,11 +335,18 @@ impl Session {
                     }
                     break;
                 }
-                TransferFrame::Error(failure) => {
+                TransferFrameBorrowed::Owned(TransferFrame::Error(failure)) => {
                     let _ = tokio::fs::remove_file(&temp_path).await;
                     return Err(ClientError::TransferRejected { failure }.into());
                 }
-                other => {
+                TransferFrameBorrowed::PutChunk(_) => {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    return Err(ClientError::DownloadFailed {
+                        details: "unexpected upload chunk during download".to_string(),
+                    }
+                    .into());
+                }
+                TransferFrameBorrowed::Owned(other) => {
                     let _ = tokio::fs::remove_file(&temp_path).await;
                     return Err(ClientError::DownloadFailed {
                         details: format!(
@@ -425,12 +434,13 @@ impl Session {
         }
 
         let mut total_received = 0u64;
+        let mut frame_buf = Vec::new();
         loop {
-            match read_next_frame(&mut stream)
+            match read_next_frame_into(&mut stream, &mut frame_buf)
                 .await
                 .map_err(TransportError::from)?
             {
-                TransferFrame::NewEntry(header) => {
+                TransferFrameBorrowed::Owned(TransferFrame::NewEntry(header)) => {
                     let sanitized_rel =
                         crate::transport::transfer::sanitize_remote_path(&header.path)?;
                     let local_path = local_root.join(sanitized_rel);
@@ -457,12 +467,12 @@ impl Session {
                         })?;
 
                         loop {
-                            match read_next_frame(&mut stream)
+                            match read_next_frame_into(&mut stream, &mut frame_buf)
                                 .await
                                 .map_err(TransportError::from)?
                             {
-                                TransferFrame::GetChunk(chunk) => {
-                                    dest.write_all(&chunk).await.map_err(|e| {
+                                TransferFrameBorrowed::GetChunk(chunk) => {
+                                    dest.write_all(chunk).await.map_err(|e| {
                                         ClientError::FileIo {
                                             operation: "write to temp download file",
                                             path: temp_path.clone(),
@@ -472,8 +482,19 @@ impl Session {
                                     total_received += chunk.len() as u64;
                                     on_progress(TransferProgress::new(total_received, 0));
                                 }
-                                TransferFrame::EntryComplete(_) => break,
-                                other => {
+                                TransferFrameBorrowed::Owned(TransferFrame::EntryComplete(_)) => {
+                                    break;
+                                }
+                                TransferFrameBorrowed::PutChunk(_) => {
+                                    let _ = tokio::fs::remove_file(&temp_path).await;
+                                    return Err(ClientError::DownloadFailed {
+                                        details:
+                                            "unexpected upload chunk during recursive download"
+                                                .to_string(),
+                                    }
+                                    .into());
+                                }
+                                TransferFrameBorrowed::Owned(other) => {
                                     let _ = tokio::fs::remove_file(&temp_path).await;
                                     return Err(ClientError::DownloadFailed {
                                         details: format!(
@@ -501,14 +522,27 @@ impl Session {
                         }
                     }
                 }
-                TransferFrame::GetComplete(complete) => {
+                TransferFrameBorrowed::Owned(TransferFrame::GetComplete(complete)) => {
                     let _ = complete;
                     return Ok(());
                 }
-                TransferFrame::Error(failure) => {
+                TransferFrameBorrowed::Owned(TransferFrame::Error(failure)) => {
                     return Err(ClientError::TransferRejected { failure }.into());
                 }
-                other => {
+                TransferFrameBorrowed::PutChunk(_) => {
+                    return Err(ClientError::DownloadFailed {
+                        details: "unexpected upload chunk during recursive download".to_string(),
+                    }
+                    .into());
+                }
+                TransferFrameBorrowed::GetChunk(_) => {
+                    return Err(ClientError::DownloadFailed {
+                        details: "unexpected chunk outside entry stream during recursive download"
+                            .to_string(),
+                    }
+                    .into());
+                }
+                TransferFrameBorrowed::Owned(other) => {
                     return Err(ClientError::DownloadFailed {
                         details: format!("unexpected frame during recursive download: {other:?}"),
                     }

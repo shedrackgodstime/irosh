@@ -458,7 +458,13 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
         let shell_state =
             ConnectionShellState::new(self.state.root().to_path_buf(), self.blobs.clone());
         let metrics = self.metrics.clone();
-        spawn_side_stream_listener(connection, shell_state.clone(), metrics.clone());
+        let (auth_gate_tx, auth_gate_rx) = tokio::sync::watch::channel(false);
+        spawn_side_stream_listener(
+            connection,
+            shell_state.clone(),
+            metrics.clone(),
+            auth_gate_rx,
+        );
 
         let stream = IrohDuplex::with_stats(send, recv, bytes_sent, bytes_received);
         let mut session_authenticator = self.authenticator.clone();
@@ -518,7 +524,8 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
             }
         }
 
-        let handler = ServerHandler::with_metrics(session_authenticator, shell_state, metrics);
+        let handler = ServerHandler::with_metrics(session_authenticator, shell_state, metrics)
+            .with_auth_gate(auth_gate_tx);
         let config = session_config;
 
         tracing::debug!("Starting SSH session task");
