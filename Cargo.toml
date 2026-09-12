@@ -104,3 +104,7 @@ opt-level = 0
 debug = false
 panic = "abort"
 strip = true
+
+[profile.release.package.irosh-fuzz]
+lto = false
+codegen-units = 16
