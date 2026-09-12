@@ -109,14 +109,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: nightly
-      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
       - uses: Swatinem/rust-cache@v2
-      - run: cargo miri test --lib --all-features -- --test-threads 2 --skip server::tests
+      - name: MIRI unix socket path logic
+        run: cargo miri test --lib --all-features server::ipc::unix_tests
+      - name: MIRI error formatting
+        run: cargo miri test --lib --all-features error::tests
+      - name: MIRI stream codec
+        run: cargo miri test --lib --all-features transport::stream::tests
 
   output-consistency:
     name: Output consistency
@@ -141,6 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: nightly
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
@@ -148,7 +153,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      - run: cargo fuzz build --target x86_64-unknown-linux-gnu
       - name: Fuzz ticket parser
         run: cargo fuzz run --target x86_64-unknown-linux-gnu fuzz_ticket -- -max_total_time=30
       - name: Fuzz IPC deserialization
