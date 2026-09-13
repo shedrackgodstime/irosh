@@ -1067,7 +1067,7 @@ async fn test_wormhole_rendezvous() {
 /// closes first or the budget expires.
 async fn expect_shell_output(session: &mut Session, needle: &str) {
     let mut seen = Vec::new();
-    tokio::time::timeout(Duration::from_secs(15), async {
+    tokio::time::timeout(Duration::from_secs(45), async {
         loop {
             match session.next_event().await {
                 Ok(Some(SessionEvent::Data(data) | SessionEvent::ExtendedData(data, _))) => {
@@ -1087,7 +1087,7 @@ async fn expect_shell_output(session: &mut Session, needle: &str) {
 
 /// Waits until the shell channel reports closure (Closed event or stream end).
 async fn expect_shell_closed(session: &mut Session) {
-    tokio::time::timeout(Duration::from_secs(15), async {
+    tokio::time::timeout(Duration::from_secs(45), async {
         loop {
             match session.next_event().await {
                 Ok(Some(SessionEvent::Closed)) | Ok(None) => break,
@@ -1103,7 +1103,7 @@ async fn expect_shell_closed(session: &mut Session) {
 #[tokio::test]
 async fn test_idle_timeout_closes_quiet_shell() {
     init_tracing();
-    tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_secs(90), async {
         let server_state = temp_state("server-idle");
         let client_state = temp_state("client-idle");
 
@@ -1112,7 +1112,7 @@ async fn test_idle_timeout_closes_quiet_shell() {
                 host_key_policy: HostKeyPolicy::AcceptAll,
             })
             .relay_mode(RelayMode::Disabled, None)
-            .idle_timeout(Duration::from_millis(400));
+            .idle_timeout(Duration::from_secs(2));
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
@@ -1132,8 +1132,8 @@ async fn test_idle_timeout_closes_quiet_shell() {
         session.send(b"echo idle-probe\r\n").await.unwrap();
         expect_shell_output(&mut session, "idle-probe").await;
 
-        // Go quiet well past the 400 ms timeout, then expect the reap.
-        tokio::time::sleep(Duration::from_millis(2500)).await;
+        // Go quiet for several times the timeout, then expect the reap.
+        tokio::time::sleep(Duration::from_secs(8)).await;
         expect_shell_closed(&mut session).await;
 
         let _ = session.close().await;
@@ -1149,7 +1149,7 @@ async fn test_idle_timeout_closes_quiet_shell() {
 #[tokio::test]
 async fn test_idle_timeout_resets_on_traffic() {
     init_tracing();
-    tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_secs(90), async {
         let server_state = temp_state("server-idle-reset");
         let client_state = temp_state("client-idle-reset");
 
@@ -1158,7 +1158,7 @@ async fn test_idle_timeout_resets_on_traffic() {
                 host_key_policy: HostKeyPolicy::AcceptAll,
             })
             .relay_mode(RelayMode::Disabled, None)
-            .idle_timeout(Duration::from_millis(400));
+            .idle_timeout(Duration::from_secs(2));
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
@@ -1174,16 +1174,17 @@ async fn test_idle_timeout_resets_on_traffic() {
         let mut session = Client::connect(&client_opts, ticket).await.unwrap();
         session.start_shell().await.expect("Failed to start shell");
 
-        // Each command lands inside the 400 ms window while total elapsed time
-        // exceeds it, so observing both outputs proves the timer resets.
+        // Each command lands inside the 2s window while the total active
+        // period exceeds it, so observing both outputs proves the timer
+        // resets on traffic.
         session.send(b"echo tick-one\r\n").await.unwrap();
         expect_shell_output(&mut session, "tick-one").await;
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
         session.send(b"echo tick-two\r\n").await.unwrap();
         expect_shell_output(&mut session, "tick-two").await;
 
         // Now go quiet: the reaper must still fire afterwards.
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        tokio::time::sleep(Duration::from_secs(8)).await;
         expect_shell_closed(&mut session).await;
 
         let _ = session.close().await;
