@@ -71,9 +71,8 @@ pub fn ensure_dir_secure(path: &Path) -> Result<()> {
             path: path.to_path_buf(),
             source,
         })?;
+        apply_secure_permissions(path)?;
     }
-
-    apply_secure_permissions(path)?;
 
     Ok(())
 }
