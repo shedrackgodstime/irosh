@@ -142,11 +142,40 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
             storage::save_config(state, &config)?;
             Ui::success(&format!("Configuration updated: '{key}' has been saved."));
         }
-        ConfigAction::Export { .. } => {
-            Ui::info("Export not yet implemented.");
-        }
-        ConfigAction::Import { .. } => {
-            Ui::info("Import not yet implemented.");
+        ConfigAction::Export { output } => match output {
+            Some(path) => {
+                storage::export_config(state, &path)?;
+                if ctx.args.json {
+                    #[derive(serde::Serialize)]
+                    struct ExportJson {
+                        path: String,
+                    }
+                    crate::output::print_success(ExportJson {
+                        path: path.display().to_string(),
+                    });
+                } else {
+                    Ui::success(&format!("Configuration exported to: {}", path.display()));
+                }
+            }
+            None => {
+                let config = storage::load_config(state)?;
+                let json = serde_json::to_string_pretty(&config)?;
+                Output::line(&json);
+            }
+        },
+        ConfigAction::Import { file } => {
+            storage::import_config(state, &file)?;
+            if ctx.args.json {
+                #[derive(serde::Serialize)]
+                struct ImportJson {
+                    file: String,
+                }
+                crate::output::print_success(ImportJson {
+                    file: file.display().to_string(),
+                });
+            } else {
+                Ui::success(&format!("Configuration imported from: {}", file.display()));
+            }
         }
     }
     Ok(())

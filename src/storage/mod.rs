@@ -15,7 +15,7 @@ pub mod shadow;
 pub mod trust;
 pub(crate) mod utils;
 
-pub use config::{load_config, save_config};
+pub use config::{export_config, import_config, load_config, save_config};
 pub use keys::{
     EndpointIdentity, delete_secret_key, load_or_generate_identity, load_secret_key,
     save_secret_key,

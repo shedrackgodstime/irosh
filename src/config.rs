@@ -92,6 +92,7 @@ impl Default for SecurityConfig {
 /// This includes global settings like stealth secrets, custom relays,
 /// and default usernames.
 #[cfg_attr(feature = "storage", derive(serde::Serialize, serde::Deserialize))]
+#[serde(default)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     /// Shared ALPN secret for extra stealth.
