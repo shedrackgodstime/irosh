@@ -9,21 +9,28 @@ use tracing::warn;
 
 use crate::error::{IroshError, Result, ServerError};
 
+/// Resolves the current working directory of a shell process with the given PID.
+///
+/// Returns `Ok(None)` when the directory genuinely cannot be determined (for
+/// example the process cannot be opened or inspected on this platform). It never
+/// invents a fallback path: callers decide how to surface the unknown case rather
+/// than silently resolving transfers against the wrong directory.
+///
 /// # Errors
 ///
 /// Returns [`IroshError::Server`] wrapping [`ServerError::BlockingTaskFailed`] if the
 /// blocking task panics.
 #[must_use]
-pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Result<PathBuf> {
+pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<Option<PathBuf>> {
     task::spawn_blocking(move || {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let link = format!("/proc/{pid}/cwd");
             match std::fs::read_link(&link) {
-                Ok(cwd) => Ok(cwd),
+                Ok(cwd) => Ok(Some(cwd)),
                 Err(e) => {
-                    warn!(%pid, error = %e, "failed to read /proc/{pid}/cwd, using fallback dir");
-                    Ok(fallback_dir)
+                    warn!(%pid, error = %e, "failed to read /proc/{pid}/cwd");
+                    Ok(None)
                 }
             }
         }
@@ -69,7 +76,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
                 if handle == 0 as _ {
                     warn!(%pid, "OpenProcess failed, cannot resolve Windows shell CWD");
-                    return Ok(fallback_dir);
+                    return Ok(None);
                 }
 
                 let mut pbi = std::mem::MaybeUninit::<PROCESS_BASIC_INFORMATION>::uninit();
@@ -86,7 +93,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 if status != 0 {
                     warn!(%pid, status, "NtQueryInformationProcess failed, cannot resolve Windows shell CWD");
                     CloseHandle(handle);
-                    return Ok(fallback_dir);
+                    return Ok(None);
                 }
 
                 let pbi = pbi.assume_init();
@@ -109,7 +116,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 if ok == FALSE {
                     warn!(%pid, "ReadProcessMemory(PEB->ProcessParameters) failed, cannot resolve Windows shell CWD");
                     CloseHandle(handle);
-                    return Ok(fallback_dir);
+                    return Ok(None);
                 }
 
                 #[cfg(target_pointer_width = "64")]
@@ -129,7 +136,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
                 if ok == FALSE {
                     warn!(%pid, "ReadProcessMemory(ProcessParameters->CurrentDirectoryName) failed, cannot resolve Windows shell CWD");
                     CloseHandle(handle);
-                    return Ok(fallback_dir);
+                    return Ok(None);
                 }
 
                 let unicode_str = unicode_str.assume_init();
@@ -146,17 +153,17 @@ pub(crate) async fn resolve_process_cwd(pid: u32, fallback_dir: PathBuf) -> Resu
 
                 if ok == FALSE {
                     warn!(%pid, "ReadProcessMemory(Buffer) failed, cannot resolve Windows shell CWD");
-                    Ok(fallback_dir)
+                    Ok(None)
                 } else {
                     let path_str = String::from_utf16_lossy(&buffer);
-                    Ok(PathBuf::from(path_str))
+                    Ok(Some(PathBuf::from(path_str)))
                 }
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         {
             let _ = pid;
-            Ok(fallback_dir)
+            Ok(None)
         }
     })
     .await
@@ -224,4 +231,59 @@ fn namespace_matches(ns_path: &str, self_path: &str) -> std::io::Result<bool> {
     let target = std::fs::metadata(ns_path)?;
     let current = std::fs::metadata(self_path)?;
     Ok(target.ino() == current.ino())
+}
+
+#[cfg(all(test, windows))]
+mod windows_cwd_resolution_tests {
+    use super::resolve_process_cwd;
+    use std::process::{Child, Command};
+    use std::time::Duration;
+
+    /// Spawns a child process pinned to a known working directory and kept
+    /// alive so its PEB can be inspected while it runs.
+    fn spawn_pinned_child(dir: &std::path::Path) -> Child {
+        Command::new("cmd.exe")
+            .arg("/c")
+            .arg("ping -n 30 127.0.0.1 >nul")
+            .current_dir(dir)
+            .spawn()
+            .expect("failed to spawn pinned child")
+    }
+
+    #[test]
+    fn peb_read_resolves_the_childrens_working_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "irosh-peb-cwd-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut child = spawn_pinned_child(&dir);
+        let pid = child.id();
+        // Give the child time to initialize its environment block before we
+        // walk its PEB.
+        std::thread::sleep(Duration::from_millis(500));
+
+        let rt = tokio::runtime::Runtime::new().expect("failed to start runtime");
+        let resolved = rt
+            .block_on(resolve_process_cwd(pid))
+            .expect("resolve_process_cwd should not error")
+            .expect("resolve_process_cwd should resolve the working directory");
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let dir_canon = std::fs::canonicalize(&dir).unwrap();
+        let resolved_canon = std::fs::canonicalize(&resolved).unwrap();
+        assert_eq!(
+            dir_canon,
+            resolved_canon,
+            "PEB CWD should match the pinned child's directory (resolved = {})",
+            resolved.display()
+        );
+    }
 }

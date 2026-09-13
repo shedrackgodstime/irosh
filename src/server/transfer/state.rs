@@ -15,12 +15,13 @@ use crate::transport::transfer::{TransferFailure, TransferFailureCode};
 
 /// State shared across server-side transfer operations for a single connection.
 ///
-/// Tracks the shell process PID and caches the current working directory
-/// so that transfer paths can be resolved relative to it.
+/// Tracks the shell process PID so that transfer paths can be resolved
+/// relative to the shell's *live* current working directory. No CWD cache is
+/// kept: the directory is re-read from the process on every resolution so a
+/// `cd` performed in the shell is always honored.
 #[derive(Clone, Debug)]
 pub struct ConnectionShellState {
     shell_pid: Arc<StdMutex<Option<u32>>>,
-    cached_cwd: Arc<StdMutex<Option<(std::path::PathBuf, std::time::Instant)>>>,
     #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) state_root: PathBuf,
     pub(crate) blobs: iroh_blobs::store::fs::FsStore,
@@ -35,7 +36,6 @@ impl ConnectionShellState {
     pub fn new(state_root: PathBuf, blobs: iroh_blobs::store::fs::FsStore) -> Self {
         Self {
             shell_pid: Arc::new(StdMutex::new(None)),
-            cached_cwd: Arc::new(StdMutex::new(None)),
             state_root,
             blobs,
         }
@@ -111,28 +111,20 @@ impl ShellContext {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::ShellError`] if the home directory cannot be determined
-    /// in stateless mode, or propagates errors from [`resolve_process_cwd`].
+    /// Returns [`ServerError::ShellError`] if the live shell's working directory
+    /// cannot be determined, or if the home directory cannot be determined in
+    /// stateless mode. Propagates errors from [`resolve_process_cwd`].
     pub(super) async fn cwd(self, shell_state: &ConnectionShellState) -> Result<PathBuf> {
         match self {
             Self::Live { pid } => {
-                // Check cache first
-                if let Ok(guard) = shell_state.cached_cwd.lock() {
-                    if let Some((path, instant)) = guard.as_ref() {
-                        if instant.elapsed() < std::time::Duration::from_secs(2) {
-                            return Ok(path.clone());
-                        }
+                let path = resolve_process_cwd(pid).await?.ok_or_else(|| {
+                    ServerError::ShellError {
+                        details: format!(
+                            "could not determine the live shell's working directory (PID {pid}); \
+                             use an absolute remote path"
+                        ),
                     }
-                }
-
-                let fallback_home =
-                    Self::home_dir(shell_state).unwrap_or_else(|| PathBuf::from("."));
-                let path = resolve_process_cwd(pid, fallback_home).await?;
-
-                // Update cache
-                if let Ok(mut guard) = shell_state.cached_cwd.lock() {
-                    *guard = Some((path.clone(), std::time::Instant::now()));
-                }
+                })?;
 
                 tracing::debug!(
                     "Resolved live shell CWD for PID {}: {}",
