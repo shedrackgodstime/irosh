@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::commands::ConfigAction;
 use crate::context::CliContext;
 use crate::output::Output;
@@ -5,6 +7,7 @@ use crate::ui::Ui;
 use crate::ui::messages;
 use anyhow::Result;
 
+use irosh::config::LogLevel;
 use irosh::storage;
 
 #[must_use]
@@ -19,7 +22,7 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                 struct ConfigListJson {
                     stealth_secret: Option<String>,
                     relay_url: Option<String>,
-                    log_level: String,
+                    log_level: irosh::LogLevel,
                     wormhole_timeout: u64,
                     default_user: Option<String>,
                 }
@@ -45,7 +48,7 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     "relay-url",
                     config.relay_url.as_deref().unwrap_or("<iroh-default>"),
                 ),
-                ("log-level", &config.log_level),
+                ("log-level", config.log_level.as_str()),
                 ("wormhole-timeout", &format!("{}s", config.wormhole_timeout)),
                 (
                     "default-user",
@@ -71,7 +74,7 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     .as_deref()
                     .unwrap_or("<iroh-default>")
                     .to_string(),
-                "log-level" => config.log_level.clone(),
+                "log-level" => config.log_level.as_str().to_string(),
                 "wormhole-timeout" => format!("{}s", config.wormhole_timeout),
                 "default-user" => config
                     .default_user
@@ -122,7 +125,11 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                         Some(value)
                     }
                 }
-                "log-level" => config.log_level = value,
+                "log-level" => {
+                    config.log_level = LogLevel::from_str(&value).map_err(|_| {
+                        anyhow::anyhow!("Invalid log level (expected: debug, info, warn, error)")
+                    })?
+                }
                 "wormhole-timeout" => {
                     config.wormhole_timeout = value
                         .parse()

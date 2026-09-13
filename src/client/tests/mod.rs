@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::EndpointId;
 use std::fs;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -69,7 +70,7 @@ async fn connect_test_session(
     let client_config = Arc::new(client::Config::default());
     let last_disconnect = Arc::new(StdMutex::new(None));
     let client_handler = ClientHandler::new(
-        "test-node".to_string(),
+        EndpointId::new("test-node".to_string()),
         None,
         last_disconnect,
         SecurityConfig {

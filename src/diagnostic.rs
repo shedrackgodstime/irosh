@@ -4,16 +4,17 @@
 //! can be used to report the local P2P network environment without requiring
 //! a full server or client session to be established.
 
-use crate::config::StateConfig;
+use crate::config::{EndpointId, StateConfig};
 use crate::error::{Result, TransportError};
 use crate::storage::keys::load_or_generate_identity;
 use crate::transport::iroh::derive_alpn;
 
 /// The result of a P2P network probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NetworkProbe {
     /// The Node ID this instance presents to the network.
-    pub endpoint_id: String,
+    pub endpoint_id: EndpointId,
     /// Relay URLs the endpoint is connected to.
     pub relay_urls: Vec<String>,
     /// Direct IP addresses the endpoint is reachable on.
@@ -73,7 +74,7 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
     endpoint.online().await;
 
     let addr = endpoint.addr();
-    let endpoint_id = endpoint.id().to_string();
+    let endpoint_id = EndpointId::new(endpoint.id().to_string());
 
     let relay_urls = addr
         .relay_urls()
@@ -97,6 +98,7 @@ pub async fn probe_network(state: &StateConfig) -> Result<NetworkProbe> {
 
 /// The result of a security permissions check.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 // Reason: SecurityReport intentionally exposes each permission as a separate bool
 // for diagnostic display purposes. Grouping them would obscure individual failures.
 #[allow(clippy::struct_excessive_bools)]
@@ -196,7 +198,7 @@ mod tests {
     #[test]
     fn test_nat_description_logic() {
         let open_nat = NetworkProbe {
-            endpoint_id: "test".to_string(),
+            endpoint_id: EndpointId::new("test".to_string()),
             relay_urls: vec!["relay".to_string()],
             direct_addresses: vec!["1.2.3.4".to_string()],
         };
@@ -206,7 +208,7 @@ mod tests {
         );
 
         let restricted_nat = NetworkProbe {
-            endpoint_id: "test".to_string(),
+            endpoint_id: EndpointId::new("test".to_string()),
             relay_urls: vec!["relay".to_string()],
             direct_addresses: vec![],
         };
@@ -216,7 +218,7 @@ mod tests {
         );
 
         let no_conn = NetworkProbe {
-            endpoint_id: "test".to_string(),
+            endpoint_id: EndpointId::new("test".to_string()),
             relay_urls: vec![],
             direct_addresses: vec![],
         };

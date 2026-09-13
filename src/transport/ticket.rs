@@ -38,6 +38,7 @@ pub enum TicketError {
 /// # }
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Ticket {
     /// The wrapped Iroh addressing information.
     pub(crate) inner: EndpointTicket,

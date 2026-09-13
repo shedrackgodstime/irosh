@@ -82,9 +82,7 @@ fn bench_ssh_handshake(c: &mut Criterion) {
                 });
                 let authenticator: Arc<dyn irosh::auth::Authenticator> =
                     Arc::new(irosh::auth::KeyOnlyAuth::new(
-                        irosh::SecurityConfig {
-                            host_key_policy: irosh::config::HostKeyPolicy::Tofu,
-                        },
+                        irosh::SecurityConfig::new(irosh::config::HostKeyPolicy::Tofu),
                         Vec::new(),
                         server_state.clone(),
                     ));
@@ -109,12 +107,10 @@ fn bench_ssh_handshake(c: &mut Criterion) {
 
                 let client_config = Arc::new(irosh::russh::client::Config::default());
                 let client_handler = irosh::client::handler::ClientHandler::new(
-                    "bench-node".to_string(),
+                    irosh::EndpointId::new("bench-node".to_string()),
                     None,
                     Arc::new(std::sync::Mutex::new(None)),
-                    irosh::SecurityConfig {
-                        host_key_policy: irosh::config::HostKeyPolicy::Tofu,
-                    },
+                    irosh::SecurityConfig::new(irosh::config::HostKeyPolicy::Tofu),
                     client_state.clone(),
                 );
 
@@ -149,11 +145,13 @@ fn bench_transfer_put_request_roundtrip(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     c.bench_function("transfer/put_request_roundtrip", |b| {
         b.to_async(&rt).iter_batched(
-            || irosh::transport::transfer::PutRequest {
-                path: "/remote/path/file.txt".into(),
-                size: 1024,
-                mode: Some(0o644),
-                recursive: false,
+            || {
+                irosh::transport::transfer::PutRequest::new(
+                    "/remote/path/file.txt".into(),
+                    1024,
+                    Some(0o644),
+                    false,
+                )
             },
             |req| async {
                 let (mut client, mut server) = tokio::io::duplex(2048);
@@ -175,10 +173,7 @@ fn bench_transfer_get_request_roundtrip(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     c.bench_function("transfer/get_request_roundtrip", |b| {
         b.to_async(&rt).iter_batched(
-            || irosh::transport::transfer::GetRequest {
-                path: "/remote/path/file.txt".into(),
-                recursive: false,
-            },
+            || irosh::transport::transfer::GetRequest::new("/remote/path/file.txt".into(), false),
             |req| async {
                 let (mut client, mut server) = tokio::io::duplex(2048);
                 let write = tokio::spawn(async move {
@@ -254,12 +249,12 @@ fn bench_transfer_full_pipeline_4mb(c: &mut Criterion) {
                 let write = tokio::spawn(async move {
                     irosh::transport::transfer::write_put_request(
                         &mut client,
-                        &irosh::transport::transfer::PutRequest {
-                            path: "/bench/file.dat".into(),
-                            size: total,
-                            mode: Some(0o644),
-                            recursive: false,
-                        },
+                        &irosh::transport::transfer::PutRequest::new(
+                            "/bench/file.dat".into(),
+                            total,
+                            Some(0o644),
+                            false,
+                        ),
                     )
                     .await?;
                     for chunk in &chunks {

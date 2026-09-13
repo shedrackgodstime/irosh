@@ -15,11 +15,20 @@ use crate::transport::ticket::Ticket;
 /// `PeerProfile` is the storage-layer record for a named alias and its
 /// serialized ticket string.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PeerProfile {
     /// The human-readable label for the peer (e.g., "my-server").
     pub name: String,
     /// The Iroh endpoint ticket.
     pub ticket: Ticket,
+}
+
+impl PeerProfile {
+    /// Creates a new `PeerProfile`.
+    #[must_use]
+    pub fn new(name: String, ticket: Ticket) -> Self {
+        Self { name, ticket }
+    }
 }
 
 /// Maximum length for a peer profile name.

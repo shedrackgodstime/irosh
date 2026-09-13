@@ -9,7 +9,7 @@ use secrecy::ExposeSecret;
 use crate::auth::Credentials;
 use crate::client::ResolvedTarget;
 use crate::client::{Session, handler::ClientHandler};
-use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
+use crate::config::{EndpointId, HostKeyPolicy, SecurityConfig, StateConfig, WormholeCode};
 use crate::error::{ClientError, IroshError, Result};
 use crate::session::SessionState;
 use crate::storage::keys::load_or_generate_identity;
@@ -311,7 +311,7 @@ impl Client {
             iroh::endpoint::Connection,
         ),
     ) -> Result<Session> {
-        let endpoint_id = connection.remote_id().to_string();
+        let endpoint_id = EndpointId::new(connection.remote_id().to_string());
         let identity = load_or_generate_identity(options.state()).await?;
         let client_key = identity.ssh_key;
 
@@ -321,9 +321,10 @@ impl Client {
         } else {
             let state = options.state().clone();
             let eid = endpoint_id.clone();
-            let inner = tokio::task::spawn_blocking(move || load_known_server(&state, &eid))
-                .await
-                .map_err(|e| IroshError::Io(std::io::Error::other(e)))?;
+            let inner =
+                tokio::task::spawn_blocking(move || load_known_server(&state, eid.as_str()))
+                    .await
+                    .map_err(|e| IroshError::Io(std::io::Error::other(e)))?;
             inner?
         };
 
@@ -548,7 +549,10 @@ impl Client {
         }
 
         // 4. Fallback to assuming it is a Wormhole code.
-        Ok(ResolvedTarget::WormholeCode(target.to_string()))
+        Ok(ResolvedTarget::WormholeCode(
+            WormholeCode::new(target.to_string())
+                .map_err(|e| crate::error::IroshError::InvalidTarget { raw: e })?,
+        ))
     }
 }
 

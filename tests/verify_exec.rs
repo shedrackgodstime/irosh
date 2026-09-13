@@ -25,9 +25,7 @@ async fn verify_exec_output() {
         let client_state = temp_state("client-verify");
 
         let server_opts = ServerOptions::new(server_state.clone())
-            .security(SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            })
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled, None);
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
@@ -38,9 +36,7 @@ async fn verify_exec_output() {
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         let client_opts = ClientOptions::new(client_state.clone())
-            .security(SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            })
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled);
         let mut session = Client::connect(&client_opts, ticket).await.unwrap();
 

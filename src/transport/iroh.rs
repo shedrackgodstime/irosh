@@ -1,5 +1,6 @@
 //! Iroh endpoint initialization and connection routing.
 
+use crate::config::EndpointId;
 use crate::error::{Result, TransportError};
 use iroh::{Endpoint, EndpointAddr, RelayConfig, RelayMode, SecretKey};
 
@@ -34,7 +35,7 @@ pub struct ServerEndpoint {
     /// The endpoint address, used for out-of-band P2P connection sharing.
     pub addr: EndpointAddr,
     /// The unique identifier of the endpoint (Endpoint ID).
-    pub endpoint_id: String,
+    pub endpoint_id: EndpointId,
     /// The list of relay server URLs this node is connected to.
     pub relay_urls: Vec<String>,
     /// The direct IP addresses this node is bound to.
@@ -77,7 +78,7 @@ pub async fn bind_server_endpoint(
         .collect::<Vec<_>>();
 
     Ok(ServerEndpoint {
-        endpoint_id: endpoint_id.to_string(),
+        endpoint_id: EndpointId::new(endpoint_id.to_string()),
         endpoint,
         addr: endpoint_addr,
         relay_urls,

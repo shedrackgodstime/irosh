@@ -1,5 +1,6 @@
 //! Server startup/inspection.
 use crate::auth::AuthMethod;
+use crate::config::EndpointId;
 use crate::error::{IroshError, Result, ServerError};
 use crate::server::{Server, ServerOptions, ServerReady};
 use crate::storage::{load_all_authorized_clients, load_or_generate_identity};
@@ -35,7 +36,7 @@ pub(crate) async fn inspect_server(options: &ServerOptions) -> Result<ServerRead
     }
 
     Ok(ServerReady::new(
-        node_id.to_string(),
+        EndpointId::new(node_id.to_string()),
         crate::transport::ticket::Ticket::new(addr),
         vec![],
         vec![],

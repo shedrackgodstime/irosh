@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard};
 
+use crate::config::EndpointId;
 use russh::client::{self, DisconnectReason};
 use russh::keys::ssh_key::{HashAlg, PublicKey};
 use tracing::{info, warn};
@@ -16,7 +17,7 @@ type TunnelRegistry = Arc<StdMutex<std::collections::HashMap<(String, u32), (Str
 /// Handles incoming connection verification events from the SSH server.
 #[derive(Clone)]
 pub struct ClientHandler {
-    node_id: String,
+    node_id: EndpointId,
     known_server: Arc<StdMutex<Option<PublicKey>>>,
     last_disconnect: Arc<StdMutex<Option<String>>>,
     security: SecurityConfig,
@@ -27,7 +28,7 @@ pub struct ClientHandler {
 impl ClientHandler {
     /// Creates a new `ClientHandler` with the designated server validation state.
     pub fn new(
-        node_id: String,
+        node_id: EndpointId,
         known_server: Option<PublicKey>,
         last_disconnect: Arc<StdMutex<Option<String>>>,
         security: SecurityConfig,
@@ -130,7 +131,7 @@ impl client::Handler for ClientHandler {
                 let node_id = self.node_id.clone();
                 let key_for_blocking = PublicKey::clone(key);
                 let event = tokio::task::spawn_blocking(move || {
-                    write_known_server(&state, &node_id, &key_for_blocking)
+                    write_known_server(&state, node_id.as_str(), &key_for_blocking)
                 })
                 .await
                 .map_err(|e| IroshError::Io(std::io::Error::other(e)))??;

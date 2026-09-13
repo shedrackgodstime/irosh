@@ -430,12 +430,10 @@ fn auto_save_peer(
     };
 
     if let Some(ref name) = final_name {
-        let profile = irosh::storage::PeerProfile {
-            name: name.clone(),
-            ticket: ticket.clone(),
-        };
+        let profile = irosh::storage::PeerProfile::new(name.clone(), ticket.clone());
         if irosh::storage::save_peer(state, &profile).is_ok() {
             if name_exists {
+                Ui::success(&format!("Peer alias updated to '{name}'"));
                 Ui::success(&format!("Peer alias updated to '{name}'"));
             } else {
                 Ui::success(&format!(
@@ -456,10 +454,7 @@ fn auto_save_temp_peer(state: &irosh::StateConfig, ticket: &irosh::transport::ti
         .iter()
         .any(|p| p.ticket.to_addr().id == ticket.to_addr().id)
     {
-        let profile = irosh::storage::PeerProfile {
-            name: name.clone(),
-            ticket: ticket.clone(),
-        };
+        let profile = irosh::storage::PeerProfile::new(name.clone(), ticket.clone());
         if irosh::storage::save_peer(state, &profile).is_ok() {
             Ui::info("");
             Ui::warn(

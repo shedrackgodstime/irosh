@@ -125,10 +125,7 @@ pub fn exec(action: PeerAction, ctx: &CliContext) -> Result<()> {
 
             storage::save_peer(
                 state,
-                &storage::PeerProfile {
-                    name: target_name.clone(),
-                    ticket: ticket_parsed.clone(),
-                },
+                &storage::PeerProfile::new(target_name.clone(), ticket_parsed.clone()),
             )?;
 
             if ctx.args.json {

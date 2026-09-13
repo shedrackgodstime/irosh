@@ -97,7 +97,7 @@ impl Ui {
             let peer = if session.peer_id.len() > 18 {
                 format!("{}...", &session.peer_id[..15])
             } else {
-                session.peer_id.clone()
+                session.peer_id.as_str().to_string()
             };
 
             let duration =

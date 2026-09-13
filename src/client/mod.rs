@@ -36,6 +36,7 @@ use crate::session::pty::PtySize;
 
 /// Progress state for an ongoing file transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TransferProgress {
     /// Bytes successfully transferred so far.
     pub transferred: u64,
@@ -50,7 +51,7 @@ pub enum ResolvedTarget {
     /// A direct Iroh connection ticket.
     Ticket(crate::transport::ticket::Ticket),
     /// A 3-word wormhole code that needs to be resolved via Gossip.
-    WormholeCode(String),
+    WormholeCode(crate::config::WormholeCode),
 }
 
 impl From<crate::transport::ticket::Ticket> for ResolvedTarget {
@@ -105,6 +106,7 @@ impl fmt::Debug for Session {
 
 /// Represents the output of a remote command execution.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ExecOutput {
     /// The captured stdout bytes.
     pub stdout: Vec<u8>,

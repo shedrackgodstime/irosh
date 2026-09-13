@@ -93,9 +93,9 @@ impl CliContext {
                 irosh::transport::iroh::parse_relay_mode(&relay_str)?,
                 Some(relay_str),
             )
-            .security(irosh::SecurityConfig {
-                host_key_policy: irosh::config::HostKeyPolicy::Tofu,
-            });
+            .security(irosh::SecurityConfig::new(
+                irosh::config::HostKeyPolicy::Tofu,
+            ));
 
         if let Some(secret) = config.stealth_secret {
             options = options.secret(secret);

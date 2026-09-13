@@ -97,7 +97,7 @@ pub async fn exec(action: SystemAction, ctx: &CliContext) -> Result<()> {
                         Ui::status("Service", "ACTIVE", Some(&manager));
                         if let Some(info) = daemon_info {
                             Ui::machine_identity(
-                                &info.endpoint_id,
+                                info.endpoint_id.as_str(),
                                 "Daemon Live",
                                 &info.ticket,
                                 "Background Hosting",

@@ -10,6 +10,7 @@ pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 
 /// An upload request from client to server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PutRequest {
     /// The destination path on the remote filesystem.
     pub path: String,
@@ -23,14 +24,36 @@ pub struct PutRequest {
     pub recursive: bool,
 }
 
+impl PutRequest {
+    /// Creates a new upload request.
+    #[must_use]
+    pub fn new(path: String, size: u64, mode: Option<u32>, recursive: bool) -> Self {
+        Self {
+            path,
+            size,
+            mode,
+            recursive,
+        }
+    }
+}
+
 /// A download request from client to server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct GetRequest {
     /// The remote path to download from.
     pub path: String,
     /// If `true`, download the directory tree rooted at [`path`](Self::path).
     #[serde(default)]
     pub recursive: bool,
+}
+
+impl GetRequest {
+    /// Creates a new download request.
+    #[must_use]
+    pub fn new(path: String, recursive: bool) -> Self {
+        Self { path, recursive }
+    }
 }
 
 /// A request to push a content-addressed blob.
@@ -74,6 +97,7 @@ pub struct BlobGetReady {
 /// - For recursive transfers, each [`EntryHeader`] is followed by its data
 ///   chunks and an [`EntryComplete`] marker before the next entry begins.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TransferReady {
     /// Total expected size in bytes.
     pub size: u64,

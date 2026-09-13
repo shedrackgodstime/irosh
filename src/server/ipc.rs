@@ -11,6 +11,7 @@
 //! [`crate::client::ipc::IpcClient`]. Unix relies on socket permissions and
 //! sends bare commands.
 
+use crate::config::{EndpointId, PeerId};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::collections::hash_map::DefaultHasher;
@@ -142,7 +143,7 @@ pub enum InternalCommand {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionStatus {
     /// The remote peer's unique node ID.
-    pub peer_id: String,
+    pub peer_id: PeerId,
     /// When the session started (RFC3339).
     pub started_at: String,
     /// Total bytes sent to this peer.
@@ -155,13 +156,13 @@ pub struct SessionStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaemonStatus {
     /// The server's unique P2P identifier.
-    pub endpoint_id: String,
+    pub endpoint_id: EndpointId,
     /// The connection ticket for this node.
     pub ticket: String,
     /// Whether a wormhole is currently active.
     pub wormhole_active: bool,
     /// The active wormhole code (if any).
-    pub wormhole_code: Option<String>,
+    pub wormhole_code: Option<crate::config::WormholeCode>,
     /// Number of active SSH sessions.
     pub active_sessions: usize,
     /// Rich information about each active session.

@@ -32,9 +32,7 @@ async fn test_transfer_not_found_error() {
         let client_state = temp_state("client");
 
         let server_opts = ServerOptions::new(server_state.clone())
-            .security(SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            })
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled, None);
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
@@ -43,9 +41,7 @@ async fn test_transfer_not_found_error() {
         let server_handle = tokio::spawn(async move { server.run().await });
 
         let client_opts = ClientOptions::new(client_state.clone())
-            .security(SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            })
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled);
 
         tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -90,9 +86,7 @@ async fn test_transfer_is_directory_error() {
         fs::create_dir_all(&server_dir).await.unwrap();
 
         let server_opts = ServerOptions::new(server_state.clone())
-            .security(SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            })
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled, None);
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
@@ -101,9 +95,7 @@ async fn test_transfer_is_directory_error() {
         let server_handle = tokio::spawn(async move { server.run().await });
 
         let client_opts = ClientOptions::new(client_state.clone())
-            .security(SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            })
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled);
 
         tokio::time::sleep(Duration::from_millis(1000)).await;

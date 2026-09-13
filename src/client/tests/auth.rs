@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::EndpointId;
 
 #[tokio::test]
 async fn publickey_auth_round_trip_succeeds_over_duplex_stream() {
@@ -39,7 +40,7 @@ async fn publickey_auth_round_trip_succeeds_over_duplex_stream() {
     let client_config = Arc::new(client::Config::default());
     let last_disconnect = Arc::new(StdMutex::new(None));
     let client_handler = ClientHandler::new(
-        "test-node".to_string(),
+        EndpointId::new("test-node".to_string()),
         None,
         last_disconnect.clone(),
         SecurityConfig {
@@ -107,7 +108,7 @@ async fn publickey_auth_is_rejected_for_untrusted_client_key() {
     let client_config = Arc::new(client::Config::default());
     let last_disconnect = Arc::new(StdMutex::new(None));
     let client_handler = ClientHandler::new(
-        "test-node".to_string(),
+        EndpointId::new("test-node".to_string()),
         None,
         last_disconnect,
         SecurityConfig {
@@ -184,7 +185,7 @@ async fn connect_stream_fails_on_server_key_mismatch() {
     let client_config = Arc::new(client::Config::default());
     let last_disconnect = Arc::new(StdMutex::new(None));
     let client_handler = ClientHandler::new(
-        "test-node".to_string(),
+        EndpointId::new("test-node".to_string()),
         Some(wrong_server_identity.ssh_key.public_key().clone()),
         last_disconnect,
         SecurityConfig {

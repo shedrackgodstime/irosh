@@ -33,7 +33,7 @@ use tracing::{info, warn};
 
 use crate::auth::Authenticator;
 
-use crate::config::{SecurityConfig, StateConfig};
+use crate::config::{PeerId, SecurityConfig, StateConfig};
 use crate::error::Result;
 use crate::server::handler::ServerHandler;
 use crate::server::startup::bind_server;
@@ -44,6 +44,7 @@ use self::side_streams::spawn_side_stream_listener;
 /// Configuration options for the irosh server.
 #[derive(Debug)]
 #[must_use = "builders do nothing unless consumed"]
+#[non_exhaustive]
 pub struct ServerOptions {
     state: StateConfig,
     security: SecurityConfig,
@@ -191,9 +192,10 @@ use serde::{Deserialize, Serialize};
 /// `ServerReady` is returned by [`Server::bind`] and [`Server::inspect`]. It is
 /// used to generate the connection ticket.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ServerReady {
     /// The unique Iroh node ID of the server.
-    pub endpoint_id: String,
+    pub endpoint_id: crate::config::EndpointId,
     /// The connection ticket containing relay and addressing information.
     pub ticket: crate::transport::ticket::Ticket,
     /// The list of relay server URLs.
@@ -208,7 +210,7 @@ pub struct ServerReady {
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveSession {
     /// The remote peer's node identifier.
-    pub(crate) peer_id: String,
+    pub(crate) peer_id: crate::config::PeerId,
     /// Timestamp when this session was established.
     pub(crate) started_at: chrono::DateTime<chrono::Utc>,
     /// Total bytes transmitted to the peer.
@@ -236,7 +238,10 @@ impl SessionTracker {
     }
 
     /// Registers a new session and returns its ID and byte-counting atomics.
-    async fn register(&self, peer_id: String) -> (usize, Arc<AtomicU64>, Arc<AtomicU64>) {
+    async fn register(
+        &self,
+        peer_id: crate::config::PeerId,
+    ) -> (usize, Arc<AtomicU64>, Arc<AtomicU64>) {
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -276,7 +281,7 @@ impl ServerReady {
     /// Creates a new `ServerReady` instance.
     #[must_use]
     pub fn new(
-        endpoint_id: String,
+        endpoint_id: crate::config::EndpointId,
         ticket: crate::transport::ticket::Ticket,
         relay_urls: Vec<String>,
         direct_addresses: Vec<String>,
@@ -294,7 +299,7 @@ impl ServerReady {
     /// Returns the unique Iroh node identifier.
     #[must_use]
     pub fn endpoint_id(&self) -> &str {
-        &self.endpoint_id
+        self.endpoint_id.as_str()
     }
 
     /// Returns the connection ticket for this server.
@@ -454,7 +459,7 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
 
         let (session_id, bytes_sent, bytes_received) = self
             .session_tracker
-            .register(connection.remote_id().to_string())
+            .register(PeerId::new(connection.remote_id().to_string()))
             .await;
 
         let _guard = SessionGuard(
@@ -811,10 +816,10 @@ impl Server {
                                 let wh_lock = wormhole.lock().await;
                                 let sessions = self.session_tracker.snapshot().await;
                                 let _ = tx.send(ipc::IpcResponse::Status(ipc::DaemonStatus {
-                                    endpoint_id: self.endpoint.id().to_string(),
+                                    endpoint_id: crate::config::EndpointId::new(self.endpoint.id().to_string()),
                                     ticket: self.ticket.to_string(),
                                     wormhole_active: wh_lock.is_some(),
-                                    wormhole_code: wh_lock.as_ref().map(|w| w.code.clone()),
+                                    wormhole_code: wh_lock.as_ref().and_then(|w| crate::config::WormholeCode::new(w.code.clone()).ok()),
                                     active_sessions: active_sessions.load(std::sync::atomic::Ordering::Relaxed),
                                     sessions,
                                 }));

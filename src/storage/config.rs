@@ -89,6 +89,7 @@ pub fn import_config(state: &StateConfig, src: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::LogLevel;
 
     fn temp_state(label: &str) -> StateConfig {
         let mut path = std::env::temp_dir();
@@ -114,7 +115,7 @@ mod tests {
         let config = AppConfig {
             stealth_secret: Some("my-secret".into()),
             relay_url: Some("https://relay.example.com".into()),
-            log_level: "debug".into(),
+            log_level: LogLevel::Debug,
             wormhole_timeout: 7200,
             default_user: Some("admin".into()),
         };
@@ -155,7 +156,7 @@ mod tests {
         let config = AppConfig {
             stealth_secret: Some("my-secret".into()),
             relay_url: Some("https://relay.example.com".into()),
-            log_level: "debug".into(),
+            log_level: LogLevel::Debug,
             wormhole_timeout: 7200,
             default_user: Some("admin".into()),
         };
@@ -204,7 +205,7 @@ mod tests {
 
         import_config(&state, &partial).unwrap();
         let loaded = load_config(&state).unwrap();
-        assert_eq!(loaded.log_level, "trace");
+        assert_eq!(loaded.log_level, LogLevel::Trace);
         assert_eq!(loaded.relay_url.as_deref(), Some("https://r.example"));
         // Container-level `#[serde(default)]` keeps the file loadable even if
         // it omits non-Option fields entirely.

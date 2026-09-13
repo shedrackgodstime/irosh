@@ -67,7 +67,9 @@ pub mod storage;
 pub mod sys;
 pub mod transport;
 
-pub use config::{SecurityConfig, StateConfig};
+pub use config::{
+    AppConfig, EndpointId, LogLevel, PeerId, SecurityConfig, StateConfig, WormholeCode,
+};
 pub use error::{IroshError, Result};
 
 pub use metrics::{Metrics, MetricsSnapshot};

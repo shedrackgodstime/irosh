@@ -139,7 +139,7 @@ async fn handle_status(client: &IpcClient) -> Result<()> {
                 #[derive(serde::Serialize)]
                 struct WormholeStatusJson {
                     active: bool,
-                    code: Option<String>,
+                    code: Option<irosh::WormholeCode>,
                     sessions: usize,
                 }
                 crate::output::print_success(WormholeStatusJson {

@@ -7,6 +7,7 @@ const MAX_FIELD_LEN: usize = 255;
 
 /// Connection metadata optionally exchanged on a separate control stream.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PeerMetadata {
     /// The remote machine's hostname.
     pub hostname: String,
