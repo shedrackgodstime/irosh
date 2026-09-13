@@ -32,6 +32,12 @@ pub struct ServerHandler {
     /// Set once SSH authentication succeeds. Side streams (file transfer,
     /// metadata) are gated on this so unauthenticated peers cannot drive them.
     auth_gate: Option<tokio::sync::watch::Sender<bool>>,
+    /// Inactivity timeout for shell channels (`Duration::ZERO` = disabled).
+    idle_timeout: std::time::Duration,
+    /// Last-traffic instant per channel, driving the idle reaper.
+    idle: Arc<StdMutex<HashMap<ChannelId, std::time::Instant>>>,
+    /// Ensures one reaper task per connection.
+    reaper_started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ServerHandler {
@@ -45,6 +51,9 @@ impl ServerHandler {
             shell_state,
             metrics: Metrics::new(),
             auth_gate: None,
+            idle_timeout: std::time::Duration::ZERO,
+            idle: Arc::new(StdMutex::new(HashMap::new())),
+            reaper_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -62,7 +71,18 @@ impl ServerHandler {
             shell_state,
             metrics,
             auth_gate: None,
+            idle_timeout: std::time::Duration::ZERO,
+            idle: Arc::new(StdMutex::new(HashMap::new())),
+            reaper_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Sets the inactivity timeout after which idle shell channels are closed
+    /// (`Duration::ZERO` disables the reaper).
+    #[must_use]
+    pub(crate) fn with_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.idle_timeout = timeout;
+        self
     }
 
     /// Associates this handler with an auth gate that is opened once the SSH
@@ -88,6 +108,86 @@ impl ServerHandler {
                 poisoned.into_inner()
             }
         }
+    }
+
+    /// Records traffic on a channel for the idle timeout. Cheap no-op when
+    /// the timeout is disabled.
+    pub(super) fn mark_channel_active(&self, channel: ChannelId) {
+        if self.idle_timeout.is_zero() {
+            return;
+        }
+        Self::touch_idle(&self.idle, channel);
+    }
+
+    /// Records `now` for a channel in an idle map owned elsewhere (e.g. the
+    /// PTY reader tasks, which have no `&self`). Silently skips poisoned locks.
+    fn touch_idle(idle: &StdMutex<HashMap<ChannelId, std::time::Instant>>, channel: ChannelId) {
+        if let Ok(mut guard) = idle.lock() {
+            guard.insert(channel, std::time::Instant::now());
+        }
+    }
+
+    /// Stops tracking a channel for the idle timeout (closed or failed).
+    fn forget_channel(&self, channel: ChannelId) {
+        if let Ok(mut guard) = self.idle.lock() {
+            guard.remove(&channel);
+        }
+    }
+
+    /// Starts the per-connection idle reaper exactly once. The task holds
+    /// only a `Weak` reference to the idle map, so it exits on its own once
+    /// the connection (and with it the handler) is gone.
+    fn ensure_reaper(&self, handle: &server::Handle) {
+        if self.idle_timeout.is_zero() {
+            return;
+        }
+        if self
+            .reaper_started
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let idle = Arc::downgrade(&self.idle);
+        let handle = handle.clone();
+        let timeout = self.idle_timeout;
+        tokio::spawn(async move {
+            let period = (timeout / 4).clamp(
+                std::time::Duration::from_millis(10),
+                std::time::Duration::from_secs(60),
+            );
+            let mut ticker = tokio::time::interval(period);
+            loop {
+                ticker.tick().await;
+                let Some(idle) = idle.upgrade() else {
+                    break;
+                };
+                let now = std::time::Instant::now();
+                let stale: Vec<ChannelId> = match idle.lock() {
+                    Ok(guard) => guard
+                        .iter()
+                        .filter_map(|(channel, last)| {
+                            (now.duration_since(*last) > timeout).then_some(*channel)
+                        })
+                        .collect(),
+                    Err(_) => break,
+                };
+                for channel in stale {
+                    // Drop the entry first: a racing `data()` simply records
+                    // a fresh timestamp afterwards.
+                    if let Ok(mut guard) = idle.lock() {
+                        guard.remove(&channel);
+                    }
+                    if handle.close(channel).await.is_err() {
+                        break;
+                    }
+                    debug!(
+                        ?channel,
+                        ?timeout,
+                        "closed shell channel after inactivity timeout"
+                    );
+                }
+            }
+        });
     }
 
     /// Builds a `MethodSet` of the remaining auth methods after excluding `used`.
@@ -228,17 +328,25 @@ impl server::Handler for ServerHandler {
         row_height: u32,
         pix_width: u32,
         pix_height: u32,
-        _modes: &[(russh::Pty, u32)],
+        modes: &[(russh::Pty, u32)],
         session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
         info!(
             "pty_request for channel {:?}: term={}, cols={}, rows={}",
             channel, term, col_width, row_height
         );
+        // Honor the client's terminal ECHO mode (OpenSSH convention: echo is
+        // on unless explicitly disabled). ConPTY never echoes by itself; the
+        // flag is consumed at spawn to decide on server-side echo for shells
+        // without their own line rendering (cmd.exe).
+        let echo = !modes
+            .iter()
+            .any(|(mode, value)| *mode == russh::Pty::ECHO && *value == 0);
         self.set_channel_pty(
             channel,
             term,
             crate::session::pty::pty_size(col_width, row_height, pix_width, pix_height),
+            echo,
             session,
         )
     }
@@ -264,6 +372,8 @@ impl server::Handler for ServerHandler {
     ) -> std::result::Result<(), Self::Error> {
         info!("shell_request for channel {:?}", channel);
         self.start_command(channel, session, None)?;
+        self.mark_channel_active(channel);
+        self.ensure_reaper(&session.handle());
         Ok(())
     }
 
@@ -276,6 +386,8 @@ impl server::Handler for ServerHandler {
         let command = String::from_utf8_lossy(data).trim().to_string();
         debug!("exec_request for channel {:?}: {}", channel, command);
         self.start_command(channel, session, Some(&command))?;
+        self.mark_channel_active(channel);
+        self.ensure_reaper(&session.handle());
         Ok(())
     }
 
@@ -283,7 +395,7 @@ impl server::Handler for ServerHandler {
         &mut self,
         channel: ChannelId,
         data: &[u8],
-        _session: &mut server::Session,
+        session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
         // If this channel is being handled by a stream (into_stream),
         // we MUST NOT consume the data here or the stream will be starved.
@@ -300,7 +412,18 @@ impl server::Handler for ServerHandler {
             channel,
             data.len()
         );
+        self.mark_channel_active(channel);
         self.write_channel_data(channel, data).await;
+        // Server-side echo for shells without their own input rendering.
+        if self.channel_server_echo(channel) {
+            let echo = pty::filter_echo_bytes(data);
+            if !echo.is_empty() {
+                let _ = session
+                    .handle()
+                    .data(channel, bytes::Bytes::from(echo))
+                    .await;
+            }
+        }
         Ok(())
     }
 
@@ -325,6 +448,7 @@ impl server::Handler for ServerHandler {
         _session: &mut server::Session,
     ) -> std::result::Result<(), Self::Error> {
         debug!("channel_eof for channel {:?}", channel);
+        self.forget_channel(channel);
         self.close_channel_writer(channel);
         Ok(())
     }
@@ -340,6 +464,7 @@ impl server::Handler for ServerHandler {
                 streamed.remove(&channel);
             }
         }
+        self.forget_channel(channel);
         self.close_channel(channel);
         Ok(())
     }

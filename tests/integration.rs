@@ -1,6 +1,9 @@
 use iroh::RelayMode;
 use irosh::config::HostKeyPolicy;
-use irosh::{Client, ClientOptions, SecurityConfig, Server, ServerOptions, StateConfig};
+use irosh::{
+    Client, ClientOptions, SecurityConfig, Server, ServerOptions, Session, SessionEvent,
+    StateConfig,
+};
 use std::time::Duration;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1058,4 +1061,137 @@ async fn test_wormhole_rendezvous() {
     tokio::time::timeout(Duration::from_secs(180), test)
         .await
         .expect("test_wormhole_rendezvous timed out");
+}
+
+/// Waits for `needle` to appear in shell output, panicking if the channel
+/// closes first or the budget expires.
+async fn expect_shell_output(session: &mut Session, needle: &str) {
+    let mut seen = Vec::new();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            match session.next_event().await {
+                Ok(Some(SessionEvent::Data(data) | SessionEvent::ExtendedData(data, _))) => {
+                    seen.extend_from_slice(&data);
+                    if String::from_utf8_lossy(&seen).contains(needle) {
+                        break;
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => panic!("channel closed before seeing output {needle:?}"),
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for shell output");
+}
+
+/// Waits until the shell channel reports closure (Closed event or stream end).
+async fn expect_shell_closed(session: &mut Session) {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            match session.next_event().await {
+                Ok(Some(SessionEvent::Closed)) | Ok(None) => break,
+                Ok(Some(_)) => {}
+                Err(_) => break,
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for idle channel close");
+}
+
+#[tokio::test]
+async fn test_idle_timeout_closes_quiet_shell() {
+    init_tracing();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let server_state = temp_state("server-idle");
+        let client_state = temp_state("client-idle");
+
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None)
+            .idle_timeout(Duration::from_millis(400));
+
+        let (ready, server) = Server::bind(server_opts).await.unwrap();
+        let ticket = ready.ticket().clone();
+        let shutdown = server.shutdown_handle();
+        let server_handle = tokio::spawn(async move { server.run().await });
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
+        let mut session = Client::connect(&client_opts, ticket).await.unwrap();
+        session.start_shell().await.expect("Failed to start shell");
+
+        // Sanity: the channel works before going quiet.
+        session.send(b"echo idle-probe\r\n").await.unwrap();
+        expect_shell_output(&mut session, "idle-probe").await;
+
+        // Go quiet well past the 400 ms timeout, then expect the reap.
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        expect_shell_closed(&mut session).await;
+
+        let _ = session.close().await;
+        shutdown.close().await;
+        let _ = server_handle.await;
+        let _ = fs::remove_dir_all(server_state.root()).await;
+        let _ = fs::remove_dir_all(client_state.root()).await;
+    })
+    .await
+    .expect("Test timed out");
+}
+
+#[tokio::test]
+async fn test_idle_timeout_resets_on_traffic() {
+    init_tracing();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let server_state = temp_state("server-idle-reset");
+        let client_state = temp_state("client-idle-reset");
+
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None)
+            .idle_timeout(Duration::from_millis(400));
+
+        let (ready, server) = Server::bind(server_opts).await.unwrap();
+        let ticket = ready.ticket().clone();
+        let shutdown = server.shutdown_handle();
+        let server_handle = tokio::spawn(async move { server.run().await });
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
+        let mut session = Client::connect(&client_opts, ticket).await.unwrap();
+        session.start_shell().await.expect("Failed to start shell");
+
+        // Each command lands inside the 400 ms window while total elapsed time
+        // exceeds it, so observing both outputs proves the timer resets.
+        session.send(b"echo tick-one\r\n").await.unwrap();
+        expect_shell_output(&mut session, "tick-one").await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        session.send(b"echo tick-two\r\n").await.unwrap();
+        expect_shell_output(&mut session, "tick-two").await;
+
+        // Now go quiet: the reaper must still fire afterwards.
+        tokio::time::sleep(Duration::from_millis(2000)).await;
+        expect_shell_closed(&mut session).await;
+
+        let _ = session.close().await;
+        shutdown.close().await;
+        let _ = server_handle.await;
+        let _ = fs::remove_dir_all(server_state.root()).await;
+        let _ = fs::remove_dir_all(client_state.root()).await;
+    })
+    .await
+    .expect("Test timed out");
 }

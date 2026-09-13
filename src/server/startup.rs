@@ -243,6 +243,7 @@ pub(crate) async fn bind_server(options: ServerOptions) -> Result<(ServerReady, 
             shutdown_on_wormhole_success: options.shutdown_on_wormhole_success,
             session_tracker: crate::server::SessionTracker::new(),
             metrics: crate::metrics::Metrics::new(),
+            idle_timeout: options.idle_timeout,
         },
     ))
 }

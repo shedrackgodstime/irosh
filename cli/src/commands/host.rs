@@ -11,6 +11,7 @@ pub async fn exec(
     auth_mode: Option<crate::commands::CliAuthMode>,
     authorize: Option<std::path::PathBuf>,
     simple: bool,
+    idle_timeout: Option<u64>,
     ctx: &CliContext,
 ) -> Result<()> {
     let state = ctx.server_state()?;
@@ -47,6 +48,10 @@ pub async fn exec(
 
     if let Some(mode) = auth_mode {
         options = options.auth_mode(mode.into());
+    }
+
+    if let Some(seconds) = idle_timeout {
+        options = options.idle_timeout(std::time::Duration::from_secs(seconds));
     }
 
     // Apply global config overrides

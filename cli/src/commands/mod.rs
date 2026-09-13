@@ -67,6 +67,10 @@ pub enum Commands {
         /// Use simplified output (machine-readable hints)
         #[arg(long)]
         simple: bool,
+
+        /// Automatically disconnect idle shell sessions after this many seconds (e.g. 600). Unset disables idle timeout.
+        #[arg(long, value_name = "SECONDS")]
+        idle_timeout: Option<u64>,
     },
 
     /// Start or manage discovery wormholes
@@ -178,7 +182,18 @@ impl CommandExec for Commands {
                 auth_mode,
                 authorize,
                 simple,
-            } => host::exec(secret.clone(), *auth_mode, authorize.clone(), *simple, ctx).await,
+                idle_timeout,
+            } => {
+                host::exec(
+                    secret.clone(),
+                    *auth_mode,
+                    authorize.clone(),
+                    *simple,
+                    *idle_timeout,
+                    ctx,
+                )
+                .await
+            }
             Commands::Wormhole {
                 code,
                 passwd,

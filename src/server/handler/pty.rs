@@ -18,6 +18,13 @@ use super::ServerHandler;
 
 use tokio_util::sync::CancellationToken;
 
+/// How long after channel open the reader thread auto-answers the shell's
+/// DSR cursor-position query (`ESC [ 6 n`). PowerShell can take a couple of
+/// seconds to reach its prompt on slow hosts; after the window closes the
+/// client terminal answers any further queries itself.
+#[cfg(not(unix))]
+const DSR_AUTOREPLY_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Shared ownership of the master PTY handle.
 ///
 /// Both `RunningPty` (for resize operations) and the spawned reader task (for
@@ -43,6 +50,10 @@ struct RunningPty {
     #[cfg(unix)]
     pgid: Option<libc::pid_t>,
     shutdown: CancellationToken,
+    /// Mirror client input back to the client (terminal ECHO). Only true on
+    /// Windows cmd.exe sessions: ConPTY does not echo itself, while Unix
+    /// kernels and PSReadLine render input on their own.
+    server_echo: bool,
 }
 
 struct CleanupGuard {
@@ -50,6 +61,7 @@ struct CleanupGuard {
     pid: u32,
     shell_state: ConnectionShellState,
     channels: Arc<StdMutex<HashMap<ChannelId, ChannelState>>>,
+    idle: Arc<StdMutex<HashMap<ChannelId, std::time::Instant>>>,
 }
 
 #[cfg(unix)]
@@ -75,6 +87,9 @@ impl Drop for CleanupGuard {
             }
         };
         channels.remove(&self.channel);
+        if let Ok(mut idle) = self.idle.lock() {
+            idle.remove(&self.channel);
+        }
     }
 }
 
@@ -82,6 +97,9 @@ impl Drop for CleanupGuard {
 struct PtySpec {
     term: String,
     size: PtySize,
+    /// Whether the client negotiated terminal ECHO for this channel.
+    /// Defaults to false (no pty requested means no echo).
+    echo: bool,
 }
 
 impl Default for PtySpec {
@@ -89,6 +107,7 @@ impl Default for PtySpec {
         Self {
             term: "xterm-256color".to_string(),
             size: default_pty_size(),
+            echo: false,
         }
     }
 }
@@ -99,6 +118,7 @@ impl ServerHandler {
         channel: ChannelId,
         term: &str,
         size: PtySize,
+        echo: bool,
         session: &mut server::Session,
     ) -> std::result::Result<(), crate::error::IroshError> {
         let mut channels = self.lock_channels();
@@ -106,6 +126,7 @@ impl ServerHandler {
         state_entry.pty = PtySpec {
             term: term.to_string(),
             size,
+            echo,
         };
         session.channel_success(channel)?;
         Ok(())
@@ -318,6 +339,10 @@ impl ServerHandler {
         let handle = session.handle();
         let channels_ref = self.channels.clone();
         let shell_state = self.shell_state.clone();
+        // Shell output counts as channel traffic for the idle timeout, so the
+        // reader loops refresh the timestamp on every forwarded chunk.
+        let idle_for_task = self.idle.clone();
+        let idle_timeout_for_task = self.idle_timeout;
 
         #[cfg(unix)]
         let task_shutdown = shutdown.clone();
@@ -333,6 +358,14 @@ impl ServerHandler {
             #[cfg(unix)]
             pgid,
             shutdown,
+            // ConPTY never echoes input back itself. Mirror keystrokes when
+            // the client negotiated ECHO and the shell does not render its
+            // own line (cmd.exe). PowerShell/PSReadLine draws input itself,
+            // and Unix kernels echo in the line discipline.
+            #[cfg(windows)]
+            server_echo: state_entry.pty.echo && !windows_shell_self_echoes(),
+            #[cfg(unix)]
+            server_echo: false,
         });
 
         session
@@ -349,6 +382,7 @@ impl ServerHandler {
                 pid: child_pid.unwrap_or(0),
                 shell_state,
                 channels: channels_ref,
+                idle: idle_for_task.clone(),
             };
 
             let handle_for_task = handle.clone();
@@ -392,6 +426,9 @@ impl ServerHandler {
                                                         warn!("PTY reader failed to send data to channel {:?}: {:?}", channel, e);
                                                         break;
                                                     }
+                                                    if !idle_timeout_for_task.is_zero() {
+                                                        Self::touch_idle(&idle_for_task, channel);
+                                                    }
                                                 }
                                                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                                     guard.clear_ready();
@@ -424,6 +461,8 @@ impl ServerHandler {
                 // supported inside spawn_blocking threads by Tokio.
                 let rt_handle = tokio::runtime::Handle::current();
                 let reader_done_task = reader_done_cloned;
+                let idle_for_reader = idle_for_task;
+                let idle_timeout_for_reader = idle_timeout_for_task;
 
                 info!(
                     "Spawning blocking PTY reader thread for channel {:?}",
@@ -453,6 +492,14 @@ impl ServerHandler {
                     // window on each byte).
                     #[cfg(not(unix))]
                     let mut dsr_state: u8 = 0;
+                    // Auto-reply window: shells issue their DSR query at startup
+                    // and block until answered. Reply only inside this window —
+                    // a late reply injected onto a live prompt lands as literal
+                    // keystrokes and corrupts the command line (observed: a
+                    // late reply turned `exit` into `xit` on PowerShell).
+                    // Later queries are answered by the real client terminal.
+                    #[cfg(not(unix))]
+                    let reader_started = std::time::Instant::now();
                     loop {
                         if reader_done_task.is_cancelled() {
                             info!(
@@ -486,10 +533,15 @@ impl ServerHandler {
                                                 2 if b == b'6' => dsr_state = 3,
                                                 3 if b == b'n' => {
                                                     // Reply with a cursor position report.
-                                                    // The row/col don't matter here; cmd
-                                                    // only needs a response to unblock.
-                                                    let _ = pty_tx_reader
-                                                        .try_send(Bytes::from_static(b"\x1b[1;1R"));
+                                                    // The row/col don't matter here; the
+                                                    // shell only needs a response to unblock.
+                                                    if reader_started.elapsed()
+                                                        < DSR_AUTOREPLY_WINDOW
+                                                    {
+                                                        let _ = pty_tx_reader.try_send(
+                                                            Bytes::from_static(b"\x1b[1;1R"),
+                                                        );
+                                                    }
                                                     dsr_state = 0;
                                                 }
                                                 _ => dsr_state = 0,
@@ -506,6 +558,9 @@ impl ServerHandler {
                                     .is_err()
                                 {
                                     break;
+                                }
+                                if !idle_timeout_for_reader.is_zero() {
+                                    Self::touch_idle(&idle_for_reader, channel);
                                 }
                             }
                             Err(e) => {
@@ -619,6 +674,17 @@ impl ServerHandler {
         if let Some(pty_tx) = pty_tx {
             let _ = pty_tx.send(Bytes::copy_from_slice(data)).await;
         }
+    }
+
+    /// Whether this channel wants server-side input echo (terminal ECHO on a
+    /// shell that does not render its own input). Lock is released before any
+    /// await performed by the caller.
+    pub(super) fn channel_server_echo(&self, channel: ChannelId) -> bool {
+        let channels = self.lock_channels();
+        channels
+            .get(&channel)
+            .and_then(|state_entry| state_entry.process.as_ref())
+            .is_some_and(|process| process.server_echo)
     }
 
     pub(super) fn resize_channel(
@@ -751,11 +817,101 @@ impl ServerHandler {
     }
 }
 
+/// Builds the bytes the server echoes back for client input when
+/// `server_echo` is on (cmd.exe sessions: ConPTY never echoes by itself).
+///
+/// Faithful to TTY ECHO semantics rather than a raw copy:
+/// - printable ASCII, space, tab and UTF-8 bytes echo as-is;
+/// - `\r` echoes as `\n` (the shell's own `\r\n` supplies the carriage
+///   return, avoiding a doubled newline);
+/// - escape sequences (arrow keys, Delete, `ESC M`, ...) are swallowed:
+///   the shell consumes those keys silently and repaints the line itself,
+///   so echoing them would print `^[[A` glyph garbage;
+/// - other C0 controls and DEL are swallowed: the shell announces their
+///   effect through its own output (erase redraws, `^C` on interrupt).
+pub(super) fn filter_echo_bytes(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        let b = data[i];
+        if b == 0x1b {
+            // Skip an escape sequence. A truncated tail is dropped; the
+            // remainder of a split sequence is swallowed on the next call
+            // the same way.
+            i += 1;
+            if i >= data.len() {
+                break;
+            }
+            match data[i] {
+                b'[' => {
+                    // CSI: parameter/intermediate bytes (0x20-0x3F), then one
+                    // final byte (0x40-0x7E). Anything else ends the sequence.
+                    i += 1;
+                    while i < data.len() {
+                        let f = data[i];
+                        i += 1;
+                        if (0x40..=0x7e).contains(&f) || !(0x20..=0x3f).contains(&f) {
+                            break;
+                        }
+                    }
+                }
+                b']' => {
+                    // OSC: consume until BEL or ST.
+                    i += 1;
+                    while i < data.len() {
+                        let f = data[i];
+                        i += 1;
+                        if f == 0x07 {
+                            break;
+                        }
+                        if f == 0x1b {
+                            if i < data.len() && data[i] == b'\\' {
+                                i += 1;
+                            }
+                            break;
+                        }
+                    }
+                }
+                b'(' | b')' | b'#' => {
+                    // Two-byte sequences: consume the designator too.
+                    i += 1;
+                    if i < data.len() {
+                        i += 1;
+                    }
+                }
+                // Single-char escape (`ESC M`, `ESC =`, ...): consume it.
+                _ => {
+                    i += 1;
+                }
+            }
+        } else if b == b'\r' {
+            out.push(b'\n');
+            i += 1;
+        } else if b == b'\n' || b == b'\t' || b == b' ' || b.is_ascii_graphic() || b >= 0x80 {
+            out.push(b);
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 #[cfg(windows)]
 fn windows_command_processor() -> String {
     use std::sync::OnceLock;
     static SHELL: OnceLock<String> = OnceLock::new();
     SHELL.get_or_init(detect_windows_shell).clone()
+}
+
+/// True when the configured Windows shell renders typed input itself
+/// (PowerShell/PSReadLine). The server must not echo in that case or every
+/// keystroke would appear twice. cmd.exe has no line editor, so it relies
+/// on the peer to echo.
+#[cfg(windows)]
+fn windows_shell_self_echoes() -> bool {
+    let exe = windows_command_processor().to_lowercase();
+    exe.contains("powershell") || exe.contains("pwsh")
 }
 
 fn build_command(command: Option<&str>) -> CommandBuilder {
@@ -770,8 +926,7 @@ fn build_command(command: Option<&str>) -> CommandBuilder {
         #[cfg(windows)]
         {
             let exe = windows_command_processor();
-            let is_powershell =
-                exe.to_lowercase().contains("powershell") || exe.to_lowercase().contains("pwsh");
+            let is_powershell = windows_shell_self_echoes();
             let flag = if is_powershell { "-Command" } else { "/C" };
 
             // Enforce UTF-8 encoding for the remote session to ensure compatibility with irosh output
@@ -799,8 +954,7 @@ fn build_command(command: Option<&str>) -> CommandBuilder {
         #[cfg(windows)]
         {
             let exe = windows_command_processor();
-            let is_powershell =
-                exe.to_lowercase().contains("powershell") || exe.to_lowercase().contains("pwsh");
+            let is_powershell = windows_shell_self_echoes();
 
             let mut builder = CommandBuilder::new(exe);
             if is_powershell {
@@ -868,4 +1022,63 @@ fn detect_windows_shell() -> String {
             .into_owned();
     }
     "C:\\Windows\\System32\\cmd.exe".to_string()
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::filter_echo_bytes;
+
+    #[test]
+    fn printable_passthrough() {
+        assert_eq!(filter_echo_bytes(b"echo A~B"), b"echo A~B");
+    }
+
+    #[test]
+    fn carriage_return_echoes_as_linefeed() {
+        assert_eq!(filter_echo_bytes(b"a\rb"), b"a\nb");
+    }
+
+    #[test]
+    fn arrow_key_sequence_swallowed() {
+        assert!(filter_echo_bytes(b"\x1b[A").is_empty());
+    }
+
+    #[test]
+    fn delete_key_sequence_swallowed_inline() {
+        assert_eq!(filter_echo_bytes(b"ab\x1b[3~cd"), b"abcd");
+    }
+
+    #[test]
+    fn single_char_escape_swallowed() {
+        assert!(filter_echo_bytes(b"\x1bM").is_empty());
+    }
+
+    #[test]
+    fn control_bytes_swallowed() {
+        assert!(filter_echo_bytes(b"\x03").is_empty());
+        assert!(filter_echo_bytes(b"\x7f").is_empty());
+    }
+
+    #[test]
+    fn utf8_passthrough() {
+        let input = "héllo ~".as_bytes();
+        assert_eq!(filter_echo_bytes(input), input);
+    }
+
+    #[test]
+    fn trailing_lone_esc_swallowed() {
+        assert_eq!(filter_echo_bytes(b"a\x1b"), b"a");
+    }
+
+    #[test]
+    fn multiparam_csi_swallowed() {
+        assert!(filter_echo_bytes(b"\x1b[38;5;196m").is_empty());
+        assert_eq!(filter_echo_bytes(b"x\x1b[1;31my"), b"xy");
+    }
+
+    #[test]
+    fn osc_swallowed() {
+        assert!(filter_echo_bytes(b"\x1b]0;title\x07").is_empty());
+        assert_eq!(filter_echo_bytes(b"a\x1b]0;t\x1b\\b"), b"ab");
+    }
 }

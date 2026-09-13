@@ -55,6 +55,7 @@ pub struct ServerOptions {
     authenticator: Option<Arc<dyn Authenticator>>,
     pub(crate) shutdown_on_wormhole_success: bool,
     pub(crate) auth_mode: crate::auth::AuthMode,
+    pub(crate) idle_timeout: std::time::Duration,
 }
 
 impl Clone for ServerOptions {
@@ -70,6 +71,7 @@ impl Clone for ServerOptions {
             authenticator: self.authenticator.clone(),
             shutdown_on_wormhole_success: self.shutdown_on_wormhole_success,
             auth_mode: self.auth_mode,
+            idle_timeout: self.idle_timeout,
         }
     }
 }
@@ -88,6 +90,7 @@ impl ServerOptions {
             authenticator: None,
             shutdown_on_wormhole_success: false,
             auth_mode: crate::auth::AuthMode::Unified,
+            idle_timeout: std::time::Duration::ZERO,
         }
     }
 
@@ -147,6 +150,21 @@ impl ServerOptions {
     pub fn shutdown_on_wormhole_success(mut self) -> Self {
         self.shutdown_on_wormhole_success = true;
         self
+    }
+
+    /// Configures an inactivity timeout for shell channels. When a channel
+    /// carries no traffic in either direction for longer than this, the
+    /// server closes it. `Duration::ZERO` (the default) disables the timeout.
+    pub fn idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.idle_timeout = timeout;
+        self
+    }
+
+    /// Returns the configured shell-channel inactivity timeout
+    /// (`Duration::ZERO` means disabled).
+    #[must_use]
+    pub fn idle_timeout_value(&self) -> std::time::Duration {
+        self.idle_timeout
     }
 
     /// Returns a reference to the [`StateConfig`] this server was configured with.
@@ -321,6 +339,7 @@ pub struct Server {
     session_tracker: SessionTracker,
     /// Runtime metrics counters.
     metrics: crate::metrics::Metrics,
+    idle_timeout: std::time::Duration,
 }
 
 impl fmt::Debug for Server {
@@ -398,6 +417,7 @@ struct SshProtocol {
     blobs: iroh_blobs::store::fs::FsStore,
     session_tracker: Arc<SessionTracker>,
     metrics: crate::metrics::Metrics,
+    idle_timeout: std::time::Duration,
 }
 
 impl std::fmt::Debug for SshProtocol {
@@ -525,7 +545,8 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
         }
 
         let handler = ServerHandler::with_metrics(session_authenticator, shell_state, metrics)
-            .with_auth_gate(auth_gate_tx);
+            .with_auth_gate(auth_gate_tx)
+            .with_idle_timeout(self.idle_timeout);
         let config = session_config;
 
         tracing::debug!("Starting SSH session task");
@@ -658,6 +679,7 @@ impl Server {
             blobs: self.blobs.clone(),
             session_tracker: Arc::new(SessionTracker::new()),
             metrics: self.metrics.clone(),
+            idle_timeout: self.idle_timeout,
         };
 
         let mut pairing_protocol = base_protocol.clone();

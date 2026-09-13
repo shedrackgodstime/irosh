@@ -67,6 +67,15 @@ fn test_server_send_sync() {
     assert_send_sync::<ServerShutdown>();
 }
 
+#[test]
+fn server_options_idle_timeout_defaults_to_disabled_and_roundtrips() {
+    let state = temp_state_dir("server-idle-timeout");
+    let options = ServerOptions::new(state);
+    assert_eq!(options.idle_timeout_value(), Duration::ZERO);
+    let options = options.idle_timeout(Duration::from_secs(300));
+    assert_eq!(options.idle_timeout_value(), Duration::from_secs(300));
+}
+
 #[tokio::test]
 async fn wormhole_rate_limit_burns_after_three_failed_attempts() {
     use crate::auth::Credentials;

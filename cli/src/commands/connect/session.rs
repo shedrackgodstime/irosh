@@ -160,6 +160,9 @@ async fn handle_action(
         EscapeAction::CommandPrompt => {
             // Prompt initialization is handled inside InputEngine
         }
+        EscapeAction::SendLiteral(bytes) => {
+            session.send(&bytes).await?;
+        }
         EscapeAction::RunLocal(cmd) => {
             let (cont, lp) =
                 execute_local_command(session, input_engine, stdout, stdin, transfer_context, cmd)

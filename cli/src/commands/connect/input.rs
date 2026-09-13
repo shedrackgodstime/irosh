@@ -17,6 +17,9 @@ pub enum EscapeAction {
     CommandPrompt,
     /// Show help information (`~?`).
     Help,
+    /// Send literal bytes to the remote host without a trailing newline
+    /// (`~~` sends a single `~`, so the remote command line can be composed).
+    SendLiteral(Vec<u8>),
     /// Execute a command from the local prompt.
     RunLocal(LocalCommand),
     /// Request tab completion.
@@ -112,6 +115,10 @@ fn parse_escape(buf: &[u8]) -> Option<EscapeAction> {
         b"." => Some(EscapeAction::Disconnect),
         b"?" | b"help" => Some(EscapeAction::Help),
         b"C" | b"c" => Some(EscapeAction::CommandPrompt),
+        // `~~` forwards a single literal tilde (OpenSSH parity). The editor
+        // buffer holds both tildes; only one is sent, with no newline, so
+        // the user can keep composing the remote line (e.g. `~/.ssh`).
+        b"~" => Some(EscapeAction::SendLiteral(b"~".to_vec())),
         _ => {
             // Try parsing it as a full local command (like `put` or `get`)
             parse_local_command(cmd).map(EscapeAction::RunLocal)
@@ -148,9 +155,14 @@ impl InputEngine {
     }
 
     /// Remote data arriving resets the 'start of line' state on newlines.
+    /// Only `\n` arms the escape detector: Windows shells redraw the prompt
+    /// with bare `\r`s (PSReadLine) and progress bars reuse `\r` to repaint.
+    /// Treating those as line starts would re-arm mid-command and hijack a
+    /// literal `~` typed later on the same line. Real newlines always carry
+    /// `\n` (`\r\n` on Windows, `\n` on Unix), so nothing is lost.
     pub fn observe_remote(&mut self, data: &[u8]) {
         for &byte in data {
-            if byte == b'\r' || byte == b'\n' {
+            if byte == b'\n' {
                 self.at_start_of_line = true;
                 self.local_line_len = 0;
             }
@@ -284,18 +296,36 @@ impl InputEngine {
                 self.escape_history.add(&line_str);
 
                 if let Some(action) = parse_escape(&bytes) {
-                    if action == EscapeAction::CommandPrompt {
-                        finalize_submitted_line(to_local, line);
-                        self.mode = InputMode::LocalEdit;
-                        line.editor = LineEditor::new_prompt();
-                        line.display_cursor = 0;
-                        line.control_state = ControlSequenceState::None;
-                        to_local.extend_from_slice(b"irosh> ");
-                    } else {
-                        finalize_submitted_line(to_local, line);
-                        self.exit_local_prompt(to_remote);
+                    match action {
+                        EscapeAction::CommandPrompt => {
+                            finalize_submitted_line(to_local, line);
+                            self.mode = InputMode::LocalEdit;
+                            line.editor = LineEditor::new_prompt();
+                            line.display_cursor = 0;
+                            line.control_state = ControlSequenceState::None;
+                            self.at_start_of_line = true;
+                            self.local_line_len = 0;
+                            to_local.extend_from_slice(b"irosh> ");
+                            actions.push(EscapeAction::CommandPrompt);
+                        }
+                        EscapeAction::SendLiteral(payload) => {
+                            finalize_submitted_line(to_local, line);
+                            // Back to remote input without waking the shell: the
+                            // literal byte joins the pending remote line and no
+                            // Enter is sent. One char is pending remotely, so a
+                            // following `~` must not re-arm the escape detector.
+                            self.mode = InputMode::Remote;
+                            self.at_start_of_line = false;
+                            self.local_line_len = 1;
+                            self.active_line = None;
+                            actions.push(EscapeAction::SendLiteral(payload));
+                        }
+                        action => {
+                            finalize_submitted_line(to_local, line);
+                            self.exit_local_prompt(to_remote);
+                            actions.push(action);
+                        }
                     }
-                    actions.push(action);
                 } else {
                     finalize_submitted_line(to_local, line);
                     self.exit_local_prompt(to_remote);
@@ -305,8 +335,6 @@ impl InputEngine {
                     r_bytes.push(b'\r');
                     to_remote.extend_from_slice(&r_bytes);
                 }
-                self.at_start_of_line = true;
-                self.local_line_len = 0;
             }
             EditorEffect::SubmitPrompt(bytes) => {
                 let line_str = String::from_utf8_lossy(&bytes);
@@ -707,6 +735,49 @@ mod tests {
 
         let (_, _, _) = engine.process_local(b"~");
         assert_eq!(engine.mode, InputMode::LocalEdit);
+    }
+
+    #[test]
+    fn test_remote_bare_cr_does_not_rearm_escape() {
+        // PSReadLine redraws the prompt with bare `\r`s (no `\n`). Those must
+        // not reset the locally-typed count, or a literal `~` typed mid-line
+        // would be hijacked into escape mode.
+        let (mut engine, _dir) = setup_engine();
+        engine.observe_remote(b"\r\n");
+        engine.process_local(b"ec");
+        engine.observe_remote(b"\r\x1b[K");
+        let (remote, _, _) = engine.process_local(b"~");
+        assert_eq!(
+            engine.mode,
+            InputMode::Remote,
+            "tilde after a bare-CR redraw must stay a literal character"
+        );
+        assert!(
+            remote.contains(&b'~'),
+            "literal tilde must reach remote: {remote:?}"
+        );
+    }
+
+    #[test]
+    fn test_double_tilde_sends_single_literal_tilde() {
+        let (mut engine, _dir) = setup_engine();
+        engine.process_local(b"~");
+        let (remote, _, actions) = engine.process_local(b"~\r");
+        assert_eq!(
+            actions,
+            vec![EscapeAction::SendLiteral(b"~".to_vec())],
+            "~~ must produce a literal send, not an unknown-command error"
+        );
+        assert!(
+            remote.is_empty(),
+            "literal byte travels via the action (session.send), not inline: {remote:?}"
+        );
+        assert_eq!(engine.mode, InputMode::Remote);
+        // One literal char is now pending on the remote line, so a following
+        // tilde must stay literal too.
+        let (remote, _, _) = engine.process_local(b"~");
+        assert_eq!(engine.mode, InputMode::Remote);
+        assert!(remote.contains(&b'~'));
     }
 
     #[test]
