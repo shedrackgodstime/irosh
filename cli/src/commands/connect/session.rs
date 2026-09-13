@@ -45,8 +45,10 @@ pub async fn drive_session(
                         let (to_remote, to_local, actions) =
                             input_engine.process_local(&data);
 
-                        if !to_remote.is_empty() {
-                            session.send(&to_remote).await?;
+                        if !to_remote.is_empty() && session.send(&to_remote).await.is_err() {
+                            // The remote closed the session while we were
+                            // writing; this is a clean end, not an error.
+                            return finish_remote_closed(&mut session).await;
                         }
 
                         if !to_local.is_empty() {
@@ -61,9 +63,9 @@ pub async fn drive_session(
 
                             if !swallowed.is_empty() {
                                 let (to_remote, to_local, mut extra_actions) = input_engine.process_local(&swallowed);
-                                if !to_remote.is_empty() {
-                                    session.send(&to_remote).await?;
-                                }
+                                if !to_remote.is_empty() && session.send(&to_remote).await.is_err() {
+                                        return finish_remote_closed(&mut session).await;
+                                    }
                                 if !to_local.is_empty() {
                                     stdout.write_all(&to_local).await?;
                                     stdout.flush().await?;
@@ -85,7 +87,7 @@ pub async fn drive_session(
                         }
                     }
                     None => {
-                        session.eof().await?;
+                        let _ = session.eof().await;
                         let _ = session.disconnect().await;
                         return Ok(DisconnectReason::UserInitiated);
                     }
@@ -95,8 +97,8 @@ pub async fn drive_session(
 
             // DATA and RESIZE from the remote session.
             event = session.next_event() => {
-                match event? {
-                    Some(SessionEvent::Data(data)) => {
+                match event {
+                    Ok(Some(SessionEvent::Data(data))) => {
                         input_engine.observe_remote(&data);
                         if input_engine.mode == super::input::InputMode::LocalEdit {
                             // Buffer remote data while local prompt is active to prevent screen corruption.
@@ -106,19 +108,26 @@ pub async fn drive_session(
                             stdout.flush().await?;
                         }
                     }
-                    Some(SessionEvent::ExtendedData(data, _)) => {
+                    Ok(Some(SessionEvent::ExtendedData(data, _))) => {
                         stderr.write_all(&data).await?;
                         stderr.flush().await?;
                     }
-                    Some(SessionEvent::Closed) | None => {
-                        let _ = session.disconnect().await;
-                        return Ok(DisconnectReason::RemoteClosed);
+                    Ok(Some(SessionEvent::Closed) | None) => {
+                        return finish_remote_closed(&mut session).await;
                     }
-                    _ => {}
+                    Ok(Some(_)) => {}
+                    Err(_) => return finish_remote_closed(&mut session).await,
                 }
             }
         }
     }
+}
+
+/// Tears down the session after the remote side ended it and reports a clean
+/// remote close to the caller.
+async fn finish_remote_closed(session: &mut Session) -> Result<DisconnectReason> {
+    let _ = session.disconnect().await;
+    Ok(DisconnectReason::RemoteClosed)
 }
 
 async fn handle_action(

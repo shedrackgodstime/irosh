@@ -120,6 +120,25 @@ impl Session {
         self.state
     }
 
+    /// Returns whether all iroh transport resources (channel, connections,
+    /// endpoint) have been released after [`Session::disconnect`] or
+    /// [`Session::close`].
+    ///
+    /// Used by integration tests to assert that a clean session end does not
+    /// leave the endpoint open until drop.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn transport_resources_released(&self) -> bool {
+        let channel_released = match self.channel.try_lock() {
+            Ok(guard) => guard.is_none(),
+            Err(_) => false,
+        };
+        channel_released
+            && self.connection.is_none()
+            && self.blobs_connection.is_none()
+            && self.endpoint.is_none()
+    }
+
     /// Returns remote metadata if it was obtained during session setup.
     pub fn remote_metadata(&self) -> Option<&crate::transport::metadata::PeerMetadata> {
         self.remote_metadata.as_ref()
@@ -467,23 +486,31 @@ impl Session {
 
     /// Disconnects the session and closes all underlying transport streams.
     ///
+    /// Tear down happens regardless of the current session state: when the
+    /// remote stream ends, [`Session::next_event`] marks the session `Closed`
+    /// immediately, and iroh resources must still be released so the endpoint
+    /// is not dropped unclosed (which makes iroh log "Endpoint dropped without
+    /// calling `Endpoint::close`" at error level). Every step is idempotent, so
+    /// calling this more than once is safe.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the disconnect signal cannot be sent.
+    /// Returns an error if the SSH disconnect signal cannot be sent while the
+    /// session is still open.
     #[must_use]
     #[tracing::instrument(skip(self))]
     pub async fn disconnect(&mut self) -> Result<()> {
-        if self.state.is_terminal() {
-            return Ok(());
-        }
         if let Some(channel) = self.channel.lock().await.take() {
             let _ = channel.close().await;
         }
-        let handle = self.handle.read().await;
-        handle
-            .disconnect(russh::Disconnect::ByApplication, "", "en-US")
-            .await
-            .map_err(|e| ClientError::DisconnectFailed { source: e })?;
+
+        if !self.state.is_terminal() {
+            let handle = self.handle.read().await;
+            handle
+                .disconnect(russh::Disconnect::ByApplication, "", "en-US")
+                .await
+                .map_err(|e| ClientError::DisconnectFailed { source: e })?;
+        }
 
         // Explicitly close Iroh resources to avoid ungraceful drop panics.
         if let Some(conn) = self.connection.take() {

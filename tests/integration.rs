@@ -1101,6 +1101,64 @@ async fn expect_shell_closed(session: &mut Session) {
 }
 
 #[tokio::test]
+async fn test_clean_shell_exit_releases_transport_resources() {
+    init_tracing();
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let server_state = temp_state("server-exit");
+        let client_state = temp_state("client-exit");
+
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled, None);
+
+        let (ready, server) = Server::bind(server_opts).await.unwrap();
+        let ticket = ready.ticket().clone();
+        let shutdown = server.shutdown_handle();
+        let server_handle = tokio::spawn(async move { server.run().await });
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig {
+                host_key_policy: HostKeyPolicy::AcceptAll,
+            })
+            .relay_mode(RelayMode::Disabled);
+        let mut session = Client::connect(&client_opts, ticket).await.unwrap();
+        session.start_shell().await.unwrap();
+
+        // Sanity: the channel works before the shell exits.
+        session.send(b"echo exit-probe\r\n").await.unwrap();
+        expect_shell_output(&mut session, "exit-probe").await;
+
+        // Ask the remote shell to exit, then kill the remote transport so the
+        // client stream ends (the "Session::next_event returns None" path that
+        // marks the session Closed).
+        let _ = session.send(b"exit\r\n").await;
+        shutdown.close().await;
+        expect_shell_closed(&mut session).await;
+
+        // A clean remote end must still tear down the iroh transport. Before
+        // the fix, `disconnect()` early-returned on the terminal state and left
+        // the endpoint open until drop, which made iroh log the spurious
+        // "Endpoint dropped without calling `Endpoint::close`" error.
+        session.disconnect().await.unwrap();
+        assert!(
+            session.transport_resources_released(),
+            "a clean remote close must release all iroh transport resources"
+        );
+
+        let _ = session.close().await;
+        let _ = server_handle.await;
+        let _ = fs::remove_dir_all(server_state.root()).await;
+        let _ = fs::remove_dir_all(client_state.root()).await;
+    })
+    .await
+    .expect("Test timed out");
+}
+
+#[tokio::test]
 async fn test_idle_timeout_closes_quiet_shell() {
     init_tracing();
     tokio::time::timeout(Duration::from_secs(90), async {
