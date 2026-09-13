@@ -463,3 +463,117 @@ mod tests {
         assert_eq!(record, deserialized);
     }
 }
+
+/// Async variants that offload blocking I/O to the blocking pool.
+#[cfg(feature = "storage")]
+pub mod async_storage {
+    use super::{
+        inspect_trust, load_all_authorized_clients, load_authorized_client, load_known_server,
+        write_authorized_client, write_known_server,
+    };
+    use crate::config::StateConfig;
+    use crate::error::{IroshError, Result};
+    use crate::storage::trust::{TrustEvent, TrustSummary};
+    use russh::keys::PublicKey;
+    use std::io;
+
+    /// Async variant of [`load_all_authorized_clients`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `load_all_authorized_clients` fails.
+    pub async fn load_all_authorized_clients_async(
+        state: &StateConfig,
+    ) -> Result<Vec<(String, PublicKey)>> {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || load_all_authorized_clients(&state))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`load_known_server`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `load_known_server` fails.
+    pub async fn load_known_server_async(
+        state: &StateConfig,
+        node_id: &str,
+    ) -> Result<Option<PublicKey>> {
+        let state = state.clone();
+        let node_id = node_id.to_string();
+        tokio::task::spawn_blocking(move || load_known_server(&state, &node_id))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`load_authorized_client`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `load_authorized_client` fails.
+    pub async fn load_authorized_client_async(
+        state: &StateConfig,
+        node_id: &str,
+    ) -> Result<Option<PublicKey>> {
+        let state = state.clone();
+        let node_id = node_id.to_string();
+        tokio::task::spawn_blocking(move || load_authorized_client(&state, &node_id))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`write_known_server`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `write_known_server` fails.
+    pub async fn write_known_server_async(
+        state: &StateConfig,
+        name: &str,
+        key: &PublicKey,
+    ) -> Result<TrustEvent> {
+        let state = state.clone();
+        let name = name.to_string();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || write_known_server(&state, &name, &key))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`write_authorized_client`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `write_authorized_client` fails.
+    pub async fn write_authorized_client_async(
+        state: &StateConfig,
+        name: &str,
+        key: &PublicKey,
+    ) -> Result<TrustEvent> {
+        let state = state.clone();
+        let name = name.to_string();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || write_authorized_client(&state, &name, &key))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`inspect_trust`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `inspect_trust` fails.
+    pub async fn inspect_trust_async(state: &StateConfig) -> Result<TrustSummary> {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || inspect_trust(&state))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+}

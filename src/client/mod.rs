@@ -247,21 +247,27 @@ impl Session {
     pub(crate) async fn ensure_channel(
         &self,
     ) -> Result<tokio::sync::MutexGuard<'_, Option<russh::Channel<russh::client::Msg>>>> {
-        let mut guard = self.channel.lock().await;
-        if guard.is_some() {
-            return Ok(guard);
+        // Fast path: check if channel exists (short lock hold)
+        {
+            let guard = self.channel.lock().await;
+            if guard.is_some() {
+                return Ok(guard);
+            }
         }
 
-        // Slow path: open a new channel while holding the lock.
-        // This blocks other callers during the network round-trip but avoids
-        // the TOCTOU race that double-checked locking would introduce.
+        // Slow path: open a new channel WITHOUT holding the lock.
+        // This avoids blocking other callers during the network round-trip.
         let handle = self.handle.read().await;
         let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| ClientError::ChannelOpenFailed { source: e })?;
 
-        *guard = Some(channel);
+        // Re-acquire lock and install if still None (CAS loop).
+        let mut guard = self.channel.lock().await;
+        if guard.is_none() {
+            *guard = Some(channel);
+        }
         Ok(guard)
     }
 

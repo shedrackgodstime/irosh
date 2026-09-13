@@ -214,3 +214,68 @@ mod tests {
         let _ = std::fs::remove_dir_all(state.root());
     }
 }
+
+/// Async variants that offload blocking I/O to the blocking pool.
+#[cfg(feature = "storage")]
+pub mod async_storage {
+    use super::{export_config, import_config, load_config, save_config};
+    use crate::config::{AppConfig, StateConfig};
+    use crate::error::{IroshError, Result};
+    use std::io;
+    use std::path::Path;
+
+    /// Async variant of [`load_config`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `load_config` fails.
+    pub async fn load_config_async(state: &StateConfig) -> Result<AppConfig> {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || load_config(&state))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`save_config`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `save_config` fails.
+    pub async fn save_config_async(state: &StateConfig, config: &AppConfig) -> Result<()> {
+        let state = state.clone();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || save_config(&state, &config))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`export_config`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `export_config` fails.
+    pub async fn export_config_async(state: &StateConfig, dest: &Path) -> Result<()> {
+        let state = state.clone();
+        let dest = dest.to_path_buf();
+        tokio::task::spawn_blocking(move || export_config(&state, &dest))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`import_config`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `import_config` fails.
+    pub async fn import_config_async(state: &StateConfig, src: &Path) -> Result<()> {
+        let state = state.clone();
+        let src = src.to_path_buf();
+        tokio::task::spawn_blocking(move || import_config(&state, &src))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+}

@@ -15,13 +15,21 @@ pub mod shadow;
 pub mod trust;
 pub(crate) mod utils;
 
+#[cfg(feature = "storage")]
+pub use config::async_storage as config_async;
 pub use config::{export_config, import_config, load_config, save_config};
+#[cfg(feature = "storage")]
+pub use keys::async_storage as keys_async;
 pub use keys::{
     EndpointIdentity, delete_secret_key, load_or_generate_identity, load_secret_key,
     save_secret_key,
 };
+#[cfg(feature = "storage")]
+pub use peers::async_storage as peers_async;
 pub use peers::{PeerProfile, delete_peer, list_peers, load_peer, rename_peer, save_peer};
 pub use shadow::{delete_shadow_file, load_shadow_file, write_shadow_file};
+#[cfg(feature = "storage")]
+pub use trust::async_storage as trust_async;
 pub use trust::{
     load_all_authorized_clients, load_all_authorized_clients as list_authorized_keys,
     load_authorized_client, load_known_server, reset_authorized_client as revoke_key,

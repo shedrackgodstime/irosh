@@ -292,3 +292,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(state.root());
     }
 }
+
+/// Async variants that offload blocking I/O to the blocking pool.
+#[cfg(feature = "storage")]
+pub mod async_storage {
+    use super::{load_or_generate_identity, load_secret_key, save_secret_key};
+    use crate::config::StateConfig;
+    use crate::error::{IroshError, Result};
+    use crate::storage::EndpointIdentity;
+    use iroh::SecretKey;
+    use std::io;
+
+    /// Async variant of [`load_secret_key`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `load_secret_key` fails.
+    pub async fn load_secret_key_async(state: &StateConfig) -> Result<SecretKey> {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || load_secret_key(&state))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`save_secret_key`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `save_secret_key` fails.
+    pub async fn save_secret_key_async(state: &StateConfig, key: &SecretKey) -> Result<()> {
+        let state = state.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || save_secret_key(&state, &key))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`load_or_generate_identity`] — already async, direct call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying `load_or_generate_identity` fails.
+    pub async fn load_or_generate_identity_async(state: &StateConfig) -> Result<EndpointIdentity> {
+        let state = state.clone();
+        load_or_generate_identity(&state).await
+    }
+}

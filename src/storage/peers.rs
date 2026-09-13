@@ -406,3 +406,87 @@ mod tests {
         let _ = std::fs::remove_dir_all(state.root());
     }
 }
+
+/// Async variants that offload blocking I/O to the blocking pool.
+#[cfg(feature = "storage")]
+pub mod async_storage {
+    use super::{delete_peer, list_peers, load_peer, rename_peer, save_peer};
+    use crate::config::StateConfig;
+    use crate::error::{IroshError, Result};
+    use crate::storage::PeerProfile;
+    use std::io;
+
+    /// Async variant of [`list_peers`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `list_peers` fails.
+    pub async fn list_peers_async(state: &StateConfig) -> Result<Vec<PeerProfile>> {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || list_peers(&state))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`save_peer`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `save_peer` fails.
+    pub async fn save_peer_async(state: &StateConfig, profile: &PeerProfile) -> Result<()> {
+        let state = state.clone();
+        let profile = profile.clone();
+        tokio::task::spawn_blocking(move || save_peer(&state, &profile))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`load_peer`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `load_peer` fails.
+    pub async fn load_peer_async(state: &StateConfig, name: &str) -> Result<Option<PeerProfile>> {
+        let state = state.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || load_peer(&state, &name))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`delete_peer`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `delete_peer` fails.
+    pub async fn delete_peer_async(state: &StateConfig, name: &str) -> Result<bool> {
+        let state = state.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || delete_peer(&state, &name))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+
+    /// Async variant of [`rename_peer`] — offloads to blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the blocking task panics or the underlying
+    /// synchronous `rename_peer` fails.
+    pub async fn rename_peer_async(
+        state: &StateConfig,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<bool> {
+        let state = state.clone();
+        let old_name = old_name.to_string();
+        let new_name = new_name.to_string();
+        tokio::task::spawn_blocking(move || rename_peer(&state, &old_name, &new_name))
+            .await
+            .map_err(|e| IroshError::Io(io::Error::other(e)))?
+    }
+}

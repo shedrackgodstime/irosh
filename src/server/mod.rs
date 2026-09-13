@@ -491,57 +491,76 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
         let mut session_config = self.config.clone();
 
         if self.is_pairing {
-            let mut wh_lock = self.wormhole.lock().await;
-            if let Some(wh) = wh_lock.as_mut() {
-                info!("Pairing connection established via wormhole code.");
-                let vault = match tokio::task::spawn_blocking({
-                    let state = self.state.clone();
-                    move || crate::storage::load_all_authorized_clients(&state)
-                })
-                .await
-                {
-                    Ok(Ok(vault)) => vault,
-                    _ => Vec::new(),
-                };
-                let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
-
-                let pairing_auth = crate::auth::UnifiedAuthenticator::with_tracking(
-                    self.state.clone(),
-                    self.security.host_key_policy,
-                    keys,
-                    wh.password.clone(),
-                    crate::auth::PairingMonitor {
-                        success_flag: wh.success.clone(),
-                        failed_attempts: wh.failed_attempts.clone(),
-                        success_tx: Some(self.success_tx.clone()),
-                        failure_tx: Some(self.failure_tx.clone()),
-                    },
-                );
-
-                let pairing_methods = pairing_auth.supported_methods().await;
-                let mut pairing_method_set = russh::MethodSet::empty();
-                for m in &pairing_methods {
-                    match m {
-                        crate::auth::AuthMethod::PublicKey => {
-                            pairing_method_set.push(russh::MethodKind::PublicKey);
-                        }
-                        crate::auth::AuthMethod::Password => {
-                            pairing_method_set.push(russh::MethodKind::Password);
-                        }
-                    }
+            // Extract pairing data while holding lock briefly, then release before blocking await.
+            let (password, success, failed_attempts, wormhole_active) = {
+                let wh_lock = self.wormhole.lock().await;
+                if let Some(wh) = wh_lock.as_ref() {
+                    (
+                        wh.password.clone(),
+                        wh.success.clone(),
+                        wh.failed_attempts.clone(),
+                        true,
+                    )
+                } else {
+                    (
+                        None,
+                        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                        Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                        false,
+                    )
                 }
-                session_config = Arc::new(russh::server::Config {
-                    auth_rejection_time: self.config.auth_rejection_time,
-                    keys: self.config.keys.clone(),
-                    methods: pairing_method_set,
-                    ..Default::default()
-                });
+            };
 
-                session_authenticator = Arc::new(pairing_auth);
-            } else {
+            if !wormhole_active {
                 warn!("Pairing connection attempted but no wormhole active.");
                 return Ok(());
             }
+
+            info!("Pairing connection established via wormhole code.");
+            let vault = match tokio::task::spawn_blocking({
+                let state = self.state.clone();
+                move || crate::storage::load_all_authorized_clients(&state)
+            })
+            .await
+            {
+                Ok(Ok(vault)) => vault,
+                _ => Vec::new(),
+            };
+            let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
+
+            let pairing_auth = crate::auth::UnifiedAuthenticator::with_tracking(
+                self.state.clone(),
+                self.security.host_key_policy,
+                keys,
+                password,
+                crate::auth::PairingMonitor {
+                    success_flag: success,
+                    failed_attempts: failed_attempts,
+                    success_tx: Some(self.success_tx.clone()),
+                    failure_tx: Some(self.failure_tx.clone()),
+                },
+            );
+
+            let pairing_methods = pairing_auth.supported_methods().await;
+            let mut pairing_method_set = russh::MethodSet::empty();
+            for m in &pairing_methods {
+                match m {
+                    crate::auth::AuthMethod::PublicKey => {
+                        pairing_method_set.push(russh::MethodKind::PublicKey);
+                    }
+                    crate::auth::AuthMethod::Password => {
+                        pairing_method_set.push(russh::MethodKind::Password);
+                    }
+                }
+            }
+            session_config = Arc::new(russh::server::Config {
+                auth_rejection_time: self.config.auth_rejection_time,
+                keys: self.config.keys.clone(),
+                methods: pairing_method_set,
+                ..Default::default()
+            });
+
+            session_authenticator = Arc::new(pairing_auth);
         }
 
         let handler = ServerHandler::with_metrics(session_authenticator, shell_state, metrics)
