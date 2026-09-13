@@ -196,7 +196,7 @@ impl AsyncStdin {
                         windows_sys::Win32::Storage::FileSystem::ReadFile(
                             handle,
                             buf.as_mut_ptr().cast(),
-                            u32::try_from(buf.len()).expect("input buffer length fits in u32"),
+                            u32::try_from(buf.len()).expect("BUG: input buffer length fits in u32"),
                             std::ptr::addr_of_mut!(read),
                             std::ptr::null_mut(),
                         )

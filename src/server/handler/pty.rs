@@ -317,7 +317,9 @@ impl ServerHandler {
                     writer_channel_id
                 );
             })
-            .expect("failed to spawn PTY writer thread");
+            .map_err(|e| ServerError::ShellError {
+                details: format!("failed to spawn PTY writer thread: {e}"),
+            })?;
 
         #[cfg(unix)]
         let maybe_fd = pair.master.as_raw_fd();

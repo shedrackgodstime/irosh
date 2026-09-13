@@ -191,9 +191,9 @@ pub enum StorageError {
         path: PathBuf,
         /// Details about why the secret is invalid.
         details: String,
-        /// The underlying error, if available.
+        /// The underlying key-parsing error.
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: iroh::KeyParsingError,
     },
 
     /// The provided peer name is invalid (e.g. contains path separators).

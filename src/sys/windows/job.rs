@@ -63,7 +63,7 @@ impl JobObject {
                 JobObjectExtendedLimitInformation,
                 std::ptr::addr_of!(info).cast(),
                 u32::try_from(std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>())
-                    .expect("JOBOBJECT_EXTENDED_LIMIT_INFORMATION size fits in u32"),
+                    .expect("BUG: JOBOBJECT_EXTENDED_LIMIT_INFORMATION struct fits in u32"),
             );
 
             if res == 0 {

@@ -101,7 +101,7 @@ pub fn load_secret_key(state: &StateConfig) -> Result<SecretKey> {
     let key = SecretKey::from_str(raw.trim()).map_err(|e| StorageError::EndpointSecretInvalid {
         path: path.clone(),
         details: e.to_string(),
-        source: Box::new(e),
+        source: e,
     })?;
     Ok(key)
 }
@@ -119,7 +119,7 @@ fn load_or_generate_identity_blocking(state: &StateConfig) -> Result<EndpointIde
         SecretKey::from_str(raw.trim()).map_err(|e| StorageError::EndpointSecretInvalid {
             path: path.clone(),
             details: e.to_string(),
-            source: Box::new(e),
+            source: e,
         })?
     } else {
         let secret_key = SecretKey::generate();

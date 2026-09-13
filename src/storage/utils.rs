@@ -268,7 +268,8 @@ fn apply_secure_permissions_windows(path: &Path) -> Result<()> {
             // SAFETY: `InitializeAcl` writes into `dacl` (the properly aligned
             // `u32` buffer cast to `*mut ACL`). The buffer is tiny and the byte
             // length always fits in a `u32`.
-            let acl_len = u32::try_from(dacl_buf.len() * 4).expect("ACL length fits u32");
+            let acl_len =
+                u32::try_from(dacl_buf.len() * 4).expect("BUG: ACL byte length fits in u32");
             if InitializeAcl(dacl, acl_len, ACL_REVISION) == 0 {
                 return Err(StorageError::FileWrite {
                     path: path.to_path_buf(),

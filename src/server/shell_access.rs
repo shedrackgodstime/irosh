@@ -86,7 +86,7 @@ pub(crate) async fn resolve_process_cwd(pid: u32) -> Result<Option<PathBuf>> {
                     0, // ProcessBasicInformation
                     pbi.as_mut_ptr().cast(),
                     u32::try_from(std::mem::size_of::<PROCESS_BASIC_INFORMATION>())
-                        .expect("PROCESS_BASIC_INFORMATION size fits in u32"),
+                        .expect("BUG: PROCESS_BASIC_INFORMATION struct fits in u32"),
                     std::ptr::addr_of_mut!(ret_len),
                 );
 
