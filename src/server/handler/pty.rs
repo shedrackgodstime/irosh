@@ -99,6 +99,10 @@ struct PtySpec {
     size: PtySize,
     /// Whether the client negotiated terminal ECHO for this channel.
     /// Defaults to false (no pty requested means no echo).
+    /// Only consumed on Windows: ConPTY never echoes input itself, so the
+    /// server mirrors keystrokes; Unix kernels echo in the line discipline,
+    /// so on non-Windows this field is deliberately never read.
+    #[cfg_attr(not(windows), allow(dead_code))]
     echo: bool,
 }
 
