@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use criterion::{Criterion, criterion_group, criterion_main};
 use irosh::auth::Authenticator;
 use std::sync::Arc;

@@ -39,3 +39,6 @@ crossterm = { version = "0.29.0", features = ["event-stream"] }
 [dev-dependencies]
 tempfile = "3.27.0"
 proptest = "1.6"
+
+[lints]
+workspace = true

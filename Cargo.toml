@@ -104,3 +104,21 @@ opt-level = 0
 debug = false
 panic = "abort"
 strip = true
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unnameable_types = "warn"
+unreachable_pub = "allow"
+
+[workspace.lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+style = { level = "allow", priority = -1 }
+complexity = { level = "allow", priority = -1 }
+perf = { level = "allow", priority = -1 }
+cargo = { level = "allow", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+missing_docs_in_private_items = "allow"
+
+[lints]
+workspace = true

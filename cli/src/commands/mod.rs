@@ -22,7 +22,7 @@ pub trait CommandExec {
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Connect to a remote peer (alias, ticket, or wormhole)
     #[command(
         long_about = "Connects to a remote irosh peer to start an interactive shell.\n\nExamples:\n  irosh connect my-server           # Using a saved alias\n  irosh connect --code apple-pie    # Using a wormhole code\n  irosh connect <ticket-string>     # Using a raw ticket"
@@ -132,7 +132,7 @@ pub enum Commands {
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum CliAuthMode {
+pub(crate) enum CliAuthMode {
     /// Only SSH public keys are allowed (Strict/TOFU)
     Key,
     /// Only passwords are allowed
@@ -215,7 +215,7 @@ impl CommandExec for Commands {
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SystemAction {
+pub(crate) enum SystemAction {
     Install,
     Uninstall,
     Start,
@@ -231,7 +231,7 @@ pub enum SystemAction {
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum PeerAction {
+pub(crate) enum PeerAction {
     /// List all saved peers in the address book
     List,
     /// Add a new peer to the address book.
@@ -266,7 +266,7 @@ pub enum PeerAction {
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum TrustAction {
+pub(crate) enum TrustAction {
     List,
     Revoke { fingerprint: Option<String> },
     Reset,
@@ -274,7 +274,7 @@ pub enum TrustAction {
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum PasswdAction {
+pub(crate) enum PasswdAction {
     Set,
     Remove,
     Status,
@@ -282,14 +282,14 @@ pub enum PasswdAction {
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum IdentityAction {
+pub(crate) enum IdentityAction {
     Show,
     Rotate,
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ConfigAction {
+pub(crate) enum ConfigAction {
     List,
     Get {
         key: String,

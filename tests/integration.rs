@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use iroh::RelayMode;
 use irosh::config::HostKeyPolicy;
 use irosh::{
@@ -1090,9 +1091,8 @@ async fn expect_shell_closed(session: &mut Session) {
     tokio::time::timeout(Duration::from_secs(45), async {
         loop {
             match session.next_event().await {
-                Ok(Some(SessionEvent::Closed)) | Ok(None) => break,
+                Ok(Some(SessionEvent::Closed) | None) | Err(_) => break,
                 Ok(Some(_)) => {}
-                Err(_) => break,
             }
         }
     })

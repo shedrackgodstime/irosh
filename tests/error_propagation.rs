@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use iroh::RelayMode;
 use irosh::config::HostKeyPolicy;
 use irosh::error::{ClientError, IroshError};
