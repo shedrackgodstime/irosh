@@ -661,68 +661,94 @@ impl Session {
 
         let mut total_sent = 0u64;
         let mut buffer = vec![0u8; MAX_CHUNK_BYTES];
-        let walk = walkdir::WalkDir::new(local_root);
 
-        for entry in walk {
-            let entry = entry.map_err(|e| ClientError::FileIo {
-                operation: "walk local directory",
+        struct WalkEntry {
+            relative: std::path::PathBuf,
+            full_path: std::path::PathBuf,
+            is_dir: bool,
+            size: u64,
+            mode: Option<u32>,
+        }
+        let local_root_owned = local_root.to_path_buf();
+        let walked: Vec<WalkEntry> =
+            tokio::task::spawn_blocking(move || -> Result<Vec<WalkEntry>> {
+                let mut collected = Vec::new();
+                for entry in walkdir::WalkDir::new(&local_root_owned) {
+                    let entry = entry.map_err(|e| ClientError::FileIo {
+                        operation: "walk local directory",
+                        path: local_root_owned.to_path_buf(),
+                        source: e.into(),
+                    })?;
+
+                    reject_recursive_symlink(&entry)?;
+
+                    let relative = entry.path().strip_prefix(&local_root_owned).map_err(|_| {
+                        ClientError::TransferTargetInvalid {
+                            reason: "failed to resolve relative path during directory walk",
+                        }
+                    })?;
+
+                    if relative.as_os_str().is_empty() {
+                        continue;
+                    }
+
+                    let is_dir = entry.file_type().is_dir();
+                    let metadata = entry.metadata().map_err(|e| ClientError::FileIo {
+                        operation: "read entry metadata",
+                        path: entry.path().to_path_buf(),
+                        source: e.into(),
+                    })?;
+
+                    let size = if is_dir { 0 } else { metadata.len() };
+                    #[cfg(unix)]
+                    let mode = {
+                        use std::os::unix::fs::PermissionsExt;
+                        Some(metadata.permissions().mode() & 0o777)
+                    };
+                    #[cfg(not(unix))]
+                    let mode = None;
+
+                    collected.push(WalkEntry {
+                        relative: relative.to_path_buf(),
+                        full_path: entry.path().to_path_buf(),
+                        is_dir,
+                        size,
+                        mode,
+                    });
+                }
+                Ok(collected)
+            })
+            .await
+            .map_err(|e| ClientError::FileIo {
+                operation: "directory walk task panicked",
                 path: local_root.to_path_buf(),
                 source: e.into(),
-            })?;
+            })??;
 
-            reject_recursive_symlink(&entry)?;
-
-            let relative = entry.path().strip_prefix(local_root).map_err(|_| {
-                ClientError::TransferTargetInvalid {
-                    reason: "failed to resolve relative path during directory walk",
-                }
-            })?;
-
-            // Skip the root itself in the walk if it's the first entry
-            if relative.as_os_str().is_empty() {
-                continue;
-            }
-
-            let is_dir = entry.file_type().is_dir();
-            let metadata = entry.metadata().map_err(|e| ClientError::FileIo {
-                operation: "read entry metadata",
-                path: entry.path().to_path_buf(),
-                source: e.into(),
-            })?;
-
-            let size = if is_dir { 0 } else { metadata.len() };
-            #[cfg(unix)]
-            let mode = {
-                use std::os::unix::fs::PermissionsExt;
-                Some(metadata.permissions().mode() & 0o777)
-            };
-            #[cfg(not(unix))]
-            let mode = None;
-
+        for we in walked {
             // Send NewEntry frame
             crate::transport::transfer::write_new_entry(
                 &mut stream,
                 &crate::transport::transfer::EntryHeader {
                     path: crate::transport::transfer::normalize_path_separators(
-                        &relative.display().to_string(),
+                        &we.relative.display().to_string(),
                     ),
-                    size,
-                    mode,
-                    is_dir,
+                    size: we.size,
+                    mode: we.mode,
+                    is_dir: we.is_dir,
                 },
             )
             .await
             .map_err(TransportError::from)?;
 
-            if !is_dir {
-                let mut file =
-                    tokio::fs::File::open(entry.path())
-                        .await
-                        .map_err(|e| ClientError::FileIo {
-                            operation: "open file for streaming",
-                            path: entry.path().to_path_buf(),
-                            source: e,
-                        })?;
+            if !we.is_dir {
+                let mut file = tokio::fs::File::open(&we.full_path).await.map_err(|e| {
+                    ClientError::FileIo {
+                        operation: "open file for streaming",
+                        path: we.full_path.clone(),
+                        source: e,
+                    }
+                })?;
 
                 loop {
                     let count = file
@@ -730,7 +756,7 @@ impl Session {
                         .await
                         .map_err(|e| ClientError::FileIo {
                             operation: "read file chunk",
-                            path: entry.path().to_path_buf(),
+                            path: we.full_path.clone(),
                             source: e,
                         })?;
                     if count == 0 {

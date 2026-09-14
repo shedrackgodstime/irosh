@@ -219,6 +219,93 @@ async fn test_stateless_file_transfer() {
     .expect("Test timed out");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn test_recursive_download_skips_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    init_tracing();
+    tokio::time::timeout(Duration::from_secs(300), async {
+        let server_state = temp_state("server-symlink");
+        let client_state = temp_state("client-symlink");
+
+        // Secret file OUTSIDE the served directory. A symlink inside the served
+        // directory points at it; recursive download must NOT follow the link.
+        let secret = server_state.root().join("secret_outside.txt");
+        fs::write(&secret, b"top-secret").await.unwrap();
+
+        println!("[DEBUG] Binding server...");
+        let server_opts = ServerOptions::new(server_state.clone())
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
+            .relay_mode(RelayMode::Disabled, None);
+        let (ready, server) = Server::bind(server_opts).await.unwrap();
+        let ticket = ready.ticket().clone();
+        let shutdown = server.shutdown_handle();
+        let server_handle = tokio::spawn(async move { server.run().await });
+
+        println!("[DEBUG] Connecting client...");
+        let client_opts = ClientOptions::new(client_state.clone())
+            .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
+            .relay_mode(RelayMode::Disabled);
+        let mut session = Client::connect(&client_opts, ticket).await.unwrap();
+        session.start_shell().await.expect("Failed to start shell");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Prepare the served directory: one regular file + one symlink to the secret.
+        let served = server_state.root().join("served_dir");
+        fs::create_dir_all(&served).await.unwrap();
+        fs::write(served.join("benign.txt"), b"benign")
+            .await
+            .unwrap();
+        symlink(&secret, served.join("leak.txt")).expect("create symlink");
+
+        println!("[DEBUG] Downloading served directory (recursive)...");
+        let downloaded_root = client_state.root().join("recursive_download");
+        session
+            .download(&served, &downloaded_root, true)
+            .await
+            .expect("Recursive download failed");
+
+        // The benign file is present; the symlink entry itself is skipped entirely
+        // (neither its name nor the secret's contents leak).
+        assert_eq!(
+            fs::read_to_string(downloaded_root.join("benign.txt"))
+                .await
+                .unwrap(),
+            "benign"
+        );
+        assert!(
+            !downloaded_root.join("leak.txt").exists().await,
+            "symlink entry must not be materialized on the client"
+        );
+
+        // Belt-and-braces: the secret content must not appear anywhere in the tree.
+        let secret_data = std::fs::read_to_string(&secret).unwrap();
+        let mut walker = walkdir::WalkDir::new(&downloaded_root).into_iter();
+        while let Some(entry) = walker.next() {
+            let entry = entry.unwrap();
+            if entry.file_type().is_file() {
+                let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                assert!(
+                    content != secret_data,
+                    "secret content leaked via {:?}",
+                    entry.path()
+                );
+            }
+        }
+
+        session.close().await.unwrap();
+        shutdown.close().await;
+        let _ = server_handle.await;
+
+        let _ = fs::remove_dir_all(server_state.root()).await;
+        let _ = fs::remove_dir_all(client_state.root()).await;
+    })
+    .await
+    .expect("Test timed out");
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn test_recursive_directory_transfer() {
     init_tracing();

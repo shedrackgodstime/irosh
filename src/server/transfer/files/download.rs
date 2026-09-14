@@ -145,61 +145,92 @@ async fn handle_recursive_get_request(
     }
 
     if use_native_walk {
-        let walk = walkdir::WalkDir::new(&source_root);
-        for entry in walk {
-            let entry = entry.map_err(|e| ServerError::TransferFailed {
-                failure: TransferFailure::new(
-                    TransferFailureCode::Internal,
-                    format!("failed to walk remote directory: {e}"),
-                ),
-            })?;
+        let source_root_owned = source_root.to_path_buf();
+        struct WalkEntry {
+            relative: std::path::PathBuf,
+            full_path: std::path::PathBuf,
+            is_dir: bool,
+            size: u64,
+            mode: Option<u32>,
+        }
+        let walked: Vec<WalkEntry> =
+            tokio::task::spawn_blocking(move || -> Result<Vec<WalkEntry>> {
+                let mut collected = Vec::new();
+                for entry in walkdir::WalkDir::new(&source_root_owned) {
+                    let entry = entry.map_err(|e| ServerError::TransferFailed {
+                        failure: TransferFailure::new(
+                            TransferFailureCode::Internal,
+                            format!("failed to walk remote directory: {e}"),
+                        ),
+                    })?;
 
-            let relative = entry.path().strip_prefix(&source_root).map_err(|_| {
-                ServerError::TransferFailed {
-                    failure: TransferFailure::new(
-                        TransferFailureCode::Internal,
-                        "failed to resolve relative path during remote walk",
-                    ),
+                    let relative = entry.path().strip_prefix(&source_root_owned).map_err(|_| {
+                        ServerError::TransferFailed {
+                            failure: TransferFailure::new(
+                                TransferFailureCode::Internal,
+                                "failed to resolve relative path during remote walk",
+                            ),
+                        }
+                    })?;
+
+                    if relative.as_os_str().is_empty() {
+                        continue;
+                    }
+                    if entry.file_type().is_symlink() {
+                        continue;
+                    }
+                    let is_dir = entry.file_type().is_dir();
+                    let metadata = entry.metadata().map_err(|e| ServerError::TransferFailed {
+                        failure: TransferFailure::new(
+                            TransferFailureCode::Internal,
+                            format!("failed to read remote metadata: {e}"),
+                        ),
+                    })?;
+
+                    let size = if is_dir { 0 } else { metadata.len() };
+                    #[cfg(unix)]
+                    let mode = {
+                        use std::os::unix::fs::PermissionsExt;
+                        Some(metadata.permissions().mode() & 0o777)
+                    };
+                    #[cfg(not(unix))]
+                    let mode = None;
+
+                    collected.push(WalkEntry {
+                        relative: relative.to_path_buf(),
+                        full_path: source_root_owned.join(relative),
+                        is_dir,
+                        size,
+                        mode,
+                    });
                 }
-            })?;
-
-            if relative.as_os_str().is_empty() {
-                continue;
-            }
-
-            let is_dir = entry.file_type().is_dir();
-            let metadata = entry.metadata().map_err(|e| ServerError::TransferFailed {
+                Ok(collected)
+            })
+            .await
+            .map_err(|e| ServerError::TransferFailed {
                 failure: TransferFailure::new(
                     TransferFailureCode::Internal,
-                    format!("failed to read remote metadata: {e}"),
+                    format!("directory walk task panicked: {e}"),
                 ),
-            })?;
+            })??;
 
-            let size = if is_dir { 0 } else { metadata.len() };
-            #[cfg(unix)]
-            let mode = {
-                use std::os::unix::fs::PermissionsExt;
-                Some(metadata.permissions().mode() & 0o777)
-            };
-            #[cfg(not(unix))]
-            let mode = None;
-
+        for we in walked {
             crate::transport::transfer::write_new_entry(
                 stream,
                 &crate::transport::transfer::EntryHeader {
                     path: crate::transport::transfer::normalize_path_separators(
-                        &relative.display().to_string(),
+                        &we.relative.display().to_string(),
                     ),
-                    size,
-                    mode,
-                    is_dir,
+                    size: we.size,
+                    mode: we.mode,
+                    is_dir: we.is_dir,
                 },
             )
             .await
             .map_err(TransportError::from)?;
 
-            if !is_dir {
-                stream_file_content(stream, context, entry.path(), &mut total_sent, &mut buffer)
+            if !we.is_dir {
+                stream_file_content(stream, context, &we.full_path, &mut total_sent, &mut buffer)
                     .await?;
             }
         }
@@ -261,6 +292,9 @@ async fn handle_recursive_get_request(
                     String::from_utf8_lossy(&mode_buf[..mode_buf.len().saturating_sub(1)]);
 
                 let is_dir = entry_type == "d";
+                if entry_type == "l" {
+                    continue;
+                }
                 let size = size_str.parse::<u64>().unwrap_or(0);
                 let mode = u32::from_str_radix(&mode_str, 8).ok();
 

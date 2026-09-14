@@ -158,7 +158,7 @@ pub enum TerminalEvent {
 /// Uses a dedicated background thread to poll `ReadConsoleInputW`, allowing
 /// concurrent capture of both raw keystrokes and console events (like resize).
 pub struct AsyncStdin {
-    rx: mpsc::UnboundedReceiver<TerminalEvent>,
+    rx: mpsc::Receiver<TerminalEvent>,
 }
 
 impl AsyncStdin {
@@ -174,7 +174,7 @@ impl AsyncStdin {
     /// guaranteed for the constant `[0u8; 1024]` buffer.
     #[must_use]
     pub fn new() -> Result<Self> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1024);
         let tx_resize = tx.clone();
 
         // We use ReadFile instead of ReadConsoleInputW because ReadFile
@@ -209,7 +209,7 @@ impl AsyncStdin {
                     }
 
                     if tx
-                        .send(TerminalEvent::Data(buf[..read as usize].to_vec()))
+                        .blocking_send(TerminalEvent::Data(buf[..read as usize].to_vec()))
                         .is_err()
                     {
                         break;
@@ -227,7 +227,7 @@ impl AsyncStdin {
                 let size = current_terminal_size();
                 if size.cols != last_size.cols || size.rows != last_size.rows {
                     last_size = size;
-                    if tx_resize.send(TerminalEvent::Resize(size)).is_err() {
+                    if tx_resize.send(TerminalEvent::Resize(size)).await.is_err() {
                         break;
                     }
                 }

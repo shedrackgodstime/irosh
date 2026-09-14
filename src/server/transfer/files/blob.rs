@@ -493,29 +493,38 @@ async fn add_directory_to_store(
     let mut collection = iroh_blobs::format::collection::Collection::default();
     let mut total_size = 0u64;
 
-    let mut entries: Vec<String> = Vec::new();
-    for entry in walkdir::WalkDir::new(dir_path) {
-        let entry = entry.map_err(|e| ServerError::TransferFailed {
-            failure: crate::transport::transfer::TransferFailure::new(
-                crate::transport::transfer::TransferFailureCode::Internal,
-                format!("failed to walk directory {}: {e}", dir_path.display()),
-            ),
-        })?;
-        if entry.file_type().is_dir() {
-            continue;
-        }
-        let relative =
-            entry
-                .path()
-                .strip_prefix(dir_path)
-                .map_err(|_| ServerError::TransferFailed {
+    let dir_path_owned = dir_path.to_path_buf();
+    let mut entries: Vec<String> = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let mut collected = Vec::new();
+        for entry in walkdir::WalkDir::new(&dir_path_owned) {
+            let entry = entry.map_err(|e| ServerError::TransferFailed {
+                failure: crate::transport::transfer::TransferFailure::new(
+                    crate::transport::transfer::TransferFailureCode::Internal,
+                    format!("failed to walk directory {}: {e}", dir_path_owned.display()),
+                ),
+            })?;
+            if entry.file_type().is_symlink() || entry.file_type().is_dir() {
+                continue;
+            }
+            let relative = entry.path().strip_prefix(&dir_path_owned).map_err(|_| {
+                ServerError::TransferFailed {
                     failure: crate::transport::transfer::TransferFailure::new(
                         crate::transport::transfer::TransferFailureCode::Internal,
                         "path prefix mismatch".to_string(),
                     ),
-                })?;
-        entries.push(relative.to_string_lossy().to_string());
-    }
+                }
+            })?;
+            collected.push(relative.to_string_lossy().to_string());
+        }
+        Ok(collected)
+    })
+    .await
+    .map_err(|e| ServerError::TransferFailed {
+        failure: crate::transport::transfer::TransferFailure::new(
+            crate::transport::transfer::TransferFailureCode::Internal,
+            format!("directory walk task panicked: {e}"),
+        ),
+    })??;
 
     entries.sort();
 
