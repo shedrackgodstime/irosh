@@ -514,7 +514,9 @@ async fn add_directory_to_store(
                     ),
                 }
             })?;
-            collected.push(relative.to_string_lossy().to_string());
+            collected.push(crate::transport::transfer::normalize_path_separators(
+                relative.to_string_lossy().as_ref(),
+            ));
         }
         Ok(collected)
     })

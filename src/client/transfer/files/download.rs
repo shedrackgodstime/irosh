@@ -106,7 +106,9 @@ impl Session {
         write_blob_get_request(
             &mut stream,
             &BlobGetRequest {
-                path: remote.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &remote.display().to_string(),
+                ),
             },
         )
         .await
@@ -566,7 +568,9 @@ impl Session {
 
     /// Best-effort check if a remote path is a directory.
     async fn is_remote_dir(&mut self, path: impl AsRef<std::path::Path>) -> Result<bool> {
-        let path_str = path.as_ref().display().to_string();
+        let path_str = crate::transport::transfer::normalize_path_separators(
+            &path.as_ref().display().to_string(),
+        );
 
         let mut stream = self
             .open_transfer_stream("directory check unavailable")

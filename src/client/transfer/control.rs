@@ -54,7 +54,9 @@ impl Session {
         write_exists_request(
             &mut stream,
             &ExistsRequest {
-                path: path.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &path.display().to_string(),
+                ),
             },
         )
         .await

@@ -144,7 +144,9 @@ impl Session {
         write_blob_put_request(
             &mut stream,
             &BlobPutRequest {
-                path: remote.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &remote.display().to_string(),
+                ),
                 hash: hash.to_string(),
                 format: "raw".to_string(),
                 size: total_size,
@@ -317,7 +319,9 @@ impl Session {
         write_blob_put_request(
             &mut stream,
             &BlobPutRequest {
-                path: remote.display().to_string(),
+                path: crate::transport::transfer::normalize_path_separators(
+                    &remote.display().to_string(),
+                ),
                 hash: root_hash.to_string(),
                 format: "hashseq".to_string(),
                 size: total_size,
@@ -836,13 +840,17 @@ fn collect_files_recursive(
             .path()
             .strip_prefix(base)
             .map_err(|_| std::io::Error::other("path prefix mismatch"))?;
-        entries.push(relative.to_string_lossy().to_string());
+        entries.push(crate::transport::transfer::normalize_path_separators(
+            relative.to_string_lossy().as_ref(),
+        ));
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::collect_files_recursive;
+
     #[cfg(unix)]
     use super::reject_recursive_symlink;
     #[cfg(unix)]
@@ -881,5 +889,31 @@ mod tests {
 
         let _ = std::fs::remove_file(&link);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn collect_files_recursive_uses_forward_slash_names() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("irosh-collect-names-{unique}"));
+        let sub = base.join("subdir");
+        std::fs::create_dir_all(&sub).expect("create temp subdir");
+        std::fs::write(sub.join("file.txt"), b"x").expect("write temp file");
+
+        let mut entries = Vec::new();
+        collect_files_recursive(&base, &base, &mut entries).expect("walk temp dir");
+        entries.sort();
+        // Collection names travel on the wire: they must always be
+        // forward-slash separated so a Unix receiver rebuilds the layout
+        // instead of a single literal backslash filename ('subdir\file').
+        assert!(
+            entries.iter().all(|e| !e.contains('\\')),
+            "collection name leaked a native separator: {entries:?}"
+        );
+        assert_eq!(entries, vec!["subdir/file.txt"]);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
