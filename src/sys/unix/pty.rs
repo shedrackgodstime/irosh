@@ -168,8 +168,13 @@ impl AsyncStdin {
                     }
                 }
                 // Resize path: SIGWINCH fires when the terminal window is resized.
-                _ = self.sigwinch.recv() => {
-                    return Some(TerminalEvent::Resize(current_terminal_size()));
+                sig = self.sigwinch.recv() => {
+                    if sig.is_some() {
+                        return Some(TerminalEvent::Resize(current_terminal_size()));
+                    }
+                    // Signal registration closed: returning EOF avoids an
+                    // infinite loop of resize events from the dead stream.
+                    return None;
                 }
             }
         }

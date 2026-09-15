@@ -259,14 +259,22 @@ impl ShellContext {
             let mut command = Command::new("chmod");
             command.arg(format!("{mode:o}")).arg(path);
             self.configure(&mut command);
-            let _ = command.status().await;
+            match command.status().await {
+                Ok(status) if status.success() => {}
+                Ok(status) => warn!("chmod {mode:o} {path} failed with status {status}"),
+                Err(err) => warn!("chmod {mode:o} {path} failed: {err}"),
+            }
             return;
         }
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).await;
+            if let Err(err) =
+                tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).await
+            {
+                warn!("set_permissions {mode:o} {path} failed: {err}");
+            }
         }
         #[cfg(not(unix))]
         {

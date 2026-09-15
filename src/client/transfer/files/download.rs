@@ -372,7 +372,11 @@ impl Session {
         if let Some(mode) = expected_mode {
             use std::os::unix::fs::PermissionsExt;
             let mode = mode & 0o777;
-            let _ = tokio::fs::set_permissions(local, std::fs::Permissions::from_mode(mode)).await;
+            if let Err(e) =
+                tokio::fs::set_permissions(local, std::fs::Permissions::from_mode(mode)).await
+            {
+                warn!("failed to apply mode {mode:o} to {}: {e}", local.display());
+            }
         }
         #[cfg(not(unix))]
         {
@@ -515,11 +519,18 @@ impl Session {
                         #[cfg(unix)]
                         if let Some(mode) = header.mode {
                             use std::os::unix::fs::PermissionsExt;
-                            let _ = tokio::fs::set_permissions(
+                            let mode = mode & 0o777;
+                            if let Err(e) = tokio::fs::set_permissions(
                                 &local_path,
                                 std::fs::Permissions::from_mode(mode),
                             )
-                            .await;
+                            .await
+                            {
+                                warn!(
+                                    "failed to apply mode {mode:o} to {}: {e}",
+                                    local_path.display()
+                                );
+                            }
                         }
                     }
                 }
