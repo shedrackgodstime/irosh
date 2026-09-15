@@ -181,13 +181,13 @@ fn username_syscall() -> Option<String> {
                         return Some(s.to_string());
                     }
                 }
-                return None;
+                break;
             }
             if rc == libc::ERANGE && buf_len < 16 * 1024 {
                 buf_len *= 2;
                 continue;
             }
-            return None;
+            break;
         }
     }
 
