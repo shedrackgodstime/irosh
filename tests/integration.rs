@@ -275,7 +275,9 @@ async fn test_recursive_download_skips_symlink_escape() {
             "benign"
         );
         assert!(
-            !downloaded_root.join("leak.txt").exists().await,
+            !tokio::fs::try_exists(downloaded_root.join("leak.txt"))
+                .await
+                .unwrap_or(false),
             "symlink entry must not be materialized on the client"
         );
 
