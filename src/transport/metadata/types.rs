@@ -142,26 +142,52 @@ fn hostname_syscall() -> Option<String> {
 
 /// Resolves the current username via a platform syscall, then subprocess fallback.
 fn username_syscall() -> Option<String> {
-    // On Unix, getpwuid is most reliable - reads /etc/passwd even in daemon context
+    // On Unix, getpwuid_r is most reliable - reads /etc/passwd even in daemon
+    // context. The reentrant `_r` variant fills caller-owned buffers, so NSS
+    // lookups triggered by other threads cannot clobber our entry mid-read.
     #[cfg(unix)]
     {
-        // SAFETY: `getuid` and `getpwuid` are standard Unix syscalls.
-        // We check if `pw` is null before dereferencing it via `CStr`.
+        // SAFETY: `getuid` takes no arguments and always succeeds.
         let uid = unsafe { libc::getuid() };
-        // SAFETY: `uid` is our own UID, and `getpwuid` returns a valid
-        // pointer (null-checked below) or null for unknown UIDs.
-        let pw = unsafe { libc::getpwuid(uid) };
-        if !pw.is_null() {
-            // SAFETY: `pw` was checked for null above, and `pw_name` is a
-            // NUL-terminated C string guaranteed by POSIX for a valid passwd entry.
-            let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
-            if let Ok(s) = name.to_str() {
-                let s = s.to_string();
-                // Skip root / service-like UIDs in interactive context
-                if !s.is_empty() {
-                    return Some(s);
+        // SAFETY: `zeroed()` is used only to provide a writable `passwd`
+        // storage slot for `getpwuid_r`; this C struct contains no fields
+        // whose all-zeros value is invalid prior to being overwritten by the
+        // successful fill below.
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut buf_len = 1024usize;
+        loop {
+            let mut buf = vec![0u8; buf_len];
+            let mut result: *mut libc::passwd = std::ptr::null_mut();
+            // SAFETY: `pwd`, `buf`, and `result` are caller-owned and live for
+            // the duration of the call; `buf` is at least `buf.len()` bytes
+            // and sized for a passwd entry at this length.
+            let rc = unsafe {
+                libc::getpwuid_r(
+                    uid,
+                    &mut pwd,
+                    buf.as_mut_ptr().cast::<libc::c_char>(),
+                    buf.len(),
+                    &mut result,
+                )
+            };
+            if rc == 0 {
+                if !result.is_null() {
+                    // SAFETY: on success `result` points at the filled `pwd`
+                    // whose `pw_name` is a NUL-terminated C string.
+                    let name = unsafe { std::ffi::CStr::from_ptr((*result).pw_name) };
+                    if let Ok(s) = name.to_str()
+                        && !s.is_empty()
+                    {
+                        return Some(s.to_string());
+                    }
                 }
+                return None;
             }
+            if rc == libc::ERANGE && buf_len < 16 * 1024 {
+                buf_len *= 2;
+                continue;
+            }
+            return None;
         }
     }
 
