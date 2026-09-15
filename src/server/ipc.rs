@@ -243,10 +243,18 @@ impl IpcServer {
             // the temp dir; make sure it exists and is private.
             if path.starts_with(std::env::temp_dir()) {
                 if let Some(parent) = path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
-                    let _ =
+                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                        warn!("failed to create IPC temp dir {}: {e}", parent.display());
+                    }
+                    if let Err(e) =
                         tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-                            .await;
+                            .await
+                    {
+                        warn!(
+                            "failed to restrict IPC temp dir {} to 0700: {e} (control socket may be exposed)",
+                            parent.display()
+                        );
+                    }
                 }
             }
 
@@ -423,9 +431,12 @@ where
     };
 
     let response = if control_tx.send(internal_cmd).await.is_ok() {
-        res_rx.await.unwrap_or(IpcResponse::Error(
-            "Server failed to provide a response".to_string(),
-        ))
+        match tokio::time::timeout(std::time::Duration::from_secs(10), res_rx).await {
+            Ok(result) => result.unwrap_or(IpcResponse::Error(
+                "Server failed to provide a response".to_string(),
+            )),
+            Err(_) => IpcResponse::Error("IPC command timed out".to_string()),
+        }
     } else {
         IpcResponse::Error("Server control channel closed".to_string())
     };

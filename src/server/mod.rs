@@ -813,13 +813,21 @@ impl Server {
                                 let _ = tx.send(ipc::IpcResponse::Ok);
                             }
                             ipc::InternalCommand::GetStatus { tx } => {
-                                let wh_lock = wormhole.lock().await;
+                                let (wormhole_active, wormhole_code) = {
+                                    let wh_lock = wormhole.lock().await;
+                                    (
+                                        wh_lock.is_some(),
+                                        wh_lock.as_ref().and_then(|w| {
+                                            crate::config::WormholeCode::new(w.code.clone()).ok()
+                                        }),
+                                    )
+                                };
                                 let sessions = self.session_tracker.snapshot().await;
                                 let _ = tx.send(ipc::IpcResponse::Status(ipc::DaemonStatus {
                                     endpoint_id: crate::config::EndpointId::new(self.endpoint.id().to_string()),
                                     ticket: self.ticket.to_string(),
-                                    wormhole_active: wh_lock.is_some(),
-                                    wormhole_code: wh_lock.as_ref().and_then(|w| crate::config::WormholeCode::new(w.code.clone()).ok()),
+                                    wormhole_active,
+                                    wormhole_code,
                                     active_sessions: active_sessions.load(std::sync::atomic::Ordering::Relaxed),
                                     sessions,
                                 }));
@@ -836,24 +844,29 @@ impl Server {
                     }
                 }
                 _ = success_rx.recv() => {
-                    let mut wh_lock = wormhole.lock().await;
-                    if let Some(wh) = wh_lock.as_ref() {
-                        if !wh.persistent {
-                            info!("Wormhole pairing successful. Auto-burning.");
-                            wh.task.abort();
-                            wh.expiry_task.abort();
-                            let code = wh.code.clone();
-                            tokio::spawn(async move {
-                                let _ = crate::transport::wormhole::unpublish_ticket(&code).await;
-                            });
-
-                            if self.shutdown_on_wormhole_success {
-                                info!("Shutdown on wormhole success requested.");
-                                shutdown_requested = true;
-                                let _ = ipc_shutdown_tx.send(()).await;
+                    let should_shutdown = {
+                        let mut wh_lock = wormhole.lock().await;
+                        let mut shutdown = false;
+                        if let Some(wh) = wh_lock.as_ref() {
+                            if !wh.persistent {
+                                info!("Wormhole pairing successful. Auto-burning.");
+                                wh.task.abort();
+                                wh.expiry_task.abort();
+                                let code = wh.code.clone();
+                                tokio::spawn(async move {
+                                    let _ =
+                                        crate::transport::wormhole::unpublish_ticket(&code).await;
+                                });
+                                shutdown = self.shutdown_on_wormhole_success;
+                                *wh_lock = None;
                             }
-                            *wh_lock = None;
                         }
+                        shutdown
+                    };
+                    if should_shutdown {
+                        info!("Shutdown on wormhole success requested.");
+                        shutdown_requested = true;
+                        let _ = ipc_shutdown_tx.send(()).await;
                     }
                 }
                 _ = failure_rx.recv() => {

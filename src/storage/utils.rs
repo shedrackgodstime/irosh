@@ -27,35 +27,53 @@ pub fn atomic_write_secure(path: &Path, data: &[u8]) -> Result<()> {
     // 1. Ensure parent directory exists and has strict permissions
     ensure_dir_secure(parent)?;
 
-    // 2. Create a temporary file in the same directory
-    let tmp_path = path.with_extension("tmp");
-    let mut file = fs::File::create(&tmp_path).map_err(|source| StorageError::FileWrite {
-        path: tmp_path.clone(),
-        source,
-    })?;
+    // 2. Create a temporary file in the same directory with a random name
+    //    to avoid collisions between concurrent writers and stale files on crash.
+    let random_suffix: u64 = rand::random();
+    let base_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed("file"));
+    let tmp_name = format!(
+        ".{}.{:016x}.tmp",
+        base_name.trim_start_matches('.'),
+        random_suffix
+    );
+    let tmp_path = path.with_file_name(&tmp_name);
 
-    // 3. Set strict permissions (0600 / ACLs) on the temp file before writing data
-    apply_secure_permissions(&tmp_path)?;
-
-    // 4. Write data and sync to disk
-    file.write_all(data)
-        .map_err(|source| StorageError::FileWrite {
+    let write_result = (|| -> Result<()> {
+        let mut file = fs::File::create(&tmp_path).map_err(|source| StorageError::FileWrite {
             path: tmp_path.clone(),
             source,
         })?;
-    file.sync_all().map_err(|source| StorageError::FileWrite {
-        path: tmp_path.clone(),
-        source,
-    })?;
-    drop(file);
 
-    // 5. Atomic rename
-    fs::rename(&tmp_path, path).map_err(|source| StorageError::FileWrite {
-        path: path.to_path_buf(),
-        source,
-    })?;
+        // 3. Set strict permissions (0600 / ACLs) on the temp file before writing data
+        apply_secure_permissions(&tmp_path)?;
 
-    Ok(())
+        // 4. Write data and sync to disk
+        file.write_all(data)
+            .map_err(|source| StorageError::FileWrite {
+                path: tmp_path.clone(),
+                source,
+            })?;
+        file.sync_all().map_err(|source| StorageError::FileWrite {
+            path: tmp_path.clone(),
+            source,
+        })?;
+        drop(file);
+
+        // 5. Atomic rename
+        fs::rename(&tmp_path, path).map_err(|source| StorageError::FileWrite {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    write_result
 }
 
 /// Ensures a directory exists and has strict permissions (0700) on Unix/Windows.
@@ -381,6 +399,27 @@ mod tests {
         // The .tmp file should have been renamed away
         let tmp_path = file_path.with_extension("tmp");
         assert!(!tmp_path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_secure_leaves_no_temp_residue_on_failure() {
+        let dir = temp_dir("cleanup-fail");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A directory at the destination forces the atomic rename to fail
+        // after the temp file has been written, exercising the cleanup path.
+        let dest = dir.join("dest.txt");
+        std::fs::create_dir_all(&dest).unwrap();
+        assert!(atomic_write_secure(&dest, b"data").is_err());
+        let residue: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(
+            residue.is_empty(),
+            "temp file leaked after failure: {residue:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

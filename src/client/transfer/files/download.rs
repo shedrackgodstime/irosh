@@ -371,6 +371,7 @@ impl Session {
         #[cfg(unix)]
         if let Some(mode) = expected_mode {
             use std::os::unix::fs::PermissionsExt;
+            let mode = mode & 0o777;
             let _ = tokio::fs::set_permissions(local, std::fs::Permissions::from_mode(mode)).await;
         }
         #[cfg(not(unix))]
