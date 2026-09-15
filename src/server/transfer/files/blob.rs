@@ -1,6 +1,7 @@
 //! Blob-based file transfer.
 use iroh_blobs::{BlobFormat, Hash};
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::error::{Result, ServerError};
@@ -36,6 +37,63 @@ fn ensure_within_cap(received: u64) -> Result<()> {
         .into());
     }
     Ok(())
+}
+
+/// A MiB-denominated share of the per-connection in-memory blob budget.
+const MIB_BYTES: u64 = 1024 * 1024;
+
+/// Permits (whole MiB) needed to hold `bytes` in memory, capped at the
+/// per-stream transfer cap.
+fn blob_memory_permits(bytes: u64) -> usize {
+    let capped = bytes.min(MAX_IN_MEMORY_TRANSFER_BYTES);
+    let permits = capped.div_ceil(MIB_BYTES);
+    usize::try_from(permits).expect("in-memory budget fits in usize")
+}
+
+/// RAII guard holding a share of the per-connection in-memory blob budget.
+///
+/// The budget caps the *sum* of in-memory blob accumulation across all
+/// currently active transfer streams of a connection, so concurrent streams
+/// cannot exhaust server RAM even though each individual stream is already
+/// capped at [`MAX_IN_MEMORY_TRANSFER_BYTES`].
+///
+/// Acquiring may block while a concurrent stream holds the budget, but never
+/// blocks while *holding* permits: a replacement acquisition is only started
+/// after the previous guard has been dropped. This keeps the pool free of
+/// wait-cycles, so progress always resumes once a transfer completes.
+///
+/// Held permits travel as an [`OwnedSemaphorePermit`], so dropping the guard
+/// (on every exit path) refunds the pool exactly.
+#[must_use = "dropping the guard early releases the budget"]
+struct BlobMemoryGuard {
+    /// Held only for its drop side effect: releasing the budget permits.
+    _permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl BlobMemoryGuard {
+    /// Reserves the budget share for `bytes` (rounded up to MiB), waiting
+    /// until active transfers free enough permits. While waiting, no permits
+    /// are held.
+    async fn acquire(semaphore: &Arc<tokio::sync::Semaphore>, bytes: u64) -> Result<Self> {
+        let held = blob_memory_permits(bytes);
+        let permit = if held > 0 {
+            Some(
+                semaphore
+                    .clone()
+                    .acquire_many_owned(u32::try_from(held).expect("permit count fits u32"))
+                    .await
+                    .map_err(|e| ServerError::TransferFailed {
+                        failure: crate::transport::transfer::TransferFailure::new(
+                            crate::transport::transfer::TransferFailureCode::Internal,
+                            format!("failed to reserve in-memory transfer budget: {e}"),
+                        ),
+                    })?,
+            )
+        } else {
+            None
+        };
+        Ok(Self { _permit: permit })
+    }
 }
 
 #[must_use]
@@ -94,6 +152,7 @@ pub async fn handle_blob_put_request(
         let mut expected_remaining = 0u64;
         let mut current_blob = Vec::new();
         let mut blob_count = 0u64;
+        let mut declared_memory: Option<BlobMemoryGuard> = None;
 
         loop {
             match read_next_frame_into(stream, &mut frame_buf)
@@ -140,6 +199,14 @@ pub async fn handle_blob_put_request(
                             .into());
                         }
                         ensure_within_cap(received + expected_remaining)?;
+                        // Swap to this blob's budget share: release the
+                        // previous blob's permits before acquiring the next so
+                        // we never block while holding the budget.
+                        declared_memory.take();
+                        declared_memory = Some(
+                            BlobMemoryGuard::acquire(&shell_state.blob_memory, expected_remaining)
+                                .await?,
+                        );
                         if let Ok(cap) = usize::try_from(expected_remaining)
                             && current_blob.try_reserve(cap).is_err()
                         {
@@ -210,6 +277,7 @@ pub async fn handle_blob_put_request(
                             }
                         }
                         blob_count += 1;
+                        declared_memory.take();
                     }
                 }
                 TransferFrameBorrowed::Owned(TransferFrame::PutComplete(_)) => break,
@@ -275,6 +343,20 @@ pub async fn handle_blob_put_request(
         export_collection(shell_state, expected_hash, &target_path).await?;
     } else {
         // Raw format: all chunks form one blob
+        if request.size > MAX_IN_MEMORY_TRANSFER_BYTES {
+            return Err(ServerError::TransferFailed {
+                failure: crate::transport::transfer::TransferFailure::new(
+                    crate::transport::transfer::TransferFailureCode::Internal,
+                    format!(
+                        "declared size {0} exceeds the in-memory limit of {MAX_IN_MEMORY_TRANSFER_BYTES} bytes",
+                        request.size
+                    ),
+                ),
+            }
+            .into());
+        }
+        let _declared_budget =
+            BlobMemoryGuard::acquire(&shell_state.blob_memory, request.size).await?;
         let mut all_data = Vec::new();
         loop {
             match read_next_frame_into(stream, &mut frame_buf)
@@ -295,6 +377,18 @@ pub async fn handle_blob_put_request(
                         }
                     })?;
                     ensure_within_cap(received)?;
+                    if received > request.size {
+                        return Err(ServerError::TransferFailed {
+                            failure: crate::transport::transfer::TransferFailure::new(
+                                crate::transport::transfer::TransferFailureCode::Internal,
+                                format!(
+                                    "received {received} bytes, exceeding the declared size of {0}",
+                                    request.size
+                                ),
+                            ),
+                        }
+                        .into());
+                    }
                     all_data.extend_from_slice(data);
                 }
                 TransferFrameBorrowed::Owned(TransferFrame::PutComplete(_)) => break,
@@ -555,6 +649,9 @@ async fn add_directory_to_store(
             }
             .into());
         }
+        // Hold this file's budget share while it is read into memory and
+        // persisted; released when the loop iteration ends.
+        let _file_budget = BlobMemoryGuard::acquire(&shell_state.blob_memory, meta.len()).await?;
         let data = tokio::fs::read(&file_path)
             .await
             .map_err(|e| ServerError::TransferFailed {
@@ -690,4 +787,65 @@ async fn export_collection(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permits_round_bytes_up_to_whole_mib() {
+        assert_eq!(blob_memory_permits(0), 0);
+        assert_eq!(blob_memory_permits(1), 1);
+        assert_eq!(blob_memory_permits(MIB_BYTES), 1);
+        assert_eq!(blob_memory_permits(MIB_BYTES + 1), 2);
+        assert_eq!(blob_memory_permits(MAX_IN_MEMORY_TRANSFER_BYTES), 512);
+    }
+
+    #[test]
+    fn permits_capped_at_per_stream_limit() {
+        assert_eq!(blob_memory_permits(u64::MAX), 512);
+    }
+
+    #[test]
+    fn per_stream_hold_fits_within_budget() {
+        // A single maximum-size stream may hold the entire budget (but no
+        // more than it), so one active transfer can always make progress.
+        assert_eq!(
+            blob_memory_permits(MAX_IN_MEMORY_TRANSFER_BYTES),
+            (crate::server::transfer::state::MAX_IN_MEMORY_BLOB_BUDGET_BYTES / MIB_BYTES) as usize
+        );
+    }
+
+    #[tokio::test]
+    async fn guard_reserves_and_releases_budget() {
+        let sem = Arc::new(tokio::sync::Semaphore::new(4));
+        {
+            let _guard = BlobMemoryGuard::acquire(&sem, 3 * MIB_BYTES + 1)
+                .await
+                .unwrap();
+            assert_eq!(sem.available_permits(), 0);
+        }
+        assert_eq!(sem.available_permits(), 4);
+
+        let _two = BlobMemoryGuard::acquire(&sem, 2).await.unwrap();
+        assert_eq!(sem.available_permits(), 3);
+    }
+
+    #[tokio::test]
+    async fn guard_wait_for_budget_holds_no_permits() {
+        let sem = Arc::new(tokio::sync::Semaphore::new(4));
+        let full = BlobMemoryGuard::acquire(&sem, 4 * MIB_BYTES).await.unwrap();
+        assert_eq!(sem.available_permits(), 0);
+
+        // A second stream needs 2 MiB but the budget is exhausted: the acquire
+        // future must hold zero permits while it waits, so a completing stream
+        // always refunds the pool and unblocks it.
+        let waiting = BlobMemoryGuard::acquire(&sem, 2 * MIB_BYTES);
+        drop(full);
+        assert_eq!(sem.available_permits(), 4);
+
+        let _guard = waiting.await.unwrap();
+        assert_eq!(sem.available_permits(), 2);
+    }
 }

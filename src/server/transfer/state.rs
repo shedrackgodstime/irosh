@@ -13,6 +13,20 @@ use crate::server::shell_access::configure_live_shell_context;
 use crate::server::shell_access::resolve_process_cwd;
 use crate::transport::transfer::{TransferFailure, TransferFailureCode};
 
+/// Total in-memory budget (bytes) for blob accumulation across all
+/// concurrently active transfer streams of one connection.
+///
+/// The per-stream cap ([`crate::server::transfer::files::blob`]) already
+/// bounds a single transfer; this bounds the SUM so a peer opening many
+/// concurrent streams cannot grow server RAM without bound.
+pub(crate) const MAX_IN_MEMORY_BLOB_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Converts the in-memory budget into the semaphore permit count (1 MiB per
+/// permit).
+fn in_memory_budget_permits() -> usize {
+    (MAX_IN_MEMORY_BLOB_BUDGET_BYTES / (1024 * 1024)) as usize
+}
+
 /// State shared across server-side transfer operations for a single connection.
 ///
 /// Tracks the shell process PID so that transfer paths can be resolved
@@ -25,6 +39,9 @@ pub struct ConnectionShellState {
     #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) state_root: PathBuf,
     pub(crate) blobs: iroh_blobs::store::fs::FsStore,
+    /// Global per-connection budget for in-memory blob accumulation, shared
+    /// by every transfer stream of this connection.
+    pub(crate) blob_memory: Arc<tokio::sync::Semaphore>,
 }
 
 impl ConnectionShellState {
@@ -38,6 +55,7 @@ impl ConnectionShellState {
             shell_pid: Arc::new(StdMutex::new(None)),
             state_root,
             blobs,
+            blob_memory: Arc::new(tokio::sync::Semaphore::new(in_memory_budget_permits())),
         }
     }
 
