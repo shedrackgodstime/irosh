@@ -231,6 +231,7 @@ async fn test_recursive_download_skips_symlink_escape() {
 
         // Secret file OUTSIDE the served directory. A symlink inside the served
         // directory points at it; recursive download must NOT follow the link.
+        fs::create_dir_all(server_state.root()).await.unwrap();
         let secret = server_state.root().join("secret_outside.txt");
         fs::write(&secret, b"top-secret").await.unwrap();
 
