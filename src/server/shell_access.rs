@@ -233,6 +233,91 @@ fn namespace_matches(ns_path: &str, self_path: &str) -> std::io::Result<bool> {
     Ok(target.ino() == current.ino())
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod linux_cwd_resolution_tests {
+    use super::{namespace_matches, resolve_process_cwd};
+    use std::process::{Child, Command};
+
+    /// Spawns a child process pinned to a known working directory and kept
+    /// alive so its `/proc/<pid>/cwd` symlink can be inspected while it runs.
+    fn spawn_pinned_child(dir: &std::path::Path) -> Child {
+        Command::new("sleep")
+            .arg("3600")
+            .current_dir(dir)
+            .spawn()
+            .expect("failed to spawn pinned child")
+    }
+
+    #[test]
+    fn proc_read_resolves_the_childrens_working_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "irosh-proc-cwd-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut child = spawn_pinned_child(&dir);
+        let pid = child.id();
+
+        let rt = tokio::runtime::Runtime::new().expect("failed to start runtime");
+        let resolved = rt
+            .block_on(resolve_process_cwd(pid))
+            .expect("resolve_process_cwd should not error")
+            .expect("resolve_process_cwd should resolve the working directory");
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let dir_canon = std::fs::canonicalize(&dir).unwrap();
+        let resolved_canon = std::fs::canonicalize(&resolved).unwrap();
+        assert_eq!(
+            dir_canon,
+            resolved_canon,
+            "/proc/{pid}/cwd should match the pinned child's directory (resolved = {})",
+            resolved.display()
+        );
+    }
+
+    #[test]
+    fn proc_read_returns_none_for_an_unknown_pid() {
+        let rt = tokio::runtime::Runtime::new().expect("failed to start runtime");
+        let resolved = rt
+            .block_on(resolve_process_cwd(u32::MAX))
+            .expect("resolve_process_cwd should not error");
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn namespace_matches_agrees_with_self() {
+        let matches_self = namespace_matches("/proc/self/ns/mnt", "/proc/self/ns/mnt")
+            .expect("reading own mount namespace should not error");
+        assert!(matches_self);
+    }
+
+    #[test]
+    fn namespace_matches_distinguishes_different_namespaces() {
+        let differs = namespace_matches("/proc/self/ns/mnt", "/proc/self/ns/user")
+            .expect("reading own namespaces should not error");
+        assert!(!differs);
+    }
+
+    #[test]
+    fn join_linux_namespace_same_namespace_is_a_noop() {
+        // The real `setns` path is privileged-only; the same-namespace
+        // short-circuit is what every unprivileged Live-context transfer takes.
+        let result = super::join_linux_namespace(
+            "/proc/self/ns/mnt",
+            "/proc/self/ns/mnt",
+            libc::CLONE_NEWNS,
+        );
+        assert!(result.is_ok());
+    }
+}
+
 #[cfg(all(test, windows))]
 mod windows_cwd_resolution_tests {
     use super::resolve_process_cwd;

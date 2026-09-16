@@ -105,3 +105,32 @@ pub async fn wait_for_shutdown_signal() {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::wait_for_shutdown_signal;
+    use std::time::Duration;
+
+    /// Verifies that the Unix shutdown-signal twin resolves when the process
+    /// receives SIGTERM (the action used by `systemctl stop irosh` and by the
+    /// OS on process-group teardown). tokio installs its own handler, so this
+    /// signal is intercepted rather than terminating the test process.
+    #[tokio::test]
+    async fn wait_for_shutdown_signal_resolves_on_sigterm() {
+        let task = tokio::spawn(wait_for_shutdown_signal());
+
+        // Give the spawned task time to register the signal handlers before we
+        // raise SIGTERM against our own process.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // SAFETY: `kill` with a valid, positive signal number is a plain libc call.
+        let rc = unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
+        assert_eq!(rc, 0, "kill(SIGTERM) should succeed");
+
+        let resolved = tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .expect("wait_for_shutdown_signal should resolve before the timeout")
+            .expect("signal-waiting task should not panic");
+        assert_eq!(resolved, ());
+    }
+}
