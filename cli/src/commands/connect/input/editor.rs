@@ -1,4 +1,4 @@
-use super::history::CommandHistory;
+use crate::commands::connect::history::CommandHistory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

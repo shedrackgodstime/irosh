@@ -7,7 +7,6 @@ use irosh::{Client, ClientOptions, PtyOptions, Session};
 use std::io::{IsTerminal, Write};
 
 mod completion;
-mod editor;
 mod history;
 mod input;
 mod prompt;
