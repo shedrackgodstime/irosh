@@ -1,397 +1,25 @@
-//! Pluggable authentication backends for irosh.
-//!
-//! This module provides the [`Authenticator`] trait that defines how credentials
-//! are validated. Library consumers implement this to control authentication
-//! logic. The CLI ships with built-in implementations for common use cases.
-//!
-//! Under the **C-CALLER-CONTROL** principle, the library never decides **how** to
-//! validate credentials - it only calls the trait methods and respects the result.
-//!
-//! # Built-in Backends
-//!
-//! - [`KeyOnlyAuth`] - The default. Replicates the existing TOFU/Strict/AcceptAll
-//!   key-based authentication. Zero change for existing users.
-//! - [`PasswordAuth`] - A single shared password for all connections. Good for
-//!   personal or simple setups.
-//! - [`CombinedAuth`] - Accepts either public keys or passwords.
-//! - [`UnifiedAuthenticator`] - The master security policy for Irosh V2. Manages the
-//!   precedence between established trust, node passwords, and temporary wormhole codes.
+//! The unified security-policy authenticator and its pairing tracking handles.
 
-use async_trait::async_trait;
-use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use argon2::password_hash::Error as PasswordError;
-use argon2::{Argon2, PasswordHasher, PasswordVerifier};
+use argon2::{Argon2, PasswordVerifier};
+use async_trait::async_trait;
 use russh::keys::ssh_key::{HashAlg, PublicKey};
 use tracing::{info, warn};
 
-use secrecy::SecretString;
+use crate::config::{HostKeyPolicy, StateConfig};
+use crate::error::Result;
+use crate::storage::trust::write_authorized_client;
 
-use crate::error::AuthError;
+use super::{AuthMethod, Authenticator};
 
 /// Decay window for the authentication rate limiter.
 ///
 /// After this timeout the failure counter resets even if no successful
 /// authentication occurred, preventing a permanent remote lockout.
 const LOCKOUT_WINDOW: Duration = Duration::from_secs(60);
-
-use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
-use crate::error::Result;
-use crate::storage::trust::write_authorized_client;
-
-/// Which authentication methods a backend supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[non_exhaustive]
-pub enum AuthMethod {
-    /// SSH public key authentication.
-    PublicKey,
-    /// Username + password authentication.
-    Password,
-}
-
-/// The overall authentication policy mode for the server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[non_exhaustive]
-pub enum AuthMode {
-    /// Only SSH public keys are allowed (Strict/TOFU).
-    Key,
-    /// Only passwords are allowed.
-    Password,
-    /// Both keys and passwords are allowed.
-    Combined,
-    /// The intelligent, auto-detecting policy (default).
-    Unified,
-}
-
-/// Trait for pluggable authentication backends.
-///
-/// Library consumers implement this to control how credentials are validated.
-/// The default behavior (key-only TOFU) is provided by [`KeyOnlyAuth`], which
-/// is used automatically when no custom authenticator is configured.
-///
-/// # Example
-///
-/// ```no_run
-/// use irosh::auth::{Authenticator, AuthMethod};
-/// use russh::keys::ssh_key::PublicKey;
-/// use async_trait::async_trait;
-///
-/// struct MyAuth;
-///
-/// impl std::fmt::Debug for MyAuth {
-///     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-///         f.debug_struct("MyAuth").finish()
-///     }
-/// }
-///
-/// #[async_trait]
-/// impl Authenticator for MyAuth {
-///     async fn supported_methods(&self) -> Vec<AuthMethod> {
-///         vec![AuthMethod::Password]
-///     }
-///     async fn check_public_key(&self, _user: &str, _key: &PublicKey) -> irosh::Result<bool> {
-///         Ok(false)
-///     }
-///     async fn check_password(&self, _user: &str, password: &str) -> irosh::Result<bool> {
-///         Ok(password == "secret")
-///     }
-/// }
-/// ```
-#[async_trait]
-pub trait Authenticator: Send + Sync + fmt::Debug + 'static {
-    /// Returns which auth methods this backend supports.
-    ///
-    /// The server will advertise these methods to clients during the SSH
-    /// handshake. Methods not listed here will be rejected immediately.
-    async fn supported_methods(&self) -> Vec<AuthMethod>;
-
-    /// Validate a public key for the given user.
-    ///
-    /// Return `Ok(true)` to accept, `Ok(false)` to reject.
-    /// Return `Err(...)` for internal failures.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the underlying storage or cryptographic operation fails.
-    async fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool>;
-
-    /// Validate a username + password combination.
-    ///
-    /// Return `Ok(true)` to accept, `Ok(false)` to reject.
-    /// Return `Err(...)` for internal failures.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the authentication fails or the credentials are invalid.
-    async fn check_password(&self, user: &str, password: &str) -> Result<bool>;
-}
-
-// ---------------------------------------------------------------------------
-// Built-in backend: KeyOnlyAuth (default, backward compatible)
-// ---------------------------------------------------------------------------
-
-/// Key-only authentication using TOFU/Strict/AcceptAll policies.
-///
-/// This replicates the existing irosh authentication behavior exactly.
-/// It is used automatically when no custom [`Authenticator`] is configured
-/// on [`ServerOptions`](crate::ServerOptions).
-#[derive(Debug, Clone)]
-pub struct KeyOnlyAuth {
-    policy: HostKeyPolicy,
-    authorized_keys: Arc<StdMutex<Vec<PublicKey>>>,
-    state: StateConfig,
-}
-
-impl KeyOnlyAuth {
-    /// Creates a new key-only authenticator with the given policy and initial keys.
-    #[must_use]
-    pub fn new(
-        security: SecurityConfig,
-        authorized_keys: Vec<PublicKey>,
-        state: StateConfig,
-    ) -> Self {
-        Self {
-            policy: security.host_key_policy,
-            authorized_keys: Arc::new(StdMutex::new(authorized_keys)),
-            state,
-        }
-    }
-
-    fn lock_keys(&self) -> std::sync::MutexGuard<'_, Vec<PublicKey>> {
-        match self.authorized_keys.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                warn!("authorized client state mutex poisoned; recovering");
-                poisoned.into_inner()
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl Authenticator for KeyOnlyAuth {
-    async fn supported_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod::PublicKey]
-    }
-
-    async fn check_public_key(&self, _user: &str, key: &PublicKey) -> Result<bool> {
-        let this = self.clone();
-        let key = key.clone();
-        tokio::task::spawn_blocking(move || {
-            let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
-
-            if this.policy == HostKeyPolicy::AcceptAll {
-                info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
-                return Ok(true);
-            }
-
-            let mut authorized = this.lock_keys();
-
-            if !authorized.is_empty() {
-                if authorized.contains(&key) {
-                    info!(%fingerprint, "Client matched pre-authorized key. Access granted.");
-                    return Ok(true);
-                }
-                warn!(%fingerprint, "Client key not in authorized list. Rejecting connection.");
-                return Ok(false);
-            }
-
-            // No authorized keys yet - check policy for new keys.
-            match this.policy {
-                HostKeyPolicy::Strict => {
-                    warn!(%fingerprint, "Strict policy: No pre-authorized keys found. Rejecting connection.");
-                    Ok(false)
-                }
-                HostKeyPolicy::Tofu => {
-                    info!(%fingerprint, "Tofu policy: No pre-authorized keys found. Trusting first client.");
-                    let _event = write_authorized_client(&this.state, &fingerprint, &key)?;
-                    authorized.push(key.clone());
-                    Ok(true)
-                }
-                HostKeyPolicy::AcceptAll => {
-                    info!(%fingerprint, "AcceptAll policy: automatically accepting client key.");
-                    Ok(true)
-                }
-            }
-        })
-        .await
-        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))?
-    }
-
-    async fn check_password(&self, _user: &str, _password: &str) -> Result<bool> {
-        Ok(false) // Key-only backend never accepts passwords.
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Built-in backend: PasswordAuth (single shared password)
-// ---------------------------------------------------------------------------
-
-/// Simple password authentication with a single shared password.
-///
-/// This is intended for personal or simple setups where one password
-/// protects the server. The username is ignored - any user with the
-/// correct password is accepted.
-///
-/// # Example (CLI)
-///
-/// ```bash
-/// irosh-server --auth-mode password --auth-password "mySecret123"
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PasswordAuth {
-    password_hash: String,
-}
-
-impl PasswordAuth {
-    /// Creates a new password authenticator with a pre-hashed password.
-    pub fn new(password_hash: impl Into<String>) -> Self {
-        Self {
-            password_hash: password_hash.into(),
-        }
-    }
-}
-
-#[async_trait]
-impl Authenticator for PasswordAuth {
-    async fn supported_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod::Password]
-    }
-
-    async fn check_public_key(&self, _user: &str, _key: &PublicKey) -> Result<bool> {
-        Ok(false) // Password-only backend never accepts keys.
-    }
-
-    async fn check_password(&self, _user: &str, password: &str) -> Result<bool> {
-        let this = self.clone();
-        let password = password.to_string();
-        tokio::task::spawn_blocking(move || {
-            match Argon2::default()
-                .verify_password(password.as_bytes(), this.password_hash.as_str())
-            {
-                Ok(()) => Ok(true),
-                Err(PasswordError::PasswordInvalid) => Ok(false),
-                Err(reason) => Err(AuthError::VerificationFailed { reason }.into()),
-            }
-        })
-        .await
-        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))?
-    }
-}
-
-/// Hashes a password using Argon2 with a random salt.
-///
-/// This uses Argon2id (the default in `argon2` crate) which is the current
-/// industry standard for password hashing, providing resistance against
-/// GPU cracking and side-channel attacks.
-///
-/// # Errors
-///
-/// Returns a [`crate::error::StorageError::PasswordHash`] if salt generation or hashing fails.
-#[must_use]
-pub fn hash_password(password: &str) -> Result<String> {
-    let argon2 = Argon2::default();
-    let password_hash = argon2
-        .hash_password(password.as_bytes())
-        .map_err(|reason| crate::error::StorageError::PasswordHash { reason })?
-        .to_string();
-
-    Ok(password_hash)
-}
-
-// ---------------------------------------------------------------------------
-// Built-in backend: CombinedAuth (keys OR password)
-// ---------------------------------------------------------------------------
-
-/// Combined authentication accepting either public keys or passwords.
-///
-/// This delegates to a [`KeyOnlyAuth`] for key checks and a [`PasswordAuth`]
-/// for password checks. A client can authenticate with either method.
-#[derive(Debug, Clone)]
-pub struct CombinedAuth {
-    key_auth: KeyOnlyAuth,
-    password_auth: PasswordAuth,
-}
-
-impl CombinedAuth {
-    /// Creates a combined authenticator from a key backend and a password backend.
-    #[must_use]
-    pub fn new(key_auth: KeyOnlyAuth, password_auth: PasswordAuth) -> Self {
-        Self {
-            key_auth,
-            password_auth,
-        }
-    }
-}
-
-#[async_trait]
-impl Authenticator for CombinedAuth {
-    async fn supported_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod::PublicKey, AuthMethod::Password]
-    }
-
-    async fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool> {
-        self.key_auth.check_public_key(user, key).await
-    }
-
-    async fn check_password(&self, user: &str, password: &str) -> Result<bool> {
-        self.password_auth.check_password(user, password).await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Client-side credentials
-// ---------------------------------------------------------------------------
-
-/// Credentials for password-based authentication on the client side.
-///
-/// When provided to [`ClientOptions`](crate::ClientOptions), the client will
-/// attempt password authentication if public key authentication is rejected.
-///
-/// The password is stored in a zeroizing wrapper ([`SecretString`]) so that the
-/// plaintext is overwritten in memory when the value is dropped.
-#[derive(Debug, Clone)]
-pub struct Credentials {
-    /// The username to authenticate as.
-    pub user: String,
-    /// The password (zeroized on drop).
-    pub password: SecretString,
-}
-
-impl Credentials {
-    /// Creates a new credentials pair.
-    ///
-    /// The password is immediately converted into a [`SecretString`] and will
-    /// be zeroed when the credentials are dropped.
-    pub fn new(user: impl Into<String>, password: impl Into<String>) -> Self {
-        Self {
-            user: user.into(),
-            password: SecretString::from(password.into()),
-        }
-    }
-}
-
-/// A callback trait to interactively prompt for a password.
-///
-/// Library consumers can implement this to ask the user for a password
-/// when public key authentication fails but the server supports passwords.
-pub trait PasswordPrompter: Send + Sync + std::fmt::Debug + 'static {
-    /// Prompts the user for a password for the given username.
-    ///
-    /// This method will be called inside a blocking task (`spawn_blocking`),
-    /// so it is safe to perform blocking I/O (like reading from stdin).
-    /// Return `None` if the user cancels or prompting fails.
-    fn prompt_password(&self, user: &str) -> Option<String>;
-}
-
-/// Confirms whether to accept a pairing request from a peer.
-pub trait ConfirmationCallback: Send + Sync + std::fmt::Debug + 'static {
-    /// Confirms whether to accept a pairing request from a peer.
-    fn confirm_pairing(&self, fingerprint: &str, key: &PublicKey) -> bool;
-}
 
 /// Tracking and notification handles for a pairing session.
 #[derive(Debug, Clone)]
@@ -766,75 +394,17 @@ impl Authenticator for UnifiedAuthenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HostKeyPolicy, SecurityConfig, StateConfig};
-    use secrecy::ExposeSecret;
+    use crate::auth::{block_on, hash_password, temp_state};
 
-    fn block_on<F: std::future::Future>(f: F) -> F::Output {
-        tokio::runtime::Runtime::new().unwrap().block_on(f)
-    }
-
-    fn temp_state(name: &str) -> StateConfig {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "irosh-auth-test-{}-{}",
-            name,
-            rand::random::<u32>()
-        ));
-        StateConfig::new(path)
-    }
-
-    #[test]
-    fn key_only_accept_all_accepts_any_key() -> crate::Result<()> {
-        let auth = KeyOnlyAuth::new(
-            SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            },
-            vec![],
-            temp_state("accept-all"),
-        );
-        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::PublicKey));
-        assert!(!block_on(auth.supported_methods()).contains(&AuthMethod::Password));
-        // Password should always be rejected.
-        assert!(!block_on(auth.check_password("user", "pass"))?);
-        Ok(())
-    }
-
-    #[test]
-    fn password_auth_validates_correct_password() -> crate::Result<()> {
-        let password = "secret123";
-        let hash = hash_password(password).expect("failed to hash test password");
-        let auth = PasswordAuth::new(hash);
-
-        assert!(block_on(auth.check_password("anyone", password))?);
-        assert!(!block_on(auth.check_password("anyone", "wrong"))?);
-        assert!(!block_on(auth.check_password("anyone", ""))?);
-
-        // PublicKey should always be rejected.
-        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::Password));
-        assert!(!block_on(auth.supported_methods()).contains(&AuthMethod::PublicKey));
-        Ok(())
-    }
-
-    #[test]
-    fn combined_auth_supports_both_methods() -> crate::Result<()> {
-        let key = KeyOnlyAuth::new(
-            SecurityConfig {
-                host_key_policy: HostKeyPolicy::AcceptAll,
-            },
-            vec![],
-            temp_state("combined"),
-        );
-        let password = "combo";
-        let hash = hash_password(password).expect("failed to hash test password");
-        let pass = PasswordAuth::new(hash);
-        let auth = CombinedAuth::new(key, pass);
-
-        assert_eq!(block_on(auth.supported_methods()).len(), 2);
-        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::PublicKey));
-        assert!(block_on(auth.supported_methods()).contains(&AuthMethod::Password));
-        assert!(block_on(auth.check_password("user", password))?);
-        assert!(!block_on(auth.check_password("user", "wrong"))?);
-        Ok(())
+    /// Helper: generate a deterministic ed25519 public key from a seed byte.
+    fn make_key(seed_byte: u8) -> russh::keys::ssh_key::PublicKey {
+        use russh::keys::ssh_key::PrivateKey;
+        use russh::keys::ssh_key::private::Ed25519Keypair;
+        let mut seed = [0u8; 32];
+        seed[0] = seed_byte;
+        PrivateKey::from(Ed25519Keypair::from_seed(&seed))
+            .public_key()
+            .clone()
     }
 
     #[test]
@@ -854,28 +424,6 @@ mod tests {
         let vault = crate::storage::load_all_authorized_clients(&state)?;
         assert_eq!(vault.len(), 1);
         Ok(())
-    }
-
-    #[test]
-    fn credentials_construction() {
-        let creds = Credentials::new("admin", "pass123");
-        assert_eq!(creds.user, "admin");
-        assert_eq!(creds.password.expose_secret(), "pass123");
-    }
-
-    // -----------------------------------------------------------------------
-    // UnifiedAuthenticator - wormhole / temp-password security paths
-    // -----------------------------------------------------------------------
-
-    /// Helper: generate a deterministic ed25519 public key from a seed byte.
-    fn make_key(seed_byte: u8) -> russh::keys::ssh_key::PublicKey {
-        use russh::keys::ssh_key::PrivateKey;
-        use russh::keys::ssh_key::private::Ed25519Keypair;
-        let mut seed = [0u8; 32];
-        seed[0] = seed_byte;
-        PrivateKey::from(Ed25519Keypair::from_seed(&seed))
-            .public_key()
-            .clone()
     }
 
     /// A wormhole temp-password lets an unknown key authenticate and get
@@ -1039,20 +587,5 @@ mod tests {
         );
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod send_sync_tests {
-    use super::*;
-
-    fn assert_send_sync<T: Send + Sync>() {}
-
-    #[test]
-    fn authenticators_are_send_sync() {
-        assert_send_sync::<KeyOnlyAuth>();
-        assert_send_sync::<PasswordAuth>();
-        assert_send_sync::<CombinedAuth>();
-        assert_send_sync::<UnifiedAuthenticator>();
     }
 }
