@@ -1,6 +1,8 @@
 //! SSH server handler trait implementations governing interactive terminal sessions.
 
+mod exec;
 mod pty;
+mod shell;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard};

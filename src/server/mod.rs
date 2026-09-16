@@ -17,29 +17,29 @@
 
 pub mod handler;
 pub mod ipc;
+pub(crate) mod protocol;
+pub(crate) mod session_tracker;
 pub(crate) mod shell_access;
 pub(crate) mod side_streams;
 pub(crate) mod startup;
 pub mod transfer;
 pub use transfer::ConnectionShellState;
 
+pub(crate) use session_tracker::SessionTracker;
+
 use russh::server;
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize};
-use tokio::sync::Mutex;
+use std::sync::atomic::AtomicU32;
 use tracing::{info, warn};
 
 use crate::auth::Authenticator;
 
-use crate::config::{PeerId, SecurityConfig, StateConfig};
+use crate::config::{SecurityConfig, StateConfig};
 use crate::error::Result;
-use crate::server::handler::ServerHandler;
 use crate::server::startup::bind_server;
-use crate::transport::stream::IrohDuplex;
 
-use self::side_streams::spawn_side_stream_listener;
+use self::protocol::{ActiveWormhole, GossipProtocol, SshProtocol};
 
 /// Configuration options for the irosh server.
 #[derive(Debug)]
@@ -206,77 +206,9 @@ pub struct ServerReady {
     pub host_key_openssh: String,
 }
 
-/// A currently connected remote peer session.
-#[derive(Debug, Clone)]
-pub(crate) struct ActiveSession {
-    /// The remote peer's node identifier.
-    pub(crate) peer_id: crate::config::PeerId,
-    /// Timestamp when this session was established.
-    pub(crate) started_at: chrono::DateTime<chrono::Utc>,
-    /// Total bytes transmitted to the peer.
-    pub(crate) bytes_sent: Arc<AtomicU64>,
-    /// Total bytes received from the peer.
-    pub(crate) bytes_received: Arc<AtomicU64>,
-}
-
-/// Manages the set of active remote sessions.
-#[derive(Default, Clone)]
-pub(crate) struct SessionTracker {
-    /// Map of session IDs to active session state.
-    pub(crate) sessions: Arc<Mutex<HashMap<usize, ActiveSession>>>,
-    /// Monotonically increasing session ID counter.
-    pub(crate) next_id: Arc<AtomicUsize>,
-}
-
-impl SessionTracker {
-    /// Creates a new empty tracker.
-    fn new() -> Self {
-        Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            next_id: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    /// Registers a new session and returns its ID and byte-counting atomics.
-    async fn register(
-        &self,
-        peer_id: crate::config::PeerId,
-    ) -> (usize, Arc<AtomicU64>, Arc<AtomicU64>) {
-        let id = self
-            .next_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let sent = Arc::new(AtomicU64::new(0));
-        let received = Arc::new(AtomicU64::new(0));
-        let session = ActiveSession {
-            peer_id,
-            started_at: chrono::Utc::now(),
-            bytes_sent: sent.clone(),
-            bytes_received: received.clone(),
-        };
-        self.sessions.lock().await.insert(id, session);
-        (id, sent, received)
-    }
-
-    /// Removes a session from the tracker by its ID.
-    async fn unregister(&self, id: usize) {
-        self.sessions.lock().await.remove(&id);
-    }
-
-    /// Returns a snapshot of all active sessions for IPC reporting.
-    async fn snapshot(&self) -> Vec<ipc::SessionStatus> {
-        let sessions = self.sessions.lock().await;
-        sessions
-            .values()
-            .map(|s| ipc::SessionStatus {
-                peer_id: s.peer_id.clone(),
-                started_at: s.started_at.to_rfc3339(),
-                bytes_sent: s.bytes_sent.load(std::sync::atomic::Ordering::Relaxed),
-                bytes_received: s.bytes_received.load(std::sync::atomic::Ordering::Relaxed),
-            })
-            .collect()
-    }
-}
-
+// `ActiveSession` and its registry live in [`session_tracker`]; both are
+// re-exported at `crate::server::` so call sites such as [`startup`] are
+// unchanged by the split.
 impl ServerReady {
     /// Creates a new `ServerReady` instance.
     #[must_use]
@@ -374,212 +306,6 @@ impl ServerShutdown {
     pub async fn close(self) {
         let _ = self.shutdown_tx.send(()).await;
         self.endpoint.close().await;
-    }
-}
-
-struct ActiveWormhole {
-    code: String,
-    password: Option<String>,
-    persistent: bool,
-    task: tokio::task::JoinHandle<()>,
-    failed_attempts: Arc<AtomicU32>,
-    success: Arc<std::sync::atomic::AtomicBool>,
-    expiry_task: tokio::task::JoinHandle<()>,
-}
-
-#[derive(Clone)]
-struct GossipProtocol(iroh_gossip::net::Gossip);
-
-impl std::fmt::Debug for GossipProtocol {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GossipProtocol")
-    }
-}
-
-impl iroh::protocol::ProtocolHandler for GossipProtocol {
-    async fn accept(
-        &self,
-        connection: iroh::endpoint::Connection,
-    ) -> std::result::Result<(), iroh::protocol::AcceptError> {
-        if let Err(e) = self.0.handle_connection(connection).await {
-            tracing::debug!("Gossip connection handling failed: {}", e);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct SshProtocol {
-    is_pairing: bool,
-    state: StateConfig,
-    security: SecurityConfig,
-    config: Arc<server::Config>,
-    authenticator: Arc<dyn Authenticator>,
-    wormhole: Arc<tokio::sync::Mutex<Option<ActiveWormhole>>>,
-    success_tx: tokio::sync::mpsc::Sender<()>,
-    failure_tx: tokio::sync::mpsc::Sender<()>,
-    active_sessions: Arc<std::sync::atomic::AtomicUsize>,
-    blobs: iroh_blobs::store::fs::FsStore,
-    session_tracker: Arc<SessionTracker>,
-    metrics: crate::metrics::Metrics,
-    idle_timeout: std::time::Duration,
-}
-
-impl std::fmt::Debug for SshProtocol {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SshProtocol {{ is_pairing: {} }}", self.is_pairing)
-    }
-}
-
-impl iroh::protocol::ProtocolHandler for SshProtocol {
-    async fn accept(
-        &self,
-        connection: iroh::endpoint::Connection,
-    ) -> std::result::Result<(), iroh::protocol::AcceptError> {
-        struct SessionGuard(
-            Arc<std::sync::atomic::AtomicUsize>,
-            usize,
-            Arc<SessionTracker>,
-        );
-        impl Drop for SessionGuard {
-            fn drop(&mut self) {
-                self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                let id = self.1;
-                let tracker = self.2.clone();
-                tokio::spawn(async move {
-                    tracker.unregister(id).await;
-                });
-            }
-        }
-
-        self.active_sessions
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        let _metrics_guard = self.metrics.register_connection();
-
-        let (session_id, bytes_sent, bytes_received) = self
-            .session_tracker
-            .register(PeerId::new(connection.remote_id().to_string()))
-            .await;
-
-        let _guard = SessionGuard(
-            self.active_sessions.clone(),
-            session_id,
-            self.session_tracker.clone(),
-        );
-
-        tracing::debug!("P2P connection established: {:?}", connection.remote_id());
-
-        let (send, recv) = match connection.accept_bi().await {
-            Ok(pair) => pair,
-            Err(err) => {
-                warn!("Failed to establish bi-directional stream: {}", err);
-                return Ok(());
-            }
-        };
-
-        info!("Established bi-directional SSH stream over Irosh");
-
-        let shell_state =
-            ConnectionShellState::new(self.state.root().to_path_buf(), self.blobs.clone());
-        let metrics = self.metrics.clone();
-        let (auth_gate_tx, auth_gate_rx) = tokio::sync::watch::channel(false);
-        spawn_side_stream_listener(
-            connection,
-            shell_state.clone(),
-            metrics.clone(),
-            auth_gate_rx,
-        );
-
-        let stream = IrohDuplex::with_stats(send, recv, bytes_sent, bytes_received);
-        let mut session_authenticator = self.authenticator.clone();
-        let mut session_config = self.config.clone();
-
-        if self.is_pairing {
-            // Extract pairing data while holding lock briefly, then release before blocking await.
-            let (password, success, failed_attempts, wormhole_active) = {
-                let wh_lock = self.wormhole.lock().await;
-                if let Some(wh) = wh_lock.as_ref() {
-                    (
-                        wh.password.clone(),
-                        wh.success.clone(),
-                        wh.failed_attempts.clone(),
-                        true,
-                    )
-                } else {
-                    (
-                        None,
-                        Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                        Arc::new(std::sync::atomic::AtomicU32::new(0)),
-                        false,
-                    )
-                }
-            };
-
-            if !wormhole_active {
-                warn!("Pairing connection attempted but no wormhole active.");
-                return Ok(());
-            }
-
-            info!("Pairing connection established via wormhole code.");
-            let vault = match tokio::task::spawn_blocking({
-                let state = self.state.clone();
-                move || crate::storage::load_all_authorized_clients(&state)
-            })
-            .await
-            {
-                Ok(Ok(vault)) => vault,
-                _ => Vec::new(),
-            };
-            let keys: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
-
-            let pairing_auth = crate::auth::UnifiedAuthenticator::with_tracking(
-                self.state.clone(),
-                self.security.host_key_policy,
-                keys,
-                password,
-                crate::auth::PairingMonitor {
-                    success_flag: success,
-                    failed_attempts: failed_attempts,
-                    success_tx: Some(self.success_tx.clone()),
-                    failure_tx: Some(self.failure_tx.clone()),
-                },
-            );
-
-            let pairing_methods = pairing_auth.supported_methods().await;
-            let mut pairing_method_set = russh::MethodSet::empty();
-            for m in &pairing_methods {
-                match m {
-                    crate::auth::AuthMethod::PublicKey => {
-                        pairing_method_set.push(russh::MethodKind::PublicKey);
-                    }
-                    crate::auth::AuthMethod::Password => {
-                        pairing_method_set.push(russh::MethodKind::Password);
-                    }
-                }
-            }
-            session_config = Arc::new(russh::server::Config {
-                auth_rejection_time: self.config.auth_rejection_time,
-                keys: self.config.keys.clone(),
-                methods: pairing_method_set,
-                ..Default::default()
-            });
-
-            session_authenticator = Arc::new(pairing_auth);
-        }
-
-        let handler = ServerHandler::with_metrics(session_authenticator, shell_state, metrics)
-            .with_auth_gate(auth_gate_tx)
-            .with_idle_timeout(self.idle_timeout);
-        let config = session_config;
-
-        tracing::debug!("Starting SSH session task");
-        if let Err(err) = server::run_stream(config, stream, handler).await {
-            warn!("Server session error: {:?}", err);
-        }
-        tracing::debug!("SSH session task finished");
-
-        Ok(())
     }
 }
 

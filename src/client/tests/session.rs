@@ -1,5 +1,6 @@
 use super::*;
 use crate::session::pty::pty_size;
+use russh::ChannelMsg;
 
 #[tokio::test]
 async fn session_state_transitions_from_authenticated_to_shell_ready_to_closed() {
