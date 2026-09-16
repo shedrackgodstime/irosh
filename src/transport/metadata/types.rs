@@ -80,6 +80,7 @@ impl PeerMetadata {
             }
         }
         // COMPUTERNAME is the Windows equivalent
+        #[cfg(windows)]
         if let Ok(h) = std::env::var("COMPUTERNAME") {
             if !h.is_empty() {
                 return h;
@@ -196,12 +197,23 @@ fn username_syscall() -> Option<String> {
     if output.status.success() {
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
         // On Windows, whoami returns "DOMAIN\user" - strip the domain prefix
-        let s = s.rsplit('\\').next().unwrap_or(&s).to_string();
-        if !s.is_empty()
-            && !s.eq_ignore_ascii_case("system")
-            && !s.eq_ignore_ascii_case("nt authority")
+        // and reject the service-account aliases it reports in elevated
+        // contexts. On other platforms whoami is already a plain username.
+        #[cfg(windows)]
         {
-            return Some(s);
+            let s = s.rsplit('\\').next().unwrap_or(&s).to_string();
+            if !s.is_empty()
+                && !s.eq_ignore_ascii_case("system")
+                && !s.eq_ignore_ascii_case("nt authority")
+            {
+                return Some(s);
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if !s.is_empty() {
+                return Some(s);
+            }
         }
     }
     None

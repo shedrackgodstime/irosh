@@ -33,8 +33,10 @@ dialoguer = "0.12.0"
 shell-words = "1.1.1"
 unicode-width = "0.2.2"
 console = "0.16.4"
-windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console", "Win32_Foundation"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

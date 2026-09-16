@@ -26,28 +26,39 @@ fn resolve_state_dir(subdir: &str) -> Option<PathBuf> {
     if !is_system_profile(&home) {
         return Some(home.join(".irosh").join(subdir));
     }
-    // Running as SYSTEM on Windows — try common user profile paths.
-    #[cfg(windows)]
-    {
-        let base = PathBuf::from("C:\\Users");
-        if let Ok(entries) = std::fs::read_dir(&base) {
-            for entry in entries.flatten() {
-                let path = entry
-                    .path()
-                    .join("AppData")
-                    .join("Local")
-                    .join("irosh")
-                    .join(subdir);
-                if path.join("ipc.port").exists()
-                    || path.join("config").exists()
-                    || path.join("keys").exists()
-                {
-                    return Some(path);
-                }
+    resolve_system_profile_dir(subdir)
+}
+
+/// Windows-only: when running as SYSTEM, pick a real user profile's irosh
+/// state directory instead of the SYSTEM profile (which cannot hold user
+/// state). Calls reach this only after `is_system_profile` is true, which is
+/// only ever the case for a Windows `$HOME`.
+#[cfg(windows)]
+fn resolve_system_profile_dir(subdir: &str) -> Option<PathBuf> {
+    let base = PathBuf::from("C:\\Users");
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            let path = entry
+                .path()
+                .join("AppData")
+                .join("Local")
+                .join("irosh")
+                .join(subdir);
+            if path.join("ipc.port").exists()
+                || path.join("config").exists()
+                || path.join("keys").exists()
+            {
+                return Some(path);
             }
         }
     }
     Some(PathBuf::from("C:\\Users\\Default\\AppData\\Local\\irosh").join(subdir))
+}
+
+/// Non-Windows builds have no SYSTEM-profile state resolution.
+#[cfg(not(windows))]
+fn resolve_system_profile_dir(_subdir: &str) -> Option<PathBuf> {
+    None
 }
 
 impl CliContext {
