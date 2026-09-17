@@ -143,6 +143,7 @@ pub(super) async fn handle_completion_request(
 
 /// Escapes glob metacharacters so a completion prefix is matched literally by
 /// `find -name`.
+#[cfg(target_os = "linux")]
 fn glob_escape(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for c in input.chars() {
@@ -160,6 +161,7 @@ fn glob_escape(input: &str) -> String {
 
 /// Parses NUL-separated `name\0type\0` records emitted by `find -printf`, adding
 /// a trailing `/` to directory entries.
+#[cfg(target_os = "linux")]
 fn parse_find_type_entries(bytes: &[u8]) -> Vec<String> {
     let mut out = Vec::new();
     let mut fields = bytes.split(|b| *b == 0);
@@ -176,7 +178,7 @@ fn parse_find_type_entries(bytes: &[u8]) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::{glob_escape, parse_find_type_entries};
 

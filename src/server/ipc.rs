@@ -397,11 +397,15 @@ where
     // a client that connects but never writes cannot wedge a handler task (and
     // its socket) indefinitely.
     let mut buf = Vec::with_capacity(4096);
-    let mut limited = stream.take(1024 * 64);
-    let read = limited.read_to_end(&mut buf);
-    tokio::time::timeout(IPC_REQUEST_TIMEOUT, read)
-        .await
-        .map_err(|_| IpcError::Timeout)??;
+    {
+        // Reborrow so the mutable borrow ends with the block; the Windows branch
+        // below still needs `stream` to write the auth-failure response.
+        let mut limited = (&mut *stream).take(1024 * 64);
+        let read = limited.read_to_end(&mut buf);
+        tokio::time::timeout(IPC_REQUEST_TIMEOUT, read)
+            .await
+            .map_err(|_| IpcError::Timeout)??;
+    }
 
     #[cfg(windows)]
     let command: IpcCommand = {
