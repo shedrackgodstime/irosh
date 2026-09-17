@@ -457,6 +457,7 @@ impl ServerHandler {
                         }
                     }
                 }
+                drop(reader);
             };
 
             #[cfg(not(unix))]
