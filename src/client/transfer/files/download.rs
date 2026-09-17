@@ -1,5 +1,6 @@
 //! Client file download implementation.
 use tokio::io::AsyncWriteExt;
+#[cfg(unix)]
 use tracing::warn;
 
 use crate::client::{Session, TransferProgress};

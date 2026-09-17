@@ -92,6 +92,15 @@ fn kill_pty_process(process: &mut RunningPty) {
             libc::killpg(pgid, libc::SIGKILL);
         }
     }
+    // `ChildKiller::kill` only sends `SIGHUP` on Unix, which a shell may
+    // catch or ignore. Back it with a direct `SIGKILL` so the child is
+    // guaranteed dead even if the group kill above could not run.
+    if let Some(pid) = process.pid {
+        // SAFETY: `pid` is the child PID returned by the PTY spawn.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
     let _ = process.killer.kill();
 }
 
@@ -228,9 +237,6 @@ impl ServerHandler {
             builder.env(key, value);
         }
 
-        #[cfg(unix)]
-        let pgid = pair.master.process_group_leader();
-
         let mut child = pair
             .slave
             .spawn_command(builder)
@@ -238,6 +244,12 @@ impl ServerHandler {
                 details: format!("failed to spawn command in PTY: {e}"),
             })?;
         let child_pid = child.process_id();
+        // `portable_pty` makes the child a session leader (`setsid`) before it
+        // execs, so the child's PID is also its process-group ID. Deriving the
+        // group from the PID is deterministic; querying `tcgetpgrp` here races
+        // the child's `setsid`/`TIOCSCTTY` and can yield a stale group.
+        #[cfg(unix)]
+        let pgid = child_pid.map(|pid| pid as libc::pid_t);
         info!(
             "Spawned PTY child for channel {:?}: command={:?}, pid={:?}",
             channel, command, child_pid
