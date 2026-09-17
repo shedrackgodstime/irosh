@@ -30,6 +30,9 @@ use tracing::{debug, info, warn};
 #[cfg(unix)]
 const MAX_SOCKET_PATH_LEN: usize = 100;
 
+/// Deadline for a connected IPC client to deliver its full request.
+const IPC_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Returns the IPC control socket path for a given state directory.
 ///
 /// The normal location is `<state_dir>/irosh.sock`, but deep state
@@ -202,6 +205,10 @@ pub enum IpcError {
     /// Serialization or deserialization of IPC messages failed.
     #[error("ipc message serialization failed")]
     Serialization(#[from] serde_json::Error),
+
+    /// A client connected but did not deliver a complete request in time.
+    #[error("ipc request timed out")]
+    Timeout,
 }
 
 /// The IPC listener that handles incoming control commands.
@@ -386,9 +393,15 @@ async fn handle_ipc_connection<S>(
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
-    // Use a reasonable limit for IPC messages to prevent DoS.
+    // Use a reasonable limit for IPC messages to prevent DoS, and a deadline so
+    // a client that connects but never writes cannot wedge a handler task (and
+    // its socket) indefinitely.
     let mut buf = Vec::with_capacity(4096);
-    stream.take(1024 * 64).read_to_end(&mut buf).await?;
+    let mut limited = stream.take(1024 * 64);
+    let read = limited.read_to_end(&mut buf);
+    tokio::time::timeout(IPC_REQUEST_TIMEOUT, read)
+        .await
+        .map_err(|_| IpcError::Timeout)??;
 
     #[cfg(windows)]
     let command: IpcCommand = {
@@ -506,5 +519,23 @@ mod tests {
             "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
             "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d7"
         ));
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::{IpcError, handle_ipc_connection};
+
+    /// A client that connects but never sends a request must not hold the IPC
+    /// handler task open forever. Time is paused so the 30s deadline elapses
+    /// instantly.
+    #[tokio::test(start_paused = true)]
+    async fn silent_client_hits_request_timeout() {
+        let (mut server, _client) = tokio::io::duplex(1024);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = handle_ipc_connection(&mut server, tx, None)
+            .await
+            .expect_err("silent client should time out");
+        assert!(matches!(err, IpcError::Timeout), "got: {err}");
     }
 }

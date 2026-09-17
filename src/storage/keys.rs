@@ -12,16 +12,10 @@ use tokio::task;
 use crate::config::StateConfig;
 use crate::error::{Result, StorageError};
 
-/// Ensures the key storage directory exists.
+/// Ensures the key storage directory exists with strict permissions.
 fn ensure_key_dir(state: &StateConfig) -> Result<()> {
     let path = state.root().join("keys");
-    if !path.exists() {
-        fs::create_dir_all(&path).map_err(|source| StorageError::DirectoryCreate {
-            path: path.clone(),
-            source,
-        })?;
-    }
-    Ok(())
+    crate::storage::utils::ensure_dir_secure_tighten(&path)
 }
 
 /// Holds the unified cryptographic identity for both Iroh and SSH layers.
@@ -257,6 +251,26 @@ mod tests {
 
         let identity = load_or_generate_identity(&state).await.unwrap();
         assert_eq!(identity.secret_key.to_bytes(), key.to_bytes());
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_secret_key_tightens_preexisting_key_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let state = temp_state("tighten-keys");
+        let keys_dir = state.root().join("keys");
+        std::fs::create_dir_all(&keys_dir).unwrap();
+        std::fs::set_permissions(&keys_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        save_secret_key(&state, &SecretKey::generate()).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&keys_dir).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "pre-existing keys directory must be tightened to 0700"
+        );
         let _ = std::fs::remove_dir_all(state.root());
     }
 

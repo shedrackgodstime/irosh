@@ -130,3 +130,57 @@ async fn capture_exec_collects_stdout_and_stderr() {
     .await
     .expect("Test timed out");
 }
+
+/// Regression: an abrupt peer disappearance (no `CHANNEL_CLOSE`) used to leave
+/// the server-side PTY child, its reader task, and its writer thread running for
+/// the lifetime of the daemon. `ServerHandler::terminate_all_channels` (driven
+/// by `SshProtocol::accept` once the SSH session ends) must reap them.
+#[cfg(unix)]
+#[tokio::test]
+async fn connection_teardown_reaps_live_shell_process() {
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let server_state = temp_state_dir("server-orphan");
+        let client_state = temp_state_dir("client-orphan");
+        let (mut session, _server_task, handler) =
+            connect_test_session_with_handler(&server_state, &client_state).await;
+
+        let size = pty_size(80, 24, 0, 0);
+        session
+            .request_pty(PtyOptions::new("xterm-256color", size))
+            .await
+            .unwrap();
+        session.start_shell().await.unwrap();
+
+        // Wait for the server to register the PTY child.
+        let mut pids = handler.active_process_pids();
+        let register_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while pids.is_empty() && std::time::Instant::now() < register_deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            pids = handler.active_process_pids();
+        }
+        assert!(!pids.is_empty(), "server never registered a PTY child");
+
+        handler.terminate_all_channels();
+
+        // Every child must be killed and reaped by its reader task.
+        let kill_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        for pid in &pids {
+            loop {
+                // SAFETY: signal 0 performs only an existence/permission check
+                // and does not deliver a signal; `pid` is a live pid.
+                let alive = unsafe { libc::kill(*pid as i32, 0) } == 0;
+                if !alive {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < kill_deadline,
+                    "shell pid {pid} survived connection teardown"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        }
+        assert!(handler.active_process_pids().is_empty());
+    })
+    .await
+    .expect("Test timed out");
+}

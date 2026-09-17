@@ -70,49 +70,60 @@ pub fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
             Output::hr();
             Output::nl();
         }
-        TrustAction::Revoke { fingerprint: _ } => {
+        TrustAction::Revoke { fingerprint } => {
             let keys = storage::load_all_authorized_clients(&state)?;
             if keys.is_empty() {
                 Ui::info("No devices to revoke.");
                 return Ok(());
             }
 
-            let items: Vec<String> = keys
-                .iter()
-                .map(|(id, k)| {
-                    let fingerprint = k.fingerprint(HashAlg::Sha256).to_string();
-                    if id == &fingerprint {
-                        format!("Unknown [{fingerprint}]")
-                    } else {
-                        format!("{id} [{fingerprint}]")
-                    }
-                })
-                .collect();
+            let target: Option<String> = match fingerprint.as_deref() {
+                Some(query) => {
+                    let matches: Vec<&String> = keys
+                        .iter()
+                        .filter(|(id, k)| {
+                            let fp = k.fingerprint(HashAlg::Sha256).to_string();
+                            id == query || fp == query || fp.starts_with(query)
+                        })
+                        .map(|(id, _)| id)
+                        .collect();
 
-            if let Some(idx) = Ui::select("Select a device to revoke", &items) {
-                let (id, _) = &keys[idx];
-                if ctx.args.json
-                    || Ui::danger_confirm(
-                        &format!("Are you sure you want to revoke trust for '{id}'?"),
-                        "yes",
-                    )
-                {
-                    storage::revoke_key(&state, id)?;
-
-                    if ctx.args.json {
-                        #[derive(serde::Serialize)]
-                        struct TrustRevokeResponse {
-                            identity: String,
+                    match matches.as_slice() {
+                        [] => {
+                            Ui::error(
+                                &format!("No trusted device matches '{query}'."),
+                                Some("Run 'irosh trust list' to see authorized fingerprints."),
+                            );
+                            return Ok(());
                         }
-                        crate::output::print_success(TrustRevokeResponse {
-                            identity: id.clone(),
-                        });
-                        return Ok(());
+                        [only] => Some((*only).clone()),
+                        _ => {
+                            Ui::error(
+                                &format!("'{query}' matches multiple trusted devices."),
+                                Some("Provide a longer fingerprint prefix."),
+                            );
+                            return Ok(());
+                        }
                     }
-
-                    Ui::success(&format!("Identity '{id}' has been removed from the vault."));
                 }
-            } else {
+                None => {
+                    let items: Vec<String> = keys
+                        .iter()
+                        .map(|(id, k)| {
+                            let fp = k.fingerprint(HashAlg::Sha256).to_string();
+                            if id == &fp {
+                                format!("Unknown [{fp}]")
+                            } else {
+                                format!("{id} [{fp}]")
+                            }
+                        })
+                        .collect();
+
+                    Ui::select("Select a device to revoke", &items).map(|idx| keys[idx].0.clone())
+                }
+            };
+
+            let Some(id) = target else {
                 if ctx.args.json {
                     crate::output::print_error(
                         "No identity specified for revocation",
@@ -121,6 +132,27 @@ pub fn exec(action: TrustAction, ctx: &CliContext) -> Result<()> {
                     return Ok(());
                 }
                 Ui::info("Cancelled.");
+                return Ok(());
+            };
+
+            if ctx.args.json
+                || Ui::danger_confirm(
+                    &format!("Are you sure you want to revoke trust for '{id}'?"),
+                    "yes",
+                )
+            {
+                storage::revoke_key(&state, &id)?;
+
+                if ctx.args.json {
+                    #[derive(serde::Serialize)]
+                    struct TrustRevokeResponse {
+                        identity: String,
+                    }
+                    crate::output::print_success(TrustRevokeResponse { identity: id });
+                    return Ok(());
+                }
+
+                Ui::success(&format!("Identity '{id}' has been removed from the vault."));
             }
         }
         TrustAction::Reset => {

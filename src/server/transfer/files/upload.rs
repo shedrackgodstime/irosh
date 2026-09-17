@@ -40,14 +40,18 @@ pub(crate) async fn handle_put_request(
     let mut transfer_failed = false;
     let mut received = 0u64;
     {
-        let mut stdin = sink.stdin().ok_or_else(|| ServerError::TransferFailed {
-            failure: TransferFailure::new(
-                TransferFailureCode::Internal,
-                "upload helper sink unavailable",
-            ),
-        })?;
+        let Some(mut stdin) = sink.stdin() else {
+            let _ = context.remove_file_if_present(&part_arg).await;
+            return Err(ServerError::TransferFailed {
+                failure: TransferFailure::new(
+                    TransferFailureCode::Internal,
+                    "upload helper sink unavailable",
+                ),
+            }
+            .into());
+        };
 
-        write_put_ready(
+        if let Err(err) = write_put_ready(
             stream,
             &TransferReady {
                 size: request.size,
@@ -55,14 +59,22 @@ pub(crate) async fn handle_put_request(
             },
         )
         .await
-        .map_err(TransportError::from)?;
+        {
+            let _ = context.remove_file_if_present(&part_arg).await;
+            return Err(TransportError::from(err).into());
+        }
 
         let mut frame_buf = Vec::new();
         loop {
-            match read_next_frame_into(stream, &mut frame_buf)
-                .await
-                .map_err(TransportError::from)?
-            {
+            let frame = match read_next_frame_into(stream, &mut frame_buf).await {
+                Ok(frame) => frame,
+                Err(err) => {
+                    tracing::warn!("Upload stream read failed: {err}");
+                    transfer_failed = true;
+                    break;
+                }
+            };
+            match frame {
                 TransferFrameBorrowed::PutChunk(chunk) => {
                     received += chunk.len() as u64;
                     if let Err(err) = stdin.write_all(chunk).await {
@@ -91,13 +103,16 @@ pub(crate) async fn handle_put_request(
                     break;
                 }
                 TransferFrameBorrowed::GetChunk(_) => {
-                    return Err(ServerError::TransferFailed {
-                        failure: TransferFailure::new(
+                    let _ = write_transfer_error(
+                        stream,
+                        &TransferFailure::new(
                             TransferFailureCode::UnexpectedFrame,
                             "unexpected get chunk frame during upload".to_string(),
                         ),
-                    }
-                    .into());
+                    )
+                    .await;
+                    transfer_failed = true;
+                    break;
                 }
                 TransferFrameBorrowed::Owned(other) => {
                     let _ = write_transfer_error(
@@ -135,11 +150,19 @@ pub(crate) async fn handle_put_request(
         return Ok(());
     }
 
-    if !context.rename(&part_arg, &final_arg).await? {
-        write_transfer_error(stream, &atomic_rename_failure(&final_arg))
-            .await
-            .map_err(TransportError::from)?;
-        return Ok(());
+    match context.rename(&part_arg, &final_arg).await {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = context.remove_file_if_present(&part_arg).await;
+            write_transfer_error(stream, &atomic_rename_failure(&final_arg))
+                .await
+                .map_err(TransportError::from)?;
+            return Ok(());
+        }
+        Err(err) => {
+            let _ = context.remove_file_if_present(&part_arg).await;
+            return Err(err);
+        }
     }
 
     if let Some(mode) = request.mode {
@@ -221,10 +244,17 @@ async fn handle_recursive_put_request(
                                 ),
                             })?;
                         loop {
-                            match read_next_frame_into(stream, &mut frame_buf)
-                                .await
-                                .map_err(TransportError::from)?
-                            {
+                            let frame = match read_next_frame_into(stream, &mut frame_buf).await {
+                                Ok(frame) => frame,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Recursive upload stream read failed for entry: {e}"
+                                    );
+                                    entry_failed = true;
+                                    break;
+                                }
+                            };
+                            match frame {
                                 TransferFrameBorrowed::PutChunk(chunk) => {
                                     file_received += chunk.len() as u64;
                                     if let Err(e) = stdin.write_all(chunk).await {
@@ -237,23 +267,18 @@ async fn handle_recursive_put_request(
                                     break;
                                 }
                                 TransferFrameBorrowed::GetChunk(_) => {
-                                    return Err(ServerError::TransferFailed {
-                                        failure: TransferFailure::new(
-                                            TransferFailureCode::UnexpectedFrame,
-                                            "unexpected get chunk frame during recursive upload"
-                                                .to_string(),
-                                        ),
-                                    }
-                                    .into());
+                                    tracing::warn!(
+                                        "unexpected get chunk frame during recursive upload"
+                                    );
+                                    entry_failed = true;
+                                    break;
                                 }
                                 TransferFrameBorrowed::Owned(other) => {
-                                    return Err(ServerError::TransferFailed {
-                                        failure: TransferFailure::new(
-                                            TransferFailureCode::UnexpectedFrame,
-                                            format!("unexpected frame during recursive entry stream: {other:?}"),
-                                        ),
-                                    }
-                                    .into());
+                                    tracing::warn!(
+                                        "unexpected frame during recursive entry stream: {other:?}"
+                                    );
+                                    entry_failed = true;
+                                    break;
                                 }
                             }
                         }

@@ -79,15 +79,10 @@ fn validate_peer_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Ensures the peers storage subdirectory exists.
+/// Ensures the peers storage subdirectory exists with strict permissions.
 fn ensure_peers_dir(state: &StateConfig) -> Result<PathBuf> {
     let path = state.root().join("peers");
-    if !path.exists() {
-        fs::create_dir_all(&path).map_err(|source| StorageError::DirectoryCreate {
-            path: path.clone(),
-            source,
-        })?;
-    }
+    crate::storage::utils::ensure_dir_secure_tighten(&path)?;
     Ok(path)
 }
 
@@ -412,6 +407,33 @@ mod tests {
         let peers = list_peers(&state).unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].name, "good");
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_peer_tightens_preexisting_peers_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let state = temp_state("tighten-peers");
+        let dir = state.root().join("peers");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        save_peer(
+            &state,
+            &PeerProfile {
+                name: "peer".into(),
+                ticket: make_ticket(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "pre-existing peers directory must be tightened to 0700"
+        );
         let _ = std::fs::remove_dir_all(state.root());
     }
 }

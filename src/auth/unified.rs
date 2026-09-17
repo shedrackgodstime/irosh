@@ -115,6 +115,28 @@ impl UnifiedAuthenticator {
         }
     }
 
+    /// Returns a view sharing all durable/tracking state but with a fresh
+    /// per-handshake public-key cache.
+    ///
+    /// The server calls this once per accepted connection so that a concurrent
+    /// handshake cannot overwrite the key cached by this one and get it
+    /// authorized by the other's password step.
+    #[must_use]
+    pub fn for_new_session(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            policy: self.policy,
+            authorized_keys: self.authorized_keys.clone(),
+            temp_password_hash: self.temp_password_hash.clone(),
+            success_flag: self.success_flag.clone(),
+            failed_attempts: self.failed_attempts.clone(),
+            last_failure: self.last_failure.clone(),
+            cached_key: Arc::new(StdMutex::new(None)),
+            success_tx: self.success_tx.clone(),
+            failure_tx: self.failure_tx.clone(),
+        }
+    }
+
     /// Returns the success flag, which is set to true when a NEW device is successfully added to the vault.
     #[must_use]
     pub fn was_successful(&self) -> bool {
@@ -240,6 +262,10 @@ impl UnifiedAuthenticator {
 
 #[async_trait]
 impl Authenticator for UnifiedAuthenticator {
+    fn session_scoped(self: Arc<Self>) -> Arc<dyn Authenticator> {
+        Arc::new(self.for_new_session())
+    }
+
     async fn supported_methods(&self) -> Vec<AuthMethod> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -470,6 +496,45 @@ mod tests {
         assert!(
             block_on(auth2.check_public_key("user", &unknown_key))?,
             "previously-paired key must be trusted on subsequent connection"
+        );
+
+        Ok(())
+    }
+
+    /// Two concurrent handshakes sharing one temp-password authenticator must
+    /// not let one connection's cached public key be authorized by the other's
+    /// password step. `session_scoped` gives each connection an isolated cache.
+    #[test]
+    fn unified_auth_session_scoped_isolates_cached_keys() -> crate::Result<()> {
+        let state = temp_state("unified-session-isolation");
+        let password = "wormhole-secret";
+        let hash = hash_password(password)?;
+
+        let shared: std::sync::Arc<dyn Authenticator> = std::sync::Arc::new(
+            UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Tofu, vec![], Some(hash)),
+        );
+
+        // Each connection gets its own scoped authenticator.
+        let session_a = shared.clone().session_scoped();
+        let session_b = shared.clone().session_scoped();
+
+        let key_a = make_key(0xA1);
+        let key_b = make_key(0xB2);
+
+        // Both unknown keys are rejected, caching a different key per session.
+        assert!(!block_on(session_a.check_public_key("user", &key_a))?);
+        assert!(!block_on(session_b.check_public_key("user", &key_b))?);
+
+        // Session A's password must authorize A's key only.
+        assert!(block_on(session_a.check_password("user", password))?);
+
+        let vault = crate::storage::load_all_authorized_clients(&state)?;
+        let stored: Vec<_> = vault.into_iter().map(|(_, k)| k).collect();
+        assert_eq!(stored.len(), 1, "exactly one key must be paired");
+        assert_eq!(
+            stored[0].fingerprint(russh::keys::HashAlg::Sha256),
+            key_a.fingerprint(russh::keys::HashAlg::Sha256),
+            "session A must authorize its own key, not session B's cached key"
         );
 
         Ok(())

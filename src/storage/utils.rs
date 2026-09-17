@@ -76,12 +76,19 @@ pub fn atomic_write_secure(path: &Path, data: &[u8]) -> Result<()> {
     write_result
 }
 
-/// Ensures a directory exists and has strict permissions (0700) on Unix/Windows.
+/// Ensures a directory exists and has strict permissions (0700) on Unix/Windows
+/// **if it had to be created**.
+///
+/// An already-existing directory is left alone: this is called with
+/// user-chosen destinations (e.g. exporting a config next to `/tmp`), and
+/// tightening a shared directory would both fail and be wrong. Callers that
+/// own the directory and want existing permissions tightened should use
+/// [`ensure_dir_secure_tighten`].
 ///
 /// # Errors
 ///
 /// Returns an error if the directory cannot be created or if strict
-/// permissions cannot be applied to an existing or new directory.
+/// permissions cannot be applied to a newly created directory.
 #[must_use]
 pub fn ensure_dir_secure(path: &Path) -> Result<()> {
     if !path.exists() {
@@ -91,6 +98,28 @@ pub fn ensure_dir_secure(path: &Path) -> Result<()> {
         })?;
         apply_secure_permissions(path)?;
     }
+
+    Ok(())
+}
+
+/// Ensures a directory exists and has strict permissions (0700) on Unix/Windows,
+/// tightening a pre-existing directory in place.
+///
+/// Use this only for directories owned by irosh (state subdirectories), where a
+/// previously created or user-altered directory should never stay
+/// world-readable.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be created or if strict
+/// permissions cannot be applied.
+#[must_use]
+pub fn ensure_dir_secure_tighten(path: &Path) -> Result<()> {
+    fs::create_dir_all(path).map_err(|source| StorageError::DirectoryCreate {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    apply_secure_permissions(path)?;
 
     Ok(())
 }
@@ -447,6 +476,29 @@ mod tests {
         // Should not error on existing dir
         ensure_dir_secure(&dir).unwrap();
         assert!(dir.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_dir_secure_tighten_tightens_existing_directory_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("ensure-tighten");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+
+        ensure_dir_secure_tighten(&dir).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700,
+            "pre-existing directory must be tightened to 0700"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

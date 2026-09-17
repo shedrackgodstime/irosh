@@ -44,26 +44,43 @@ pub use trust::{
 #[must_use]
 pub fn reset_vault(state: &crate::config::StateConfig) -> crate::error::Result<()> {
     let trust_dir = state.root().join("trust");
-    if trust_dir.exists() {
-        let _ = std::fs::remove_dir_all(&trust_dir);
+    match std::fs::remove_dir_all(&trust_dir) {
+        Ok(()) => {}
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(crate::error::StorageError::FileDelete {
+                path: trust_dir,
+                source,
+            }
+            .into());
+        }
     }
-    let _ = shadow::delete_shadow_file(state);
+    crate::storage::shadow::delete_shadow_file(state)?;
     Ok(())
 }
 
-/// Rotates the node's identity by deleting the existing secret key and generating a new one.
+/// Rotates the node's identity by generating a new secret key and atomically
+/// persisting it.
+///
+/// The new key is written with `atomic_write_secure`, which replaces the
+/// previous key in a single rename. This means a failure while generating or
+/// saving leaves the existing identity intact, rather than deleting the key
+/// first and risking a node with no identity.
 ///
 /// # Errors
 ///
-/// Returns an error if the key deletion or generation fails.
+/// Returns an error if the new key cannot be generated or persisted.
 #[must_use]
 pub async fn rotate_identity(
     state: &crate::config::StateConfig,
 ) -> crate::error::Result<EndpointIdentity> {
     let state_clone = state.clone();
-    tokio::task::spawn_blocking(move || keys::delete_secret_key(&state_clone))
-        .await
-        .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))??;
+    tokio::task::spawn_blocking(move || {
+        let new_key = iroh::SecretKey::generate();
+        keys::save_secret_key(&state_clone, &new_key)
+    })
+    .await
+    .map_err(|e| crate::error::IroshError::Io(std::io::Error::other(e)))??;
     keys::load_or_generate_identity(state).await
 }
 
@@ -116,6 +133,20 @@ mod tests {
         let second_id = second.endpoint_id();
         // The new identity should differ from the old one
         assert_ne!(first_id, second_id);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[tokio::test]
+    async fn rotate_identity_keeps_secret_file_present() {
+        let state = temp_state("rotate-present");
+        super::rotate_identity(&state).await.unwrap();
+        let path = state.root().join("keys/endpoint.secret");
+        assert!(path.exists());
+        super::rotate_identity(&state).await.unwrap();
+        assert!(
+            path.exists(),
+            "rotation must never leave the node without a secret key"
+        );
         let _ = std::fs::remove_dir_all(state.root());
     }
 }

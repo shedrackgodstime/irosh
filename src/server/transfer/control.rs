@@ -89,13 +89,14 @@ pub(super) async fn handle_completion_request(
             {
                 // In Live context, use 'find' inside the namespace.
                 // GNU find's -printf is Linux-specific; BSD find (macOS) lacks it.
+                // Fields are NUL-separated: `%P\0%y\0`. A newline or `:` separator
+                // mangles filenames that contain those bytes, and NUL cannot occur
+                // in a path. The prefix is glob-escaped so metacharacters in the
+                // user's partial name are matched literally.
+                let escaped = glob_escape(&prefix).replace('\'', "'\\''");
+                let find_script =
+                    format!("find . -maxdepth 1 -name '{escaped}*' -printf '%P\\0%y\\0'");
                 let mut cmd = tokio::process::Command::new("sh");
-                // find . -maxdepth 1 -name 'prefix*' -printf '%P%y\n'
-                // %y is type (f, d, etc.)
-                let find_script = format!(
-                    "find . -maxdepth 1 -name '{}*' -printf '%P:%y\\n'",
-                    prefix.replace('\'', "'\\''")
-                );
                 cmd.arg("-c")
                     .arg(find_script)
                     .current_dir(&search_dir)
@@ -103,21 +104,14 @@ pub(super) async fn handle_completion_request(
                     .stderr(std::process::Stdio::null());
                 context.configure(&mut cmd);
 
-                if let Ok(child) = cmd.spawn() {
-                    if let Some(stdout) = child.stdout {
-                        use tokio::io::{AsyncBufReadExt, BufReader};
-                        let mut lines = BufReader::new(stdout).lines();
-                        while let Ok(Some(line)) = lines.next_line().await {
-                            let parts: Vec<&str> = line.splitn(2, ':').collect();
-                            if parts.len() == 2 {
-                                let mut name = parts[0].to_string();
-                                if parts[1] == "d" {
-                                    name.push('/');
-                                }
-                                matches.push(name);
-                            }
-                        }
+                // `output()` collects the (prefix-filtered) listing and reaps the
+                // child, so no zombie `find` is left behind on any path.
+                match cmd.output().await {
+                    Ok(output) if output.status.success() => {
+                        matches.extend(parse_find_type_entries(&output.stdout));
                     }
+                    Ok(_) => {}
+                    Err(e) => tracing::debug!("completion find failed: {e}"),
                 }
             }
             #[cfg(not(target_os = "linux"))]
@@ -145,4 +139,67 @@ pub(super) async fn handle_completion_request(
         .await
         .map_err(TransportError::from)?;
     Ok(())
+}
+
+/// Escapes glob metacharacters so a completion prefix is matched literally by
+/// `find -name`.
+fn glob_escape(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '*' | '?' | '[' | ']' | '\\' => {
+                out.push('[');
+                out.push(c);
+                out.push(']');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Parses NUL-separated `name\0type\0` records emitted by `find -printf`, adding
+/// a trailing `/` to directory entries.
+fn parse_find_type_entries(bytes: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut fields = bytes.split(|b| *b == 0);
+    while let (Some(name), Some(kind)) = (fields.next(), fields.next()) {
+        if name.is_empty() {
+            continue;
+        }
+        let mut entry = String::from_utf8_lossy(name).into_owned();
+        if kind == b"d" {
+            entry.push('/');
+        }
+        out.push(entry);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{glob_escape, parse_find_type_entries};
+
+    #[test]
+    fn glob_escape_neutralizes_metacharacters() {
+        assert_eq!(glob_escape("plain"), "plain");
+        assert_eq!(glob_escape("a*b"), "a[*]b");
+        assert_eq!(glob_escape("a?b"), "a[?]b");
+        assert_eq!(glob_escape("a[b"), "a[[]b");
+        assert_eq!(glob_escape("a]b"), "a[]]b");
+    }
+
+    #[test]
+    fn parse_find_entries_handles_colons_and_spaces() {
+        let input = b"weird:name.txt\0f\0with space\0d\0";
+        assert_eq!(
+            parse_find_type_entries(input),
+            vec!["weird:name.txt".to_string(), "with space/".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_find_entries_is_empty_on_no_output() {
+        assert!(parse_find_type_entries(b"").is_empty());
+    }
 }

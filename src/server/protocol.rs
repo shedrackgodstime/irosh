@@ -120,7 +120,7 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
         );
 
         let stream = IrohDuplex::with_stats(send, recv, bytes_sent, bytes_received);
-        let mut session_authenticator = self.authenticator.clone();
+        let mut session_authenticator = self.authenticator.clone().session_scoped();
         let mut session_config = self.config.clone();
 
         if self.is_pairing {
@@ -199,6 +199,9 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
         let handler = ServerHandler::with_metrics(session_authenticator, shell_state, metrics)
             .with_auth_gate(auth_gate_tx)
             .with_idle_timeout(self.idle_timeout);
+        // Keep a handle to the handler so any channels that outlived the SSH
+        // session can be torn down once `run_stream` returns.
+        let handler_for_cleanup = handler.clone();
         let config = session_config;
 
         tracing::debug!("Starting SSH session task");
@@ -206,6 +209,12 @@ impl iroh::protocol::ProtocolHandler for SshProtocol {
             warn!("Server session error: {:?}", err);
         }
         tracing::debug!("SSH session task finished");
+
+        // An abrupt peer disappearance never delivers `CHANNEL_CLOSE`, and russh
+        // exposes no connection-closed hook, so reap every remaining PTY channel
+        // here. Without this, the spawned child processes, their reader tasks and
+        // writer threads leak for the lifetime of the daemon.
+        handler_for_cleanup.terminate_all_channels();
 
         Ok(())
     }

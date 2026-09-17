@@ -52,7 +52,14 @@ impl ServerHandler {
         session: &mut server::Session,
     ) -> std::result::Result<(), crate::error::IroshError> {
         let mut channels = self.lock_channels();
-        let state_entry = channels.entry(channel).or_default();
+        let Some(state_entry) = channels.get_mut(&channel) else {
+            // Never synthesize state for a channel the client never opened:
+            // otherwise repeated requests on arbitrary ids could grow the map
+            // without bound and leave phantom entries for teardown to sweep.
+            debug!(?channel, "pty request for unknown channel");
+            session.channel_failure(channel)?;
+            return Ok(());
+        };
         state_entry.pty = PtySpec {
             term: term.to_string(),
             size,
@@ -70,7 +77,11 @@ impl ServerHandler {
         session: &mut server::Session,
     ) -> std::result::Result<(), crate::error::IroshError> {
         let mut channels = self.lock_channels();
-        let state_entry = channels.entry(channel).or_default();
+        let Some(state_entry) = channels.get_mut(&channel) else {
+            debug!(?channel, "env request for unknown channel");
+            session.channel_failure(channel)?;
+            return Ok(());
+        };
         state_entry
             .env
             .insert(variable_name.to_string(), variable_value.to_string());
@@ -120,7 +131,11 @@ impl ServerHandler {
     ) -> std::result::Result<(), crate::error::IroshError> {
         let size = pty_size(col_width, row_height, pix_width, pix_height);
         let mut channels = self.lock_channels();
-        let state_entry = channels.entry(channel).or_default();
+        let Some(state_entry) = channels.get_mut(&channel) else {
+            debug!(?channel, "window change for unknown channel");
+            session.channel_failure(channel)?;
+            return Ok(());
+        };
         state_entry.pty.size = size;
         if let Some(process) = state_entry.process.as_ref() {
             // The master may already have been dropped (e.g. on Windows after

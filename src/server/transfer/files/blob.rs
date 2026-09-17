@@ -152,6 +152,11 @@ pub async fn handle_blob_put_request(
         let mut expected_remaining = 0u64;
         let mut current_blob = Vec::new();
         let mut blob_count = 0u64;
+        // Tracks whether a length prefix has been consumed for the blob being
+        // received. `expected_remaining == 0` alone cannot distinguish "no blob
+        // in progress" from "an empty blob was declared", which caused zero-byte
+        // files to be dropped from the collection.
+        let mut cur_blob_started = false;
         let mut declared_memory: Option<BlobMemoryGuard> = None;
 
         loop {
@@ -187,6 +192,7 @@ pub async fn handle_blob_put_request(
                             len_bytes[6],
                             len_bytes[7],
                         ]);
+                        cur_blob_started = true;
                         if expected_remaining > MAX_IN_MEMORY_TRANSFER_BYTES {
                             return Err(ServerError::TransferFailed {
                                 failure: crate::transport::transfer::TransferFailure::new(
@@ -257,8 +263,10 @@ pub async fn handle_blob_put_request(
                     })?;
                     ensure_within_cap(received)?;
 
-                    if expected_remaining == 0 && !current_blob.is_empty() {
-                        // Complete blob received — add to store
+                    if expected_remaining == 0 && cur_blob_started {
+                        // Complete blob received — add to store. An empty blob
+                        // (zero-length file) is also added: `add_bytes(vec![])`
+                        // yields the canonical empty blob.
                         let mut add_stream = shell_state
                             .blobs
                             .blobs()
@@ -277,6 +285,7 @@ pub async fn handle_blob_put_request(
                             }
                         }
                         blob_count += 1;
+                        cur_blob_started = false;
                         declared_memory.take();
                     }
                 }

@@ -306,67 +306,74 @@ impl Session {
                 source,
             })?;
 
-        let mut received = 0u64;
-        let mut frame_buf = Vec::new();
-        loop {
-            match read_next_frame_into(&mut stream, &mut frame_buf)
-                .await
-                .map_err(TransportError::from)?
-            {
-                TransferFrameBorrowed::GetChunk(chunk) => {
-                    received += chunk.len() as u64;
-                    dest.write_all(chunk)
-                        .await
-                        .map_err(|source| ClientError::FileIo {
-                            operation: "write to temp download file",
-                            path: temp_path.clone(),
-                            source,
-                        })?;
-                    on_progress(TransferProgress::new(received, expected_size));
-                }
-                TransferFrameBorrowed::Owned(TransferFrame::GetComplete(complete)) => {
-                    if complete.size != expected_size || received != expected_size {
-                        let _ = tokio::fs::remove_file(&temp_path).await;
+        // Any failure while streaming leaves the destination untouched and the
+        // temp file removed; a partially written `.irosh_part` must never linger.
+        let stream_result: Result<()> = async {
+            let mut received = 0u64;
+            let mut frame_buf = Vec::new();
+            loop {
+                match read_next_frame_into(&mut stream, &mut frame_buf)
+                    .await
+                    .map_err(TransportError::from)?
+                {
+                    TransferFrameBorrowed::GetChunk(chunk) => {
+                        received += chunk.len() as u64;
+                        dest.write_all(chunk)
+                            .await
+                            .map_err(|source| ClientError::FileIo {
+                                operation: "write to temp download file",
+                                path: temp_path.clone(),
+                                source,
+                            })?;
+                        on_progress(TransferProgress::new(received, expected_size));
+                    }
+                    TransferFrameBorrowed::Owned(TransferFrame::GetComplete(complete)) => {
+                        if complete.size != expected_size || received != expected_size {
+                            return Err(ClientError::DownloadFailed {
+                                details: format!(
+                                    "expected {expected_size} bytes, received {received}, completion reported {}",
+                                    complete.size
+                                ),
+                            }
+                            .into());
+                        }
+                        break;
+                    }
+                    TransferFrameBorrowed::Owned(TransferFrame::Error(failure)) => {
+                        return Err(ClientError::TransferRejected { failure }.into());
+                    }
+                    TransferFrameBorrowed::PutChunk(_) => {
+                        return Err(ClientError::DownloadFailed {
+                            details: "unexpected upload chunk during download".to_string(),
+                        }
+                        .into());
+                    }
+                    TransferFrameBorrowed::Owned(other) => {
                         return Err(ClientError::DownloadFailed {
                             details: format!(
-                                "expected {expected_size} bytes, received {received}, completion reported {}",
-                                complete.size
+                                "unexpected data stream frame for {}: {other:?}",
+                                remote.display()
                             ),
                         }
                         .into());
                     }
-                    break;
-                }
-                TransferFrameBorrowed::Owned(TransferFrame::Error(failure)) => {
-                    let _ = tokio::fs::remove_file(&temp_path).await;
-                    return Err(ClientError::TransferRejected { failure }.into());
-                }
-                TransferFrameBorrowed::PutChunk(_) => {
-                    let _ = tokio::fs::remove_file(&temp_path).await;
-                    return Err(ClientError::DownloadFailed {
-                        details: "unexpected upload chunk during download".to_string(),
-                    }
-                    .into());
-                }
-                TransferFrameBorrowed::Owned(other) => {
-                    let _ = tokio::fs::remove_file(&temp_path).await;
-                    return Err(ClientError::DownloadFailed {
-                        details: format!(
-                            "unexpected data stream frame for {}: {other:?}",
-                            remote.display()
-                        ),
-                    }
-                    .into());
                 }
             }
-        }
 
-        dest.flush().await.map_err(|source| ClientError::FileIo {
-            operation: "flush temp download file",
-            path: temp_path.clone(),
-            source,
-        })?;
+            dest.flush().await.map_err(|source| ClientError::FileIo {
+                operation: "flush temp download file",
+                path: temp_path.clone(),
+                source,
+            })?;
+            Ok(())
+        }
+        .await;
         drop(dest);
+
+        if let Err(err) = stream_result {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(err);
+        }
 
         persist_temp_file(&temp_path, local).await?;
 
@@ -473,49 +480,61 @@ impl Session {
                             }
                         })?;
 
-                        loop {
-                            match read_next_frame_into(&mut stream, &mut frame_buf)
-                                .await
-                                .map_err(TransportError::from)?
-                            {
-                                TransferFrameBorrowed::GetChunk(chunk) => {
-                                    dest.write_all(chunk).await.map_err(|e| {
-                                        ClientError::FileIo {
-                                            operation: "write to temp download file",
-                                            path: temp_path.clone(),
-                                            source: e,
+                        let entry_result: Result<()> = async {
+                            loop {
+                                match read_next_frame_into(&mut stream, &mut frame_buf)
+                                    .await
+                                    .map_err(TransportError::from)?
+                                {
+                                    TransferFrameBorrowed::GetChunk(chunk) => {
+                                        dest.write_all(chunk).await.map_err(|e| {
+                                            ClientError::FileIo {
+                                                operation: "write to temp download file",
+                                                path: temp_path.clone(),
+                                                source: e,
+                                            }
+                                        })?;
+                                        total_received += chunk.len() as u64;
+                                        on_progress(TransferProgress::new(total_received, 0));
+                                    }
+                                    TransferFrameBorrowed::Owned(TransferFrame::EntryComplete(
+                                        _,
+                                    )) => {
+                                        break;
+                                    }
+                                    TransferFrameBorrowed::PutChunk(_) => {
+                                        return Err(ClientError::DownloadFailed {
+                                            details:
+                                                "unexpected upload chunk during recursive download"
+                                                    .to_string(),
                                         }
-                                    })?;
-                                    total_received += chunk.len() as u64;
-                                    on_progress(TransferProgress::new(total_received, 0));
-                                }
-                                TransferFrameBorrowed::Owned(TransferFrame::EntryComplete(_)) => {
-                                    break;
-                                }
-                                TransferFrameBorrowed::PutChunk(_) => {
-                                    let _ = tokio::fs::remove_file(&temp_path).await;
-                                    return Err(ClientError::DownloadFailed {
-                                        details:
-                                            "unexpected upload chunk during recursive download"
-                                                .to_string(),
+                                        .into());
                                     }
-                                    .into());
-                                }
-                                TransferFrameBorrowed::Owned(other) => {
-                                    let _ = tokio::fs::remove_file(&temp_path).await;
-                                    return Err(ClientError::DownloadFailed {
-                                        details: format!(
-                                            "unexpected frame during recursive download stream: {other:?}"
-                                        ),
+                                    TransferFrameBorrowed::Owned(other) => {
+                                        return Err(ClientError::DownloadFailed {
+                                            details: format!(
+                                                "unexpected frame during recursive download stream: {other:?}"
+                                            ),
+                                        }
+                                        .into());
                                     }
-                                    .into());
                                 }
                             }
+                            dest.flush().await.map_err(|e| ClientError::FileIo {
+                                operation: "flush temp download file",
+                                path: temp_path.clone(),
+                                source: e,
+                            })?;
+                            Ok(())
                         }
-                        dest.flush().await.unwrap_or_else(|e| {
-                            warn!("Failed to flush temp file {:?}: {e}", temp_path);
-                        });
+                        .await;
                         drop(dest);
+
+                        if let Err(err) = entry_result {
+                            let _ = tokio::fs::remove_file(&temp_path).await;
+                            return Err(err);
+                        }
+
                         persist_temp_file(&temp_path, &local_path).await?;
 
                         #[cfg(unix)]

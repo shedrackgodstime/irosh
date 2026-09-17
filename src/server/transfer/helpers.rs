@@ -47,12 +47,22 @@ pub(super) async fn prepare_put_destination(
     }
 
     let mut part_path = dest_path.clone();
+    // Unique per invocation so two concurrent uploads to the same destination
+    // (or a retry racing a leftover) cannot interleave their bytes in one part
+    // file. The previous deterministic name made concurrent PUTs corrupt each
+    // other.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     let part_name = format!(
-        ".{}.irosh_part",
+        ".{}.{}.{}.irosh_part",
         dest_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("transfer")
+            .unwrap_or("transfer"),
+        std::process::id(),
+        unique
     );
     part_path.set_file_name(part_name);
 

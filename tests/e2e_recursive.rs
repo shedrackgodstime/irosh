@@ -242,6 +242,12 @@ async fn test_blob_dir_upload() {
         fs::write(local_dir.join("nested/file_c.txt"), b"gamma")
             .await
             .unwrap();
+        // Regression: zero-byte files were silently dropped from the hashseq
+        // collection during upload.
+        fs::write(local_dir.join("empty.txt"), b"").await.unwrap();
+        fs::write(local_dir.join("nested/empty_nested.txt"), b"")
+            .await
+            .unwrap();
 
         let remote_dir = server_state.root().join("blob_dir_dest");
         let dir_hash = session
@@ -278,6 +284,20 @@ async fn test_blob_dir_upload() {
                 .unwrap(),
             "gamma"
         );
+
+        // Zero-byte files must survive the hashseq round-trip.
+        let empty = downloaded_dir.join("empty.txt");
+        assert!(
+            tokio::fs::try_exists(&empty).await.unwrap_or(false),
+            "empty.txt was dropped during transfer"
+        );
+        assert_eq!(fs::metadata(&empty).await.unwrap().len(), 0);
+        let empty_nested = downloaded_dir.join("nested/empty_nested.txt");
+        assert!(
+            tokio::fs::try_exists(&empty_nested).await.unwrap_or(false),
+            "nested/empty_nested.txt was dropped during transfer"
+        );
+        assert_eq!(fs::metadata(&empty_nested).await.unwrap().len(), 0);
 
         session.close().await.unwrap();
         shutdown.close().await;

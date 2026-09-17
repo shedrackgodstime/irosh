@@ -177,16 +177,21 @@ impl Client {
 
         info!("Attempting wormhole rendezvous for code: {}", code);
 
-        let ticket: Ticket = tokio::time::timeout(
+        let ticket_result = tokio::time::timeout(
             std::time::Duration::from_secs(300), // 5 minute timeout as per design
             listen_for_ticket(&endpoint, code),
         )
-        .await
-        .map_err(|_| crate::error::IroshError::InvalidTarget {
-            raw: format!("{code} (Wormhole not found or discovery timed out)"),
-        })??;
+        .await;
 
+        // Always tear the discovery endpoint down, including on timeout or
+        // handshake error, so its background tasks and relay connection do not
+        // leak for the lifetime of the process.
         endpoint.close().await;
+
+        let ticket: Ticket =
+            ticket_result.map_err(|_| crate::error::IroshError::InvalidTarget {
+                raw: format!("{code} (Wormhole not found or discovery timed out)"),
+            })??;
 
         Ok(ticket)
     }

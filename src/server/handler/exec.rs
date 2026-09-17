@@ -29,6 +29,11 @@ use super::shell::windows_shell_self_echoes;
 #[cfg(not(unix))]
 const DSR_AUTOREPLY_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Upper bound on how long the reader task waits for a PTY child to exit after
+/// the PTY has reached EOF. A process that detached from the PTY (redirected
+/// its stdio and keeps running) would otherwise block teardown indefinitely.
+const CHILD_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Shared ownership of the master PTY handle.
 ///
 /// Both `RunningPty` (for resize operations) and the spawned reader task (for
@@ -69,6 +74,30 @@ impl std::os::unix::io::AsRawFd for RawFdWrapper {
     fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
         self.0
     }
+}
+
+/// Terminates the process tree backing a PTY channel.
+///
+/// On Unix the child is a process-group leader, so `killpg` also reaps any
+/// grandchildren the shell spawned (e.g. `sleep`). Killing only the direct
+/// child would leave those grandchildren holding the PTY slave open and the
+/// reader task parked. The direct kill is retained as a fallback for the rare
+/// case where no process group was recorded.
+#[cfg(unix)]
+fn kill_pty_process(process: &mut RunningPty) {
+    if let Some(pgid) = process.pgid {
+        // SAFETY: `pgid` is the process group leader returned by the PTY
+        // master for this child, so it names this child's process group.
+        unsafe {
+            libc::killpg(pgid, libc::SIGKILL);
+        }
+    }
+    let _ = process.killer.kill();
+}
+
+#[cfg(not(unix))]
+fn kill_pty_process(process: &mut RunningPty) {
+    let _ = process.killer.kill();
 }
 
 impl Drop for CleanupGuard {
@@ -580,8 +609,25 @@ impl ServerHandler {
                     status
                 }
                 () = &mut reader_future => {
-                    // Reader finished (EOF). Wait for child to get exit status.
-                    child_waiter.await.unwrap_or(255)
+                    // Reader finished (EOF) but the child may still be alive: a
+                    // process can detach from the PTY (`exec cmd </dev/null`) and
+                    // keep running after the last slave handle closes. OpenSSH
+                    // waits indefinitely for such a child; we bound the wait so a
+                    // never-exiting detached process cannot wedge the reader task
+                    // (and therefore the channel teardown) forever. The child is
+                    // left running, matching sshd semantics for a detached node.
+                    match tokio::time::timeout(CHILD_WAIT_TIMEOUT, &mut child_waiter).await {
+                        Ok(status) => status.unwrap_or(255),
+                        Err(_) => {
+                            warn!(
+                                "Child process {:?} for channel {:?} did not exit within {}s of PTY EOF; closing channel without waiting",
+                                child_pid,
+                                channel,
+                                CHILD_WAIT_TIMEOUT.as_secs()
+                            );
+                            255
+                        }
+                    }
                 }
             };
 
@@ -609,13 +655,46 @@ impl ServerHandler {
             process.shutdown.cancel();
             self.shell_state.clear_shell_pid_if_matches(process.pid);
             process.pty_tx.take();
-            let _ = process.killer.kill();
+            kill_pty_process(&mut process);
             // Drop the master PTY handle to ensure any ConPTY session is fully
             // torn down, releasing all associated OS resources.
             if let Ok(mut guard) = process.master.lock() {
                 drop(guard.take());
             }
         }
+    }
+
+    /// Tears down every channel tracked by this handler.
+    ///
+    /// Called once a connection's SSH session has ended. russh does not expose a
+    /// "connection closed" hook, so when a peer vanishes abruptly (no
+    /// `CHANNEL_CLOSE`, no clean disconnect) the channel state — and with it the
+    /// spawned PTY child processes, their reader tasks, and the writer threads —
+    /// would otherwise never be reaped. Sweeping here guarantees the connection's
+    /// OS resources are released.
+    pub(crate) fn terminate_all_channels(&self) {
+        let stale: Vec<ChannelId> = self.lock_channels().keys().copied().collect();
+        if stale.is_empty() {
+            return;
+        }
+        debug!(
+            "Terminating {} lingering PTY channel(s) after session end",
+            stale.len()
+        );
+        for channel in stale {
+            self.close_channel(channel);
+        }
+    }
+
+    /// Returns the PIDs of live PTY processes currently tracked by this handler.
+    ///
+    /// Test-only observability into channel teardown.
+    #[cfg(test)]
+    pub(crate) fn active_process_pids(&self) -> Vec<u32> {
+        self.lock_channels()
+            .values()
+            .filter_map(|state| state.process.as_ref().and_then(|process| process.pid))
+            .collect()
     }
 
     pub(super) fn forward_signal(&self, channel: ChannelId, signal: &russh::Sig) {
@@ -692,6 +771,91 @@ impl ServerHandler {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod process_tree_tests {
+    use super::*;
+    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+    use std::time::{Duration, Instant};
+
+    /// Builds a `RunningPty` over a real PTY whose shell spawns a grandchild,
+    /// then asserts that `kill_pty_process` reaps the whole process group.
+    ///
+    /// Regression: `close_channel` used to kill only the direct child. A shell
+    /// that had spawned background work left that work running and holding the
+    /// PTY slave, so the reader task never saw EOF.
+    #[test]
+    fn kill_pty_process_reaps_grandchildren_in_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("grandchild.pid");
+
+        let pty_system = native_pty_system();
+        let pair = pty_system.openpty(PtySize::default()).unwrap();
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.arg("-c");
+        cmd.arg(format!(
+            "sleep 3600 & echo $! > '{}'; wait",
+            pid_file.display()
+        ));
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+
+        // Wait until the grandchild PID is recorded.
+        let grandchild_pid = {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Ok(raw) = std::fs::read_to_string(&pid_file)
+                    && let Ok(pid) = raw.trim().parse::<i32>()
+                {
+                    break pid;
+                }
+                assert!(Instant::now() < deadline, "grandchild pid never appeared");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        assert_eq!(
+            // SAFETY: signal 0 performs only an existence/permission check and
+            // does not deliver a signal; `grandchild_pid` is a live pid we read.
+            unsafe { libc::kill(grandchild_pid, 0) },
+            0,
+            "grandchild should be alive before teardown"
+        );
+
+        let pgid = pair.master.process_group_leader();
+        let master: SharedMaster = Arc::new(StdMutex::new(Some(pair.master)));
+        let mut process = RunningPty {
+            master,
+            pty_tx: None,
+            killer: child.clone_killer(),
+            pid: child.process_id(),
+            pgid,
+            shutdown: CancellationToken::new(),
+            server_echo: false,
+        };
+
+        kill_pty_process(&mut process);
+
+        // Direct child is reaped promptly.
+        let code = child.wait().unwrap().exit_code();
+        assert_ne!(code, 0, "killed child should not report success");
+
+        // The grandchild must also be gone (no lingering zombie either, since
+        // it was reparented to init).
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            // SAFETY: signal 0 performs only an existence/permission check and
+            // does not deliver a signal; `grandchild_pid` is a live pid.
+            let alive = unsafe { libc::kill(grandchild_pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "grandchild {grandchild_pid} survived process-group kill"
+            );
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 }

@@ -55,7 +55,7 @@ fn ensure_trust_dirs(state: &StateConfig) -> Result<()> {
     let servers_dir = trust_dir.join("servers");
     let clients_dir = trust_dir.join("clients");
     for dir in [&trust_dir, &servers_dir, &clients_dir] {
-        crate::storage::utils::ensure_dir_secure(dir)?;
+        crate::storage::utils::ensure_dir_secure_tighten(dir)?;
     }
 
     // Legacy migration: if the old single files exist, we don't know the Node ID yet,

@@ -36,6 +36,23 @@ async fn connect_test_session(
         std::result::Result<russh::server::RunningSession<ServerHandler>, IroshError>,
     >,
 ) {
+    let (session, server_task, _handler) =
+        connect_test_session_with_handler(server_state, client_state).await;
+    (session, server_task)
+}
+
+/// Like [`connect_test_session`], but also returns the server-side handler so
+/// tests can drive connection teardown directly.
+async fn connect_test_session_with_handler(
+    server_state: &StateConfig,
+    client_state: &StateConfig,
+) -> (
+    Session,
+    tokio::task::JoinHandle<
+        std::result::Result<russh::server::RunningSession<ServerHandler>, IroshError>,
+    >,
+    ServerHandler,
+) {
     let server_identity = load_or_generate_identity(server_state).await.unwrap();
     let client_identity = load_or_generate_identity(client_state).await.unwrap();
     let (client_stream, server_stream) = duplex(1024 * 1024);
@@ -63,6 +80,7 @@ async fn connect_test_session(
             server_blobs,
         ),
     );
+    let handler_probe = server_handler.clone();
     let server_task = tokio::spawn(async move {
         server::run_stream(server_config, server_stream, server_handler).await
     });
@@ -110,5 +128,6 @@ async fn connect_test_session(
             blobs: client_blobs,
         },
         server_task,
+        handler_probe,
     )
 }

@@ -10,6 +10,15 @@ use anyhow::Result;
 use irosh::config::LogLevel;
 use irosh::storage;
 
+/// Renders a secret for display without revealing its value.
+///
+/// The stealth secret gates the ALPN and must not be echoed to stdout (it can
+/// be captured by shell history, CI logs, or shared terminal scrollback). Use
+/// `config export` to move it between machines.
+fn redact(secret: Option<&str>) -> &'static str {
+    if secret.is_some() { "<set>" } else { "<none>" }
+}
+
 #[must_use]
 pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
     let state = &ctx.state;
@@ -27,7 +36,10 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
                     default_user: Option<String>,
                 }
                 crate::output::print_success(ConfigListJson {
-                    stealth_secret: config.stealth_secret.clone(),
+                    stealth_secret: config
+                        .stealth_secret
+                        .as_deref()
+                        .map(|_| "<set>".to_string()),
                     relay_url: config.relay_url.clone(),
                     log_level: config.log_level.clone(),
                     wormhole_timeout: config.wormhole_timeout,
@@ -40,10 +52,7 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
             Output::line(&format!("  {:<18} {:<30}", "SETTING", "VALUE"));
 
             let settings = [
-                (
-                    "stealth-secret",
-                    config.stealth_secret.as_deref().unwrap_or("<none>"),
-                ),
+                ("stealth-secret", redact(config.stealth_secret.as_deref())),
                 (
                     "relay-url",
                     config.relay_url.as_deref().unwrap_or("<iroh-default>"),
@@ -64,11 +73,7 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
         }
         ConfigAction::Get { key } => {
             let val = match key.as_str() {
-                "stealth-secret" => config
-                    .stealth_secret
-                    .as_deref()
-                    .unwrap_or("<none>")
-                    .to_string(),
+                "stealth-secret" => redact(config.stealth_secret.as_deref()).to_string(),
                 "relay-url" => config
                     .relay_url
                     .as_deref()
@@ -185,4 +190,15 @@ pub fn exec(action: ConfigAction, ctx: &CliContext) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact;
+
+    #[test]
+    fn redact_never_reveals_secret_value() {
+        assert_eq!(redact(None), "<none>");
+        assert_eq!(redact(Some("super-secret")), "<set>");
+    }
 }

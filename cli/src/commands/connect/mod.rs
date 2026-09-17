@@ -77,7 +77,12 @@ enum ConnectPhase {
         guard: Option<TerminalGuard>,
     },
     /// Disconnect and render summary.
-    Close { reason: DisconnectReason },
+    Close {
+        reason: DisconnectReason,
+        /// Diagnostic detail for `DisconnectReason::Error` (the underlying
+        /// failure), if one was captured.
+        detail: Option<String>,
+    },
 }
 
 /// Shared context threaded through all phases.
@@ -143,8 +148,8 @@ async fn exec_internal(
                 engine,
                 guard,
             } => phase_shell(session, engine, guard, &sm).await,
-            ConnectPhase::Close { reason } => {
-                phase_close(&reason, &sm);
+            ConnectPhase::Close { reason, detail } => {
+                phase_close(&reason, detail.as_deref(), &sm);
                 return Ok(());
             }
         };
@@ -317,6 +322,7 @@ async fn phase_setup(
         }
         return Ok(ConnectPhase::Close {
             reason: DisconnectReason::UserInitiated,
+            detail: None,
         });
     }
 
@@ -372,16 +378,16 @@ async fn phase_shell(
     _guard: Option<TerminalGuard>,
     _sm: &ConnectCtx,
 ) -> ConnectPhase {
-    let reason = match session::drive_session(*session, *engine).await {
-        Ok(reason) => reason,
-        Err(_) => DisconnectReason::Error,
+    let (reason, detail) = match session::drive_session(*session, *engine).await {
+        Ok(reason) => (reason, None),
+        Err(err) => (DisconnectReason::Error, Some(format!("{err:#}"))),
     };
-    ConnectPhase::Close { reason }
+    ConnectPhase::Close { reason, detail }
 }
 
 // ── Phase: Close ─────────────────────────────────────────────────────────────
 
-fn phase_close(reason: &DisconnectReason, sm: &ConnectCtx) {
+fn phase_close(reason: &DisconnectReason, detail: Option<&str>, sm: &ConnectCtx) {
     let peer = sm.peer_alias.as_deref().unwrap_or("remote");
     match reason {
         DisconnectReason::UserInitiated => {
@@ -396,7 +402,7 @@ fn phase_close(reason: &DisconnectReason, sm: &ConnectCtx) {
         DisconnectReason::Error => {
             Ui::error(
                 &format!("Session with {peer} terminated due to an error."),
-                None,
+                detail,
             );
         }
     }
@@ -432,7 +438,6 @@ fn auto_save_peer(
         let profile = irosh::storage::PeerProfile::new(name.clone(), ticket.clone());
         if irosh::storage::save_peer(state, &profile).is_ok() {
             if name_exists {
-                Ui::success(&format!("Peer alias updated to '{name}'"));
                 Ui::success(&format!("Peer alias updated to '{name}'"));
             } else {
                 Ui::success(&format!(

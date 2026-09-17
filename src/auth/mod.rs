@@ -109,6 +109,48 @@ pub trait Authenticator: Send + Sync + fmt::Debug + 'static {
     ///
     /// Returns an error if the authentication fails or the credentials are invalid.
     async fn check_password(&self, user: &str, password: &str) -> Result<bool>;
+
+    /// Returns a session-scoped view of this authenticator.
+    ///
+    /// The server calls this once per accepted connection so that any state
+    /// bridging the SSH public-key and password steps is never shared between
+    /// concurrent handshakes. Implementations that hold such per-handshake
+    /// state (e.g. [`UnifiedAuthenticator`]'s public-key cache) must override
+    /// this to return a fresh view. Stateless or intentionally-shared
+    /// implementations can rely on the default, which forwards `self`.
+    #[must_use]
+    fn session_scoped(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn Authenticator> {
+        std::sync::Arc::new(SharedSession(self))
+    }
+}
+
+/// Default [`Authenticator::session_scoped`] adapter: forwards every call to
+/// the wrapped (shared) authenticator unchanged.
+struct SharedSession<T: ?Sized>(std::sync::Arc<T>);
+
+impl<T: Authenticator + ?Sized> fmt::Debug for SharedSession<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+#[async_trait]
+impl<T: Authenticator + ?Sized> Authenticator for SharedSession<T> {
+    fn session_scoped(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn Authenticator> {
+        self
+    }
+
+    async fn supported_methods(&self) -> Vec<AuthMethod> {
+        self.0.supported_methods().await
+    }
+
+    async fn check_public_key(&self, user: &str, key: &PublicKey) -> Result<bool> {
+        self.0.check_public_key(user, key).await
+    }
+
+    async fn check_password(&self, user: &str, password: &str) -> Result<bool> {
+        self.0.check_password(user, password).await
+    }
 }
 
 mod credentials;
