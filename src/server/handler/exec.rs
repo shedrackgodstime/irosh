@@ -88,18 +88,24 @@ fn kill_pty_process(process: &mut RunningPty) {
     if let Some(pgid) = process.pgid {
         // SAFETY: `pgid` is the process group leader returned by the PTY
         // master for this child, so it names this child's process group.
-        unsafe {
-            libc::killpg(pgid, libc::SIGKILL);
+        let result = unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        if result != 0 {
+            warn!(pgid, error = %std::io::Error::last_os_error(), "PTY process-group kill failed");
         }
+        #[cfg(test)]
+        eprintln!("PTY teardown group={pgid} kill_result={result}");
     }
     // `ChildKiller::kill` only sends `SIGHUP` on Unix, which a shell may
     // catch or ignore. Back it with a direct `SIGKILL` so the child is
     // guaranteed dead even if the group kill above could not run.
     if let Some(pid) = process.pid {
         // SAFETY: `pid` is the child PID returned by the PTY spawn.
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        if result != 0 {
+            warn!(pid, error = %std::io::Error::last_os_error(), "PTY child kill failed");
         }
+        #[cfg(test)]
+        eprintln!("PTY teardown child={pid} kill_result={result}");
     }
     let _ = process.killer.kill();
 }
@@ -577,6 +583,8 @@ impl ServerHandler {
             };
 
             let mut child_waiter = tokio::task::spawn_blocking(move || {
+                #[cfg(test)]
+                eprintln!("PTY waiter started child={child_pid:?}");
                 info!(
                     "Waiting for child process {:?} for channel {:?}",
                     child_pid, channel
@@ -592,6 +600,8 @@ impl ServerHandler {
                     "Child process {:?} for channel {:?} exited with code {}",
                     child_pid, channel, res
                 );
+                #[cfg(test)]
+                eprintln!("PTY waiter finished child={child_pid:?} code={res}");
                 res
             });
 

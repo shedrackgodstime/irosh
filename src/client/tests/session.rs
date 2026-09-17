@@ -172,10 +172,23 @@ async fn connection_teardown_reaps_live_shell_process() {
                 if !alive {
                     break;
                 }
-                assert!(
-                    std::time::Instant::now() < kill_deadline,
-                    "shell pid {pid} survived connection teardown"
-                );
+                if std::time::Instant::now() >= kill_deadline {
+                    let process_state = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        tokio::process::Command::new("ps")
+                            .args(["-o", "pid=,ppid=,pgid=,stat=,comm=", "-p", &pid.to_string()])
+                            .output(),
+                    )
+                    .await;
+                    let process_state = match process_state {
+                        Ok(Ok(output)) => String::from_utf8_lossy(&output.stdout).into_owned(),
+                        other => format!("{other:?}"),
+                    };
+                    panic!(
+                        "shell pid {pid} survived connection teardown; tracked={:?}; ps={process_state}",
+                        handler.active_process_pids()
+                    );
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
         }
