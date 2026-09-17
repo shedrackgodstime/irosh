@@ -35,7 +35,12 @@ async fn query_status_linux(_state: Option<PathBuf>) -> ServiceStatus {
 
     let Ok(output) = tokio::task::spawn_blocking(move || {
         std::process::Command::new("systemctl")
-            .args(["--user", "is-active", "irosh"])
+            .args([
+                "--user",
+                "show",
+                "irosh.service",
+                "--property=LoadState,ActiveState",
+            ])
             .output()
     })
     .await
@@ -48,27 +53,86 @@ async fn query_status_linux(_state: Option<PathBuf>) -> ServiceStatus {
     };
 
     match output {
-        Ok(out) => {
-            let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            match state.as_str() {
-                "active" => ServiceStatus::Active("systemd".to_string()),
-                "inactive" | "failed" | "deactivating" => ServiceStatus::Inactive,
-                _ => {
-                    if exists {
-                        ServiceStatus::Inactive
-                    } else {
-                        ServiceStatus::NotFound
-                    }
-                }
-            }
+        Ok(out) if out.status.success() => {
+            let output = String::from_utf8_lossy(&out.stdout);
+            let property = |name: &str| {
+                output
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once('=')?;
+                        (key == name).then_some(value.trim())
+                    })
+                    .unwrap_or("")
+            };
+            systemd_status(property("LoadState"), property("ActiveState"), exists)
         }
-        Err(_) => {
+        Ok(_) | Err(_) => {
             if exists {
                 ServiceStatus::Inactive
             } else {
                 ServiceStatus::Unknown
             }
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_status(load_state: &str, active_state: &str, exists: bool) -> ServiceStatus {
+    match (load_state, active_state) {
+        ("not-found", _) if !exists => ServiceStatus::NotFound,
+        (_, "active") => ServiceStatus::Active("systemd".to_string()),
+        ("loaded" | "masked" | "error" | "bad-setting", "inactive" | "failed" | "deactivating") => {
+            ServiceStatus::Inactive
+        }
+        _ if exists => ServiceStatus::Inactive,
+        _ => ServiceStatus::Unknown,
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod status_tests {
+    use super::{ServiceStatus, systemd_status};
+
+    #[test]
+    fn missing_unit_is_not_installed_even_when_inactive() {
+        assert_eq!(
+            systemd_status("not-found", "inactive", false),
+            ServiceStatus::NotFound
+        );
+    }
+
+    #[test]
+    fn loaded_units_do_not_require_a_local_unit_file() {
+        assert_eq!(
+            systemd_status("loaded", "active", false),
+            ServiceStatus::Active("systemd".to_string())
+        );
+        for load_state in ["loaded", "masked", "error", "bad-setting"] {
+            for active_state in ["inactive", "failed", "deactivating"] {
+                assert_eq!(
+                    systemd_status(load_state, active_state, false),
+                    ServiceStatus::Inactive
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_manager_state_preserves_local_installation_evidence() {
+        assert_eq!(systemd_status("", "", true), ServiceStatus::Inactive);
+        assert_eq!(
+            systemd_status("not-found", "inactive", true),
+            ServiceStatus::Inactive
+        );
+        assert_eq!(systemd_status("", "", false), ServiceStatus::Unknown);
+        assert_eq!(
+            systemd_status("", "inactive", false),
+            ServiceStatus::Unknown
+        );
+        assert_eq!(
+            systemd_status("loaded", "unexpected", false),
+            ServiceStatus::Unknown
+        );
     }
 }
 
