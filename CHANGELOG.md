@@ -2,7 +2,7 @@
 
 All notable changes to irosh are documented here.
 
-## [0.5.0] — Unreleased
+## [0.5.0] — 2026-09-18
 
 ### Added
 - Metadata frame protocol fuzz target (`fuzz_metadata`)
