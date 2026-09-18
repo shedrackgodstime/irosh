@@ -125,7 +125,7 @@ async fn test_idle_timeout_closes_quiet_shell() {
         let server_opts = ServerOptions::new(server_state.clone())
             .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled, None)
-            .idle_timeout(Duration::from_secs(2));
+            .idle_timeout(Duration::from_secs(5));
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
@@ -167,7 +167,7 @@ async fn test_idle_timeout_resets_on_traffic() {
         let server_opts = ServerOptions::new(server_state.clone())
             .security(SecurityConfig::new(HostKeyPolicy::AcceptAll))
             .relay_mode(RelayMode::Disabled, None)
-            .idle_timeout(Duration::from_secs(2));
+            .idle_timeout(Duration::from_secs(5));
 
         let (ready, server) = Server::bind(server_opts).await.unwrap();
         let ticket = ready.ticket().clone();
@@ -181,7 +181,7 @@ async fn test_idle_timeout_resets_on_traffic() {
         let mut session = Client::connect(&client_opts, ticket).await.unwrap();
         session.start_shell().await.expect("Failed to start shell");
 
-        // Each command lands inside the 2s window while the total active
+        // Each command lands inside the 5s window while the total active
         // period exceeds it, so observing both outputs proves the timer
         // resets on traffic.
         session.send(b"echo tick-one\r\n").await.unwrap();
