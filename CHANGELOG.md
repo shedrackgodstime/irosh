@@ -25,6 +25,7 @@ All notable changes to irosh are documented here.
 - Heap profiling example (`examples/heap_profile.rs`) using `dhat` for codec allocation analysis
 
 ### Fixed
+- Idle-timeout integration tests use 5s timeout on Windows to prevent premature channel closure before echo output arrives
 - `disconnect()` is now idempotent (no-op when already in terminal state)
 - `check_open()` guard on all `Session` methods to prevent use after disconnect
 - Path traversal protection in `resolve_path()` (rejects `..` for relative paths)
