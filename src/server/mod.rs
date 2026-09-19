@@ -9,7 +9,8 @@
 //!
 //! The server runs on top of an [`iroh::Endpoint`]. It listens for
 //! connections with specific ALPNs (Application-Layer Protocol Negotiation):
-//! - `irosh/primary/v1`: The standard P2P SSH session.
+//! - `irosh/1`: The standard P2P SSH session. In stealth mode this is
+//!   suffixed with a hash of the shared secret (`irosh/1/<hash>`).
 //! - `irosh/pairing/v1`: Temporary ad-hoc pairing via Wormhole.
 //!
 //! For every connection, the server spawns a dedicated task that

@@ -1,12 +1,12 @@
 # Irosh: Peer-to-Peer Secure Shell Library
 
-`irosh` is a high-assurance networking library that bridges the [Iroh](https://iroh.computer) P2P stack with the [SSH](https://en.wikipedia.org/wiki/Secure_Shell) protocol. It enables developers to build applications with secure, direct terminal sessions and file transfers that work seamlessly across NATs and firewalls without centralized infrastructure.
+A peer-to-peer networking library that bridges the [Iroh](https://iroh.computer) P2P stack with the [SSH](https://en.wikipedia.org/wiki/Secure_Shell) protocol. It enables developers to build applications with secure, direct terminal sessions and file transfers that work seamlessly across NATs and firewalls without centralized infrastructure.
 
 ## Key Features
 
 - **Identity-First Security**: Uses Ed25519 node keys for both network discovery and cryptographic SSH authentication.
 - **Zero-Config Connectivity**: Full NAT traversal and relaying provided by the Iroh transport layer.
-- **Human-Friendly Pairing**: Establish trust between nodes using 3-word "Wormhole" codes, powered by Pkarr.
+- **Human-Friendly Pairing**: Establish trust between nodes using short word codes, powered by Pkarr.
 - **Unified Authentication**: A flexible, policy-driven auth system supporting Public Keys, Passwords, and Trust-On-First-Use (TOFU).
 
 ## Quick Start
@@ -32,7 +32,7 @@ async fn main() -> irosh::Result<()> {
 
 ## Library Architecture
 
-`irosh` follows a **"Fat Library"** design philosophy. All protocol state machines, cryptographic handshakes, and P2P orchestration are encapsulated within this crate. This ensures that the underlying transport remains stable regardless of the frontend implementation.
+All protocol state machines, cryptographic handshakes, and P2P orchestration are encapsulated in this crate, so the transport stays stable regardless of the frontend using it.
 
 ### Core Modules
 
@@ -51,7 +51,7 @@ async fn main() -> irosh::Result<()> {
 
 ## Important Disclaimer & Liability
 
-Irosh is a high-assurance tool, but it is currently in active, early-stage development. By using this library, you agree to the following:
+This is a peer-to-peer networking library in active, early-stage development. By using it, you agree to the following:
 
 1.  **"As-Is" Basis**: This software is provided without warranty of any kind.
 2.  **User Responsibility**: You are solely responsible for your actions and must only use this tool for authorized access.

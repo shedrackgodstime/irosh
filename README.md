@@ -32,16 +32,16 @@ curl -fsSL https://irosh.pages.dev/install.cmd -o install.cmd && install.cmd
 ## Quick Start
 
 ### 1. On the Host (Server)
-Start the background service and generate a 3-word pairing code:
+Start the background service and generate a pairing code:
 ```bash
 irosh system install    # Install as background service
-irosh wormhole          # Get your pairing code (e.g. apple-pie-sunset)
+irosh wormhole          # Get your pairing code (e.g. apple-banana-7)
 ```
 
 ### 2. On the Client
 Connect from anywhere using the code:
 ```bash
-irosh apple-pie-sunset
+irosh apple-banana-7
 ```
 *That's it. You're connected.*
 
@@ -51,7 +51,7 @@ irosh apple-pie-sunset
 
 - **Zero-IP Connectivity**: Connect to your devices without needing a public IP or DNS.
 - **Native & Standalone**: Unlike other tools, Irosh is a full SSH server. It doesn't need OpenSSH installed.
-- **Human-Friendly**: Pair devices with simple words. Irosh automatically saves them with friendly names like `my-laptop`.
+- **Human-Friendly**: Pair devices with short word codes. Irosh automatically saves them with friendly names like `my-laptop`.
 - **Integrated File Transfer**: Move files instantly with built-in `put` and `get` commands.
 - **Global Roaming**: Stay connected even when switching between Wi-Fi and mobile data.
 
@@ -80,7 +80,7 @@ cargo install irosh-cli
 
 ---
 
-Irosh is a solo-driven effort with a big vision for the future of the P2P internet. If you are passionate about Rust, P2P networking, or high-assurance security, your contributions are more than welcome! Feel free to open an issue or reach out if you're interested in collaborating.
+Irosh is a solo-driven effort with a big vision for the future of the P2P internet. If you are passionate about Rust, P2P networking, or security, your contributions are more than welcome! Feel free to open an issue or reach out if you're interested in collaborating.
 
 ---
 
@@ -97,20 +97,18 @@ Irosh is a powerful remote access tool. By using this software, you agree to the
 
 ## Architecture
 
-Irosh is built as a **"Fat Library"**. All the networking, security, and SSH logic lives in the `irosh` crate, while the CLI is a thin, high-performance UI layer.
+Irosh is built **library-first**: all the networking, security, and SSH logic lives in the `irosh` crate, while the CLI is a thin, high-performance UI layer.
 
 - [**Technical Manual (Library)**](src/README.md) - For developers building on Irosh.
-- [**Development Roadmap**](docs/ROADMAP.md) - Our path to v1.0 and beyond.
-- [**Changelog**](CHANGELOG.md) - What's new in v0.4.0.
+- [**Changelog**](CHANGELOG.md) - Release history.
 
 ---
 
-## What's New in v0.4.0
+## What's New
 
-- **Windows-native reliability**: Static CRT binary, job-object child cleanup, and smarter install/update scripts.
-- **Stronger auth**: Public-key failures now count toward wormhole rate limits; passwords use zeroizing storage.
-- **Safer sessions**: Concurrent session API (`&self` resize/send) and resize forwarding during file transfers.
-- **Better test coverage**: Storage, config, error, and session modules now have unit tests.
+- **Observability**: Runtime metrics counters, tracing coverage across the public API, and a heap profiling example.
+- **Quality gates**: CI fuzz targets, a line-coverage gate, and new transfer/SSH benchmarks.
+- **Soundness**: 17 public API audit findings resolved, plus path-traversal and peer-sanity hardening.
 
 Full details in the [Changelog](CHANGELOG.md).
 
