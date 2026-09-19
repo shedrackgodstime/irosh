@@ -190,6 +190,39 @@ impl ShellContext {
         Ok(!self.path_exists(path).await?)
     }
 
+    /// Like [`ShellContext::path_missing`], but a symlink counts as present
+    /// even when its target does not exist.
+    ///
+    /// Upload destinations use this so a request can never write *through* a
+    /// symlink into an unrelated file, dangling or not.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::ShellError`] if the remote probe command fails,
+    /// or propagates I/O errors on non-Linux paths.
+    pub(super) async fn path_missing_no_follow(self, path: &str) -> Result<bool> {
+        #[cfg(target_os = "linux")]
+        if let Self::Live { .. } = self {
+            let mut command = Command::new("test");
+            command.arg("-e").arg(path).arg("-o").arg("-L").arg(path);
+            self.configure(&mut command);
+
+            let status = command
+                .status()
+                .await
+                .map_err(|e| ServerError::ShellError {
+                    details: format!("failed to probe remote path existence: {e}"),
+                })?;
+            return Ok(!status.success());
+        }
+
+        match tokio::fs::symlink_metadata(path).await {
+            Ok(_) => Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// # Errors
     ///
     /// Returns [`ServerError::ShellError`] if the remote probe command fails,

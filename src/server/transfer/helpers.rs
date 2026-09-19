@@ -22,7 +22,7 @@ pub(super) async fn prepare_put_destination(
     let dest_path = context.resolve_path(raw_path, shell_state).await?;
     let final_arg = dest_path.display().to_string();
 
-    if !context.path_missing(&final_arg).await? {
+    if !context.path_missing_no_follow(&final_arg).await? {
         return Ok(None);
     }
 

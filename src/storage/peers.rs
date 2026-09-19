@@ -81,6 +81,7 @@ fn validate_peer_name(name: &str) -> Result<()> {
 
 /// Ensures the peers storage subdirectory exists with strict permissions.
 fn ensure_peers_dir(state: &StateConfig) -> Result<PathBuf> {
+    crate::storage::utils::ensure_dir_secure_tighten(state.root())?;
     let path = state.root().join("peers");
     crate::storage::utils::ensure_dir_secure_tighten(&path)?;
     Ok(path)

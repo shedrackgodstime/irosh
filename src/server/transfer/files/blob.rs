@@ -4,13 +4,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::error::{Result, ServerError};
+use crate::error::{Result, ServerError, TransportError};
+use crate::server::transfer::helpers::target_exists_failure;
 use crate::server::transfer::state::{ConnectionShellState, ShellContext, sanitize_relative_path};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
-    BlobGetReady, BlobGetRequest, BlobPutRequest, TransferComplete, TransferFrame,
+    BlobGetReady, BlobGetRequest, BlobPutRequest, TransferComplete, TransferFailure, TransferFrame,
     TransferFrameBorrowed, TransferReady, read_next_frame_into, write_blob_get_ready,
-    write_put_complete, write_put_ready,
+    write_put_complete, write_put_ready, write_transfer_error,
 };
 use futures_util::StreamExt;
 use tokio::io::AsyncReadExt;
@@ -124,6 +125,19 @@ pub async fn handle_blob_put_request(
 
     let target_path = context.resolve_path(&request.path, shell_state).await?;
     debug!("Resolved target path: {}", target_path.display());
+
+    // Refuse to overwrite an existing target (including a dangling symlink).
+    // The blob path exports directly to the final path with no temp+rename
+    // staging, so a collision must be rejected up front.
+    if !context
+        .path_missing_no_follow(&target_path.display().to_string())
+        .await?
+    {
+        write_transfer_error(stream, &target_exists_failure(&target_path))
+            .await
+            .map_err(TransportError::from)?;
+        return Ok(());
+    }
 
     // 1. Send PutReady to acknowledge the request
     write_put_ready(

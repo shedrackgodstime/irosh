@@ -77,6 +77,22 @@ pub(crate) async fn handle_put_request(
             match frame {
                 TransferFrameBorrowed::PutChunk(chunk) => {
                     received += chunk.len() as u64;
+                    if received > request.size {
+                        write_transfer_error(
+                            stream,
+                            &TransferFailure::new(
+                                TransferFailureCode::SizeMismatch,
+                                format!(
+                                    "received {received} bytes, exceeding the declared size of {}",
+                                    request.size
+                                ),
+                            ),
+                        )
+                        .await
+                        .map_err(TransportError::from)?;
+                        transfer_failed = true;
+                        break;
+                    }
                     if let Err(err) = stdin.write_all(chunk).await {
                         tracing::warn!("Failed to write to upload helper: {}", err);
                         transfer_failed = true;
@@ -84,12 +100,15 @@ pub(crate) async fn handle_put_request(
                     }
                 }
                 TransferFrameBorrowed::Owned(TransferFrame::PutComplete(complete)) => {
-                    if complete.size != received {
+                    if complete.size != received || received != request.size {
                         write_transfer_error(
                             stream,
                             &TransferFailure::new(
                                 TransferFailureCode::SizeMismatch,
-                                format!("received {}, client reported {}", received, complete.size),
+                                format!(
+                                    "received {received} bytes, declared {}, client reported {}",
+                                    request.size, complete.size
+                                ),
                             ),
                         )
                         .await
@@ -234,6 +253,7 @@ async fn handle_recursive_put_request(
 
                     let mut sink = spawn_upload_helper(context, &prepared.part_arg).await?;
                     let mut entry_failed = false;
+                    let mut size_mismatch = false;
                     let mut file_received = 0u64;
                     {
                         let mut stdin =
@@ -257,6 +277,11 @@ async fn handle_recursive_put_request(
                             match frame {
                                 TransferFrameBorrowed::PutChunk(chunk) => {
                                     file_received += chunk.len() as u64;
+                                    if file_received > header.size {
+                                        size_mismatch = true;
+                                        entry_failed = true;
+                                        break;
+                                    }
                                     if let Err(e) = stdin.write_all(chunk).await {
                                         tracing::warn!("Failed to write to upload helper: {}", e);
                                         entry_failed = true;
@@ -264,6 +289,10 @@ async fn handle_recursive_put_request(
                                     }
                                 }
                                 TransferFrameBorrowed::Owned(TransferFrame::EntryComplete(_)) => {
+                                    if file_received != header.size {
+                                        size_mismatch = true;
+                                        entry_failed = true;
+                                    }
                                     break;
                                 }
                                 TransferFrameBorrowed::GetChunk(_) => {
@@ -285,6 +314,23 @@ async fn handle_recursive_put_request(
                         let _ = stdin.flush().await;
                     }
                     let helper_res = sink.wait().await;
+
+                    if size_mismatch {
+                        let _ = context.remove_file_if_present(&prepared.part_arg).await;
+                        write_transfer_error(
+                            stream,
+                            &TransferFailure::new(
+                                TransferFailureCode::SizeMismatch,
+                                format!(
+                                    "entry '{}' declared {} bytes, received {file_received}",
+                                    header.path, header.size
+                                ),
+                            ),
+                        )
+                        .await
+                        .map_err(TransportError::from)?;
+                        return Ok(());
+                    }
 
                     if entry_failed || helper_res.is_err() {
                         let _ = context.remove_file_if_present(&prepared.part_arg).await;

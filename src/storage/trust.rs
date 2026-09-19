@@ -54,7 +54,12 @@ fn ensure_trust_dirs(state: &StateConfig) -> Result<()> {
     let trust_dir = state.root().join("trust");
     let servers_dir = trust_dir.join("servers");
     let clients_dir = trust_dir.join("clients");
-    for dir in [&trust_dir, &servers_dir, &clients_dir] {
+    for dir in [
+        state.root(),
+        trust_dir.as_path(),
+        servers_dir.as_path(),
+        clients_dir.as_path(),
+    ] {
         crate::storage::utils::ensure_dir_secure_tighten(dir)?;
     }
 

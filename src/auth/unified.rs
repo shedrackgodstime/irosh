@@ -315,7 +315,7 @@ impl Authenticator for UnifiedAuthenticator {
 
             // If not found, refresh vault from disk to see if it was updated by another process.
             let _ = this.refresh_keys();
-            let mut authorized = this.lock_keys();
+            let authorized = this.lock_keys();
 
             if authorized.contains(&key) {
                 info!(%fingerprint, "Client matched key after vault refresh. Access granted.");
@@ -323,8 +323,11 @@ impl Authenticator for UnifiedAuthenticator {
                 return Ok(true);
             }
 
-            // 2. If node is under Strict policy and not empty, reject strangers early.
-            if this.policy == HostKeyPolicy::Strict && !authorized.is_empty() {
+            // 2. Strict policy rejects every key that is not already in the
+            //    vault, including when the vault is empty. Unlike TOFU it never
+            //    auto-adopts the first stranger. Bootstrap headlessly with
+            //    `irosh host --authorize` or switch to the Tofu policy.
+            if this.policy == HostKeyPolicy::Strict {
                 warn!(%fingerprint, "Strict policy: unknown key rejected.");
                 this.record_failure();
                 return Ok(false);

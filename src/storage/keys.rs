@@ -14,6 +14,7 @@ use crate::error::{Result, StorageError};
 
 /// Ensures the key storage directory exists with strict permissions.
 fn ensure_key_dir(state: &StateConfig) -> Result<()> {
+    crate::storage::utils::ensure_dir_secure_tighten(state.root())?;
     let path = state.root().join("keys");
     crate::storage::utils::ensure_dir_secure_tighten(&path)
 }
