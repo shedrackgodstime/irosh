@@ -9,9 +9,7 @@ For the library API, see the generated crate documentation on
 [docs.rs](https://docs.rs/irosh/latest/irosh/), which embeds the library's
 own `README.md` and rustdoc for every public item.
 
-This document stays proportional by design. Irosh is early stage, so the
-docs follow the code, not the other way around — they describe what exists,
-not a promise.
+This document describes what exists, not a promise.
 
 ## Contents
 
@@ -109,7 +107,7 @@ implementation reusable and the CLI replaceable.
 | `config`     | State/security/app configuration types                                  |
 | `error`      | Typed error hierarchy mapped from the underlying crates                 |
 | `metrics`    | Atomic connection/transfer/error counters                               |
-| `diagnostic` | Offline network and security checks (powered by `irosh check`)          |
+| `diagnostic` | Filesystem, SSH-binary, and network checks (powered by `irosh check`) |
 | `sys`        | Platform glue: raw terminal, PTY sizes, signals, service management     |
 
 ### Feature flags
@@ -153,8 +151,7 @@ Every byte counting as observable behavior is instrumented: connection,
 transfer, and error counters via `metrics`, `tracing` spans on public APIs,
 and round-trip benches plus fuzz targets for the codecs. CI enforces a
 workspace line-coverage floor (`cargo llvm-cov --fail-under-lines 50`); the
-exact threshold lives in the workflow file, not here. Nothing is claimed as
-verified — it is measured.
+exact threshold lives in the workflow file, not here. It is measured.
 
 ## 2. Core flows
 
@@ -163,8 +160,7 @@ verified — it is measured.
 `irosh system install` registers a background service (systemd, launchd, or
 the Windows SCM) that runs `irosh host`. `irosh host` binds the endpoint,
 prints its ticket, and runs the accept loop. The service also exposes a tiny
-IPC server (a port file plus commands) so the CLI can manage it without
-touching the Unix socket layer.
+IPC server (a port file plus commands) so the CLI can manage it over IPC.
 
 ### Connecting
 
@@ -204,13 +200,12 @@ Three Application-Layer Protocol Negotiation values exist:
 **Stealth listeners.** Stealth mode replaces the `irosh/1` ALPN with
 `irosh/1/<hex>`. A scanner probing the endpoint sees neither an SSH banner
 nor a recognizable protocol, so the listener is invisible without the shared
-secret. The hedge is not the hash (truncating SHA-256 to 8 bytes still
-leaves 64 bits of preimage resistance) but the *model*: the derived ALPN
-rides in the TLS ClientHello, which is plaintext to a passive observer
-(no ECH), so a listener can be fingerprinted by its derived ALPN even though
-the secret itself is never exposed; and the endpoint still advertises the
-Iroh stack's other ALPNs, so stealth hides *what this endpoint is for*, not
-that an iroh endpoint is here. Best effort, not infallible.
+secret. The derived ALPN rides in the TLS ClientHello, which is plaintext to
+a passive observer (no ECH), so a listener can be fingerprinted by its derived
+ALPN even though the secret itself is never exposed. The endpoint still
+advertises the Iroh stack's other ALPNs (including the blob store), so stealth
+hides *what this endpoint is for*, not that an iroh endpoint is here. This is
+best effort, not airtight.
 
 ### Control channel
 
@@ -250,7 +245,9 @@ PUT_CHUNK    ──► (repeated)        ≤ 64 KiB each
 PUT_COMPLETE ◄──                   total size
 ```
 
-`size` must equal the sum of all chunks; receivers verify the count.
+`size` is the declared total and is enforced: the server rejects any
+stream that exceeds it, and the completion frame must match the bytes
+actually sent.
 
 **Download (`get`):**
 
@@ -266,8 +263,9 @@ then an entry-complete marker, before the next entry begins.
 
 **Blob staging.** Transfers can stage through the iroh-blobs store. A blob
 put request carries the path plus the content hash, format, and size; a blob
-get request pulls by hash. This is what lets partial or interrupted
-transfers avoid corrupting targets.
+get request pulls by hash. The server writes the blob to a fresh path and
+refuses to overwrite an existing one, so partial or interrupted transfers
+cannot corrupt a target.
 
 ### Wormhole rendezvous
 
@@ -290,8 +288,9 @@ Rendezvous uses [Pkarr](https://pkarr.org) on the mainline DHT:
 - Frame headers are magic-checked; a wrong magic aborts the stream.
 - Payload limits are enforced on write and on read, so oversized chunks
   surface as typed `PayloadTooLarge` errors rather than silent truncation.
-- Transfer paths are sanitized before use: null bytes are rejected, absolute
-  paths are refused, and Windows reserved names are handled.
+- Transfer entry paths are sanitized before use: null bytes are rejected, absolute
+  entry names are refused, and Windows reserved names are handled. The resolved
+  target path is used as given.
 
 ## 4. Security
 
@@ -305,7 +304,7 @@ are the currency of the trust vault.
 
 The library owns the *protocol* of authentication but never decides *how* to
 validate credentials (C-CALLER-CONTROL): it calls an authenticator trait and
-respects the result. The CLI ships four backends: key-only, password, both,
+respects the result. The CLI ships four backends: key-only, password, combined,
 and the unified policy — selectable via `irosh host --auth-mode`.
 
 The `UnifiedAuthenticator` is the master policy. Precedence is strict:
@@ -333,7 +332,7 @@ set) gates everyone else.
 
 Key-only operation additionally honors `HostKeyPolicy`:
 
-- `Strict` rejects unknown clients.
+- `Strict` rejects unknown clients outright, even when the vault is empty.
 - `Tofu` trusts the first client seen.
 - `AcceptAll` accepts everyone (explicitly opt-in only).
 
@@ -353,6 +352,8 @@ Failed authentication attempts are throttled by a node-wide **decaying
 - The failure counter resets on any successful authentication.
 - It also expires on its own after the window, so a single malicious client
   cannot permanently lock the node for everyone.
+- Every backend enforces it: the key backend and the password backend each
+  count three failures within the window before blocking further checks.
 - On a wormhole, three failures within the window burn the pairing, and the
   dormant-period counter decays from there.
 
@@ -463,7 +464,7 @@ irosh wormhole [code] [-p, --passwd] [--persistent]
 Background daemon management.
 
 ```
-irosh system <install|uninstall|start|stop|restart|status|logs [lines]>
+irosh system <install|uninstall|start|stop|restart|status|logs [--follow]>
 ```
 
 Installs a service (systemd, launchd, or the Windows SCM) running `irosh
@@ -564,10 +565,10 @@ With `--json`, results are wrapped in a stable envelope:
 { "ok": false, "data": null, "error": { "message": "...", "code": "..." } }
 ```
 
-The informational and stewardship commands emit this envelope in JSON mode:
-`check`, `config`, `host`, `identity`, `passwd`, `peer`, `system`, `trust`,
-and `wormhole`. The remaining one is `connect`, which streams an interactive
-terminal and has no wrapping result. Scripted sessions should use
+The informational commands emit this envelope in JSON mode:
+`check`, `host`, `identity`, `passwd`, `peer list`, `peer info`,
+`system`, `trust`, and `wormhole`. The remaining one is `connect`,
+which streams an interactive terminal and has no wrapping result. Scripted sessions should use
 `connect --exec` instead.
 
 ## 6. Project
@@ -576,6 +577,7 @@ terminal and has no wrapping result. Scripted sessions should use
   `VERSION (u8)`. The current value is `2`; `1` is rejected, and there is no
   in-band version negotiation yet — a peer that doesn't speak the host's
   version is dropped at the first frame.
-- **MSRV.** Pinned in `rust-toolchain.toml` and mirrored in Cargo.toml's
-  `rust-version` (1.85).
+- **MSRV.** Declared as `rust-version = "1.85"` in `Cargo.toml`. The
+  `rust-toolchain.toml` pins the development toolchain instead, and no
+  CI job checks the MSRV.
 - **License.** MIT OR Apache-2.0.

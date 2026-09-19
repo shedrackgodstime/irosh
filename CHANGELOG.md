@@ -6,7 +6,7 @@ All notable changes to irosh are documented here.
 
 Hardening and tooling: runtime metrics counters, tracing coverage across
 the public API, CI fuzz targets with a coverage gate, transfer and SSH
-benchmarks, and 17 public API soundness fixes.
+benchmarks, and public API soundness fixes.
 
 ## Foundation (v0.1.0 - v0.4.0) - 2026-04-20 .. 2026-05-31
 

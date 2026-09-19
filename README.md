@@ -109,7 +109,7 @@ Irosh is built **library-first**: all the networking, security, and SSH logic li
 
 - **Observability**: Runtime metrics counters, tracing coverage across the public API, and a heap profiling example.
 - **Quality gates**: CI fuzz targets, a line-coverage gate, and new transfer/SSH benchmarks.
-- **Soundness**: 17 public API audit findings resolved, plus path-traversal and peer-sanity hardening.
+- **Soundness**: Public API audit findings resolved, plus path-traversal and peer-sanity hardening.
 
 Full details in the [Changelog](CHANGELOG.md).
 
