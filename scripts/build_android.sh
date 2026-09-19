@@ -7,7 +7,9 @@ TOOLCHAIN_DIR="/home/kristency/Tools/aarch64-linux-musl-cross"
 BIN_DIR="$TOOLCHAIN_DIR/bin"
 OUTPUT_DIR="target/$TARGET/release"
 BINARY_NAME="irosh"
-REMOTE_PATH="/data/local/tmp/$BINARY_NAME"
+REMOTE_PATH="/sdcard/$BINARY_NAME"
+TERMUX_HOME="/data/data/com.termux/files/home"
+TERMUX_PATH="$TERMUX_HOME/$BINARY_NAME"
 
 echo "Checking environment..."
 if [ ! -d "$TOOLCHAIN_DIR" ]; then
@@ -29,17 +31,20 @@ echo "Build successful. Output: $OUTPUT_DIR/$BINARY_NAME"
 DEVICES=$(adb devices | grep -v "List" | grep "device" | wc -l)
 if [ "$DEVICES" -eq 0 ]; then
     echo "Warning: No Android devices connected via adb."
-    echo "To deploy manually: adb push $OUTPUT_DIR/$BINARY_NAME $REMOTE_PATH"
+    echo "To deploy manually:"
+    echo "  adb push $OUTPUT_DIR/$BINARY_NAME $REMOTE_PATH"
+    echo "  adb shell \"run-as com.termux cp $REMOTE_PATH $TERMUX_PATH && chmod +x $TERMUX_PATH\""
 else
     echo "Pushing to device..."
     adb push "$OUTPUT_DIR/$BINARY_NAME" "$REMOTE_PATH"
-    adb shell "chmod +x $REMOTE_PATH"
-    echo "Done! You can run it with: adb shell $REMOTE_PATH"
+    adb shell "run-as com.termux cp $REMOTE_PATH $TERMUX_PATH"
+    adb shell "run-as com.termux chmod +x $TERMUX_PATH"
+    echo "Done! You can run it with: adb shell run-as com.termux $TERMUX_PATH <target>"
 fi
 
 echo ""
-echo "To move into Termux and run:"
+echo "To run in Termux:"
 echo "---------------------------"
 echo "Inside Termux, run:"
-echo "cp $REMOTE_PATH ~/irosh && chmod +x ~/irosh"
-echo "./irosh <target>"
+echo "chmod +x $TERMUX_PATH"
+echo "$TERMUX_PATH <target>"
