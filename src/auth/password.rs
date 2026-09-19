@@ -115,7 +115,7 @@ impl Authenticator for PasswordAuth {
 
         let this = self.clone();
         let password = password.to_string();
-        let verified = tokio::task::spawn_blocking(move || {
+        let verified = tokio::task::spawn_blocking(move || -> crate::Result<bool> {
             match Argon2::default()
                 .verify_password(password.as_bytes(), this.password_hash.as_str())
             {

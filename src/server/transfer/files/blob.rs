@@ -9,7 +9,7 @@ use crate::server::transfer::helpers::target_exists_failure;
 use crate::server::transfer::state::{ConnectionShellState, ShellContext, sanitize_relative_path};
 use crate::transport::stream::IrohDuplex;
 use crate::transport::transfer::{
-    BlobGetReady, BlobGetRequest, BlobPutRequest, TransferComplete, TransferFailure, TransferFrame,
+    BlobGetReady, BlobGetRequest, BlobPutRequest, TransferComplete, TransferFrame,
     TransferFrameBorrowed, TransferReady, read_next_frame_into, write_blob_get_ready,
     write_put_complete, write_put_ready, write_transfer_error,
 };

@@ -183,14 +183,7 @@ impl ShellContext {
         Ok(tokio::fs::metadata(path).await.is_ok())
     }
 
-    /// # Errors
-    ///
-    /// Propagates errors from [`ShellContext::path_exists`].
-    pub(super) async fn path_missing(self, path: &str) -> Result<bool> {
-        Ok(!self.path_exists(path).await?)
-    }
-
-    /// Like [`ShellContext::path_missing`], but a symlink counts as present
+    /// Like [`ShellContext::path_exists`], but a symlink counts as present
     /// even when its target does not exist.
     ///
     /// Upload destinations use this so a request can never write *through* a

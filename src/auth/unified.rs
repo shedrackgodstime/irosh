@@ -315,7 +315,7 @@ impl Authenticator for UnifiedAuthenticator {
 
             // If not found, refresh vault from disk to see if it was updated by another process.
             let _ = this.refresh_keys();
-            let authorized = this.lock_keys();
+            let mut authorized = this.lock_keys();
 
             if authorized.contains(&key) {
                 info!(%fingerprint, "Client matched key after vault refresh. Access granted.");
