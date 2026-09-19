@@ -100,6 +100,7 @@ Irosh is a powerful remote access tool. By using this software, you agree to the
 Irosh is built **library-first**: all the networking, security, and SSH logic lives in the `irosh` crate, while the CLI is a thin, high-performance UI layer.
 
 - [**Technical Manual (Library)**](src/README.md) - For developers building on Irosh.
+- [**Technical Reference**](docs/README.md) - Architecture, protocol, security, and CLI reference.
 - [**Changelog**](CHANGELOG.md) - Release history.
 
 ---
