@@ -176,4 +176,29 @@ mod tests {
         assert!(!block_on(auth.supported_methods()).contains(&AuthMethod::PublicKey));
         Ok(())
     }
+
+    /// Regression test for the password rate-limit fix: three failures lock
+    /// further checks inside the 60 s window, so even the correct password
+    /// must be rejected until the window passes.
+    #[test]
+    fn password_auth_locks_out_after_three_failures() -> crate::Result<()> {
+        let password = "secret123";
+        let hash = hash_password(password).expect("failed to hash test password");
+        let auth = PasswordAuth::new(hash);
+
+        assert!(!block_on(auth.check_password("anyone", "wrong-1"))?);
+        assert!(!block_on(auth.check_password("anyone", "wrong-2"))?);
+        assert!(!block_on(auth.check_password("anyone", "wrong-3"))?);
+        assert_eq!(
+            auth.failed_attempts(),
+            3,
+            "three failures must be recorded precisely"
+        );
+
+        assert!(
+            !block_on(auth.check_password("anyone", password))?,
+            "correct password must be rejected while the lockout window is active"
+        );
+        Ok(())
+    }
 }

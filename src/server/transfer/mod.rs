@@ -11,6 +11,8 @@ mod control;
 mod files;
 mod helpers;
 mod state;
+#[cfg(test)]
+mod tests;
 
 pub use state::ConnectionShellState;
 pub(super) use state::ShellContext;

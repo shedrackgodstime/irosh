@@ -599,6 +599,30 @@ mod tests {
         Ok(())
     }
 
+    /// Under Strict policy with an EMPTY vault, an unknown key must still be
+    /// rejected immediately - unlike Tofu it must never auto-adopt the first
+    /// stranger, and the key must not be persisted to the vault.
+    #[test]
+    fn unified_auth_strict_policy_rejects_stranger_on_empty_vault() -> crate::Result<()> {
+        let state = temp_state("unified-strict-empty-vault");
+        let stranger_key = make_key(0x03);
+
+        // No keys pre-seeded: genuine empty-vault bootstrap state.
+        let auth = UnifiedAuthenticator::new(state.clone(), HostKeyPolicy::Strict, vec![], None);
+
+        assert!(
+            !block_on(auth.check_public_key("user", &stranger_key))?,
+            "Strict policy must reject the first unknown key even when the vault is empty"
+        );
+
+        let vault = crate::storage::load_all_authorized_clients(&state)?;
+        assert!(
+            vault.is_empty(),
+            "Strict policy must never persist an unknown key to an empty vault"
+        );
+        Ok(())
+    }
+
     /// `supported_methods` must dynamically include `Password` when and
     /// only when a temp password hash is active - i.e. the method set must
     /// match the live security state.
