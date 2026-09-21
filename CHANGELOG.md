@@ -2,7 +2,7 @@
 
 All notable changes to irosh are documented here.
 
-## [Unreleased] - v0.5.0
+## v0.5.0 - 2026-09-21
 
 Hardening and tooling: runtime metrics counters, tracing coverage across
 the public API, CI fuzz targets with a coverage gate, transfer and SSH
