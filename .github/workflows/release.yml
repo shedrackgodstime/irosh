@@ -38,13 +38,14 @@ jobs:
 
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: aarch64-unknown-linux-musl
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
       - name: Rust cache
@@ -69,9 +70,6 @@ jobs:
         run: |
           if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
-          fi
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
           fi
           cargo build --release --locked --workspace --exclude irosh-fuzz --target ${{ matrix.target }}
 
