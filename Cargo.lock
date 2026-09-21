@@ -2483,6 +2483,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "irosh"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f80f9c607be557e4595b08bd10d5cbc62f0b9eb58ce4be1344b4f52dba815882"
+dependencies = [
+ "argon2",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "dirs",
+ "futures-util",
+ "hex",
+ "iroh",
+ "iroh-blobs",
+ "iroh-gossip",
+ "iroh-tickets",
+ "libc",
+ "pkarr",
+ "portable-pty",
+ "rand 0.10.2",
+ "russh",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+ "windows-service",
+ "windows-sys 0.61.2",
+ "winreg 0.56.0",
+]
+
+[[package]]
 name = "irosh-cli"
 version = "0.5.0"
 dependencies = [
@@ -2496,7 +2534,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "indicatif",
- "irosh",
+ "irosh 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "proptest",
  "serde",
  "serde_json",
@@ -2513,7 +2551,7 @@ dependencies = [
 name = "irosh-fuzz"
 version = "0.0.0"
 dependencies = [
- "irosh",
+ "irosh 0.5.0",
  "libfuzzer-sys",
  "serde_json",
  "tokio",
