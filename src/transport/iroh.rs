@@ -10,9 +10,15 @@ pub(crate) const BASE_ALPN: &[u8] = b"irosh/1";
 /// Derives a unique ALPN for this session based on an optional shared secret.
 /// If no secret is provided, the standard "irosh/1" protocol is used.
 /// If a secret is provided, it is hashed to create a private stealth protocol.
+///
+/// An empty or whitespace-only secret is treated as "no secret" and yields
+/// the base ALPN. Deriving a stealth ALPN from a degenerate secret would
+/// give the appearance of stealth while providing none: the derived ALPN
+/// travels in the clear in the QUIC ClientHello, and an observer who sees it
+/// can reproduce it by hashing the same empty input.
 #[must_use]
 pub fn derive_alpn(secret: Option<&str>) -> Vec<u8> {
-    match secret {
+    match secret.map(str::trim).filter(|s| !s.is_empty()) {
         None => BASE_ALPN.to_vec(),
         Some(s) => {
             use sha2::{Digest, Sha256};
@@ -133,5 +139,46 @@ pub fn parse_relay_mode(url: &str) -> Result<RelayMode> {
             Ok(RelayMode::Custom(RelayConfig::from(url).into()))
         }
         _ => Ok(RelayMode::Default),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &str = "irosh/1";
+
+    #[test]
+    fn derive_alpn_without_secret_uses_base_alpn() {
+        assert_eq!(derive_alpn(None), BASE.as_bytes());
+    }
+
+    #[test]
+    fn derive_alpn_with_secret_uses_a_distinct_alpn() {
+        let alpn = derive_alpn(Some("correct horse battery staple"));
+        assert_ne!(alpn, BASE.as_bytes());
+        assert!(String::from_utf8_lossy(&alpn).starts_with(BASE));
+    }
+
+    #[test]
+    fn derive_alpn_with_empty_secret_is_treated_as_no_secret() {
+        // A blank secret must not enable a "stealth" ALPN: the derived ALPN
+        // is observable in the clear, so hashing the empty string buys
+        // nothing while making the peer look hidden.
+        assert_eq!(derive_alpn(Some("")), BASE.as_bytes());
+    }
+
+    #[test]
+    fn derive_alpn_with_whitespace_secret_is_treated_as_no_secret() {
+        assert_eq!(derive_alpn(Some("   ")), BASE.as_bytes());
+        assert_eq!(derive_alpn(Some("\t\n")), BASE.as_bytes());
+    }
+
+    #[test]
+    fn derive_alpn_with_empty_secret_matches_derive_alpn_without_secret() {
+        // The invariant that matters: an empty secret must be
+        // indistinguishable from no secret at all, otherwise a client and a
+        // server configured with "" would fail to find each other.
+        assert_eq!(derive_alpn(Some("")), derive_alpn(None));
     }
 }

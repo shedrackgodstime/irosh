@@ -61,6 +61,23 @@ async fn server_options_builder_retains_state_security_secret_and_keys() {
 }
 
 #[test]
+fn server_options_rejects_an_empty_stealth_secret() {
+    // An empty secret must be treated as "no secret", not as a stealth
+    // secret: a stealth ALPN derived from "" provides zero secrecy while
+    // making the peer look hidden.
+    let state = temp_state_dir("server-options-empty-secret");
+    let options = ServerOptions::new(state).secret("");
+    assert_eq!(options.secret_value(), None);
+}
+
+#[test]
+fn server_options_rejects_a_whitespace_only_stealth_secret() {
+    let state = temp_state_dir("server-options-blank-secret");
+    let options = ServerOptions::new(state).secret("   \t ");
+    assert_eq!(options.secret_value(), None);
+}
+
+#[test]
 fn test_server_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Server>();

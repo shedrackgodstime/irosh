@@ -67,6 +67,17 @@ pub fn atomic_write_secure(path: &Path, data: &[u8]) -> Result<()> {
             path: path.to_path_buf(),
             source,
         })?;
+
+        // 6. Make the rename itself durable.
+        //
+        // `file.sync_all()` above only flushes the *temp file's* data. The
+        // rename that publishes it lives in the parent directory's metadata,
+        // and without an explicit directory fsync a power loss can leave the
+        // directory entry pointing at the old file (or at nothing) even
+        // though the data was written. Syncing the parent directory makes
+        // the rename durable.
+        sync_parent_dir(parent)?;
+
         Ok(())
     })();
 
@@ -74,6 +85,61 @@ pub fn atomic_write_secure(path: &Path, data: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&tmp_path);
     }
     write_result
+}
+
+/// Flushes a directory's metadata to disk so that a rename performed inside it
+/// survives a power loss.
+///
+/// On Unix, opening a directory read-only and calling `fsync` on it is the
+/// portable way to persist its directory entries. Windows has no equivalent
+/// for directories, so the call is a no-op there (NTFS metadata journaling
+/// already orders the rename).
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be opened or synced.
+#[cfg(unix)]
+fn sync_parent_dir(parent: &Path) -> Result<()> {
+    let dir = fs::File::open(parent).map_err(|source| StorageError::DirectoryRead {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    match dir.sync_all() {
+        Ok(()) => Ok(()),
+        // Some filesystems (and some pseudo-filesystems) do not implement
+        // directory fsync and report EINVAL/ENOTSUP. Durability of the
+        // rename is then governed by the filesystem itself; failing the
+        // whole write would be worse than accepting that limitation.
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::InvalidInput | io::ErrorKind::Unsupported
+            ) =>
+        {
+            tracing::debug!(
+                "directory fsync unsupported for {}: {err}; rename durability \
+                 relies on the filesystem",
+                parent.display()
+            );
+            Ok(())
+        }
+        Err(err) => Err(StorageError::FileWrite {
+            path: parent.to_path_buf(),
+            source: err,
+        }
+        .into()),
+    }
+}
+
+/// No-op on platforms without a directory-fsync equivalent.
+///
+/// # Errors
+///
+/// Never returns an error.
+#[cfg(not(unix))]
+fn sync_parent_dir(parent: &Path) -> Result<()> {
+    let _ = parent;
+    Ok(())
 }
 
 /// Ensures a directory exists and has strict permissions (0700) on Unix/Windows
@@ -511,6 +577,59 @@ mod tests {
         atomic_write_secure(&file_path, b"c").unwrap();
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "c");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_secure_leaves_no_temp_files_behind() {
+        let dir = temp_dir("no-temp-files");
+        let file_path = dir.join("clean.txt");
+        atomic_write_secure(&file_path, b"payload").unwrap();
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "atomic write must not leave temp files behind, found: {leftovers:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_parent_dir_succeeds_for_a_real_directory() {
+        let dir = temp_dir("sync-parent");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A directory fsync must not fail on a normal filesystem.
+        sync_parent_dir(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_parent_dir_fails_for_a_missing_directory() {
+        let dir = temp_dir("sync-parent-missing");
+        let missing = dir.join("does-not-exist");
+        assert!(sync_parent_dir(&missing).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_secure_succeeds_and_is_durable_after_rename() {
+        // Regression guard for the parent-directory fsync: the write must
+        // still succeed (the fsync is additive, not a behaviour change) and
+        // the file must be fully visible at its final path.
+        let dir = temp_dir("durable");
+        let file_path = dir.join("durable.txt");
+        atomic_write_secure(&file_path, b"durable payload").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            "durable payload"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

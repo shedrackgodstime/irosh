@@ -51,6 +51,23 @@ fn client_options_builder_retains_state_security_and_secret() {
 }
 
 #[test]
+fn client_options_rejects_an_empty_stealth_secret() {
+    // An empty secret must be treated as "no secret", not as a stealth
+    // secret. A stealth secret derived from "" provides zero secrecy while
+    // making the peer look hidden.
+    let state = temp_state_dir("client-options-empty-secret");
+    let options = ClientOptions::new(state).secret("");
+    assert_eq!(options.secret_value(), None);
+}
+
+#[test]
+fn client_options_rejects_a_whitespace_only_stealth_secret() {
+    let state = temp_state_dir("client-options-blank-secret");
+    let options = ClientOptions::new(state).secret("   \t ");
+    assert_eq!(options.secret_value(), None);
+}
+
+#[test]
 fn public_config_and_ticket_types_support_value_comparison() {
     let state_a = StateConfig::new("/tmp/irosh-state-a".into());
     let state_b = StateConfig::new("/tmp/irosh-state-a".into());

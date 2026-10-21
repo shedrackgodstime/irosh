@@ -3,6 +3,58 @@ use crate::session::pty::pty_size;
 use russh::ChannelMsg;
 
 #[tokio::test]
+async fn session_without_blobs_connection_is_still_fully_usable() {
+    // Regression guard for the "blobs ALPN failure is non-fatal" fix.
+    //
+    // The blobs protocol is optional. A peer that does not offer it (or a
+    // blobs dial that fails/times out) must not prevent the SSH session from
+    // being established and used. Before the fix, a blobs dial failure
+    // closed the healthy SSH connection and failed the whole connect.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let server_state = temp_state_dir("server-no-blobs");
+        let client_state = temp_state_dir("client-no-blobs");
+        let (mut session, server_task) = connect_test_session(&server_state, &client_state).await;
+
+        // The test harness deliberately builds the session without a blobs
+        // connection, mirroring the degraded post-fix state.
+        assert!(session.blobs_connection.is_none());
+
+        // The SSH session must be fully usable.
+        assert_eq!(session.state(), SessionState::Authenticated);
+        session.start_shell().await.unwrap();
+        assert_eq!(session.state(), SessionState::ShellReady);
+
+        // And commands must still execute over the SSH channel.
+        let handle = session.handle.read().await;
+        let mut channel = handle.channel_open_session().await.unwrap();
+        channel.exec(true, "echo blobs-degraded-ok").await.unwrap();
+        drop(handle);
+
+        let mut stdout = Vec::new();
+        loop {
+            let Some(msg) = channel.wait().await else {
+                break;
+            };
+            match msg {
+                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+        let stdout = String::from_utf8(stdout).unwrap();
+        assert!(
+            stdout.contains("blobs-degraded-ok"),
+            "SSH exec must still work without a blobs connection, got: {stdout}"
+        );
+
+        let _ = session.disconnect().await;
+        let _ = server_task.await.unwrap();
+    })
+    .await
+    .expect("Test timed out");
+}
+
+#[tokio::test]
 async fn session_state_transitions_from_authenticated_to_shell_ready_to_closed() {
     let server_state = temp_state_dir("server-session-state");
     let client_state = temp_state_dir("client-session-state");

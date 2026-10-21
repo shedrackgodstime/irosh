@@ -58,8 +58,20 @@ impl ClientOptions {
     }
 
     /// Configures an optional shared secret for stealth connections.
+    ///
+    /// An empty or whitespace-only secret is treated as "no secret" rather
+    /// than as a stealth secret. A degenerate secret would still derive a
+    /// secret-specific ALPN, but the secrecy it buys is zero: any observer
+    /// that sees the derived ALPN in the QUIC ClientHello can reproduce it
+    /// trivially, so the peer would *look* hidden while being fully
+    /// discoverable.
     pub fn secret(mut self, secret: impl Into<String>) -> Self {
-        self.secret = Some(secret.into());
+        let secret = secret.into();
+        self.secret = if secret.trim().is_empty() {
+            None
+        } else {
+            Some(secret)
+        };
         self
     }
 
@@ -210,7 +222,10 @@ impl Client {
         iroh::endpoint::Connection,
         iroh::Endpoint,
         iroh_blobs::store::fs::FsStore,
-        iroh::endpoint::Connection, // blobs connection
+        // `None` when the peer does not offer the blobs ALPN or the blobs
+        // dial failed. The SSH session still works; only content-addressed
+        // blob transfers are unavailable.
+        Option<iroh::endpoint::Connection>,
     )> {
         let blobs = iroh_blobs::store::fs::FsStore::load(options.state().blobs_path())
             .await
@@ -252,31 +267,17 @@ impl Client {
             .await
             {
                 Ok(Ok(connection)) => {
-                    // Also establish a blobs-ALPN connection for content-addressed transfers
-                    let blobs_connection = match tokio::time::timeout(
-                        Self::CONNECT_TIMEOUT,
+                    // Also establish a blobs-ALPN connection for content-addressed transfers.
+                    //
+                    // A failure here is NOT fatal: the peer may simply not offer
+                    // the blobs ALPN, or the blobs dial may fail transiently.
+                    // The SSH session is still perfectly usable, so we degrade
+                    // to "no blobs connection" instead of tearing down the
+                    // healthy SSH connection.
+                    let blobs_connection = Self::dial_blobs_optional(
                         endpoint.connect(target_addr.clone(), iroh_blobs::ALPN),
                     )
-                    .await
-                    {
-                        Ok(Ok(c)) => c,
-                        Ok(Err(err)) => {
-                            tracing::warn!("Blobs connection failed (non-fatal): {err}");
-                            connection.close(0u32.into(), b"blobs connect failed");
-                            endpoint.close().await;
-                            return Err(ClientError::ConnectFailed { source: err }.into());
-                        }
-                        Err(_) => {
-                            connection.close(0u32.into(), b"blobs connect timeout");
-                            endpoint.close().await;
-                            return Err(ClientError::ConnectFailed {
-                                source: iroh::endpoint::ConnectError::from(
-                                    iroh::endpoint::ConnectionError::Reset,
-                                ),
-                            }
-                            .into());
-                        }
-                    };
+                    .await;
                     return Ok((connection, endpoint, blobs, blobs_connection));
                 }
                 Ok(Err(err)) => {
@@ -300,6 +301,56 @@ impl Client {
             .into())
     }
 
+    /// Dials the peer's blobs ALPN, treating failure as non-fatal.
+    ///
+    /// The blobs protocol is an optional capability: a peer may not offer it
+    /// at all, and the dial may fail or time out for transient reasons. The
+    /// SSH session is fully usable without it, so a failure must degrade to
+    /// "no blobs connection" rather than aborting the whole connection.
+    ///
+    /// This never returns an error — that is the entire point of the helper.
+    async fn dial_blobs_optional<F>(dial: F) -> Option<iroh::endpoint::Connection>
+    where
+        F: std::future::Future<
+                Output = std::result::Result<
+                    iroh::endpoint::Connection,
+                    iroh::endpoint::ConnectError,
+                >,
+            >,
+    {
+        Self::dial_blobs_optional_with_timeout(Self::CONNECT_TIMEOUT, dial).await
+    }
+
+    /// Same as [`Client::dial_blobs_optional`], but with an explicit timeout.
+    async fn dial_blobs_optional_with_timeout<F>(
+        timeout: Duration,
+        dial: F,
+    ) -> Option<iroh::endpoint::Connection>
+    where
+        F: std::future::Future<
+                Output = std::result::Result<
+                    iroh::endpoint::Connection,
+                    iroh::endpoint::ConnectError,
+                >,
+            >,
+    {
+        match tokio::time::timeout(timeout, dial).await {
+            Ok(Ok(connection)) => Some(connection),
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    "Blobs connection failed (non-fatal), continuing without blob transfers: {err}"
+                );
+                None
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "Blobs connection timed out (non-fatal), continuing without blob transfers"
+                );
+                None
+            }
+        }
+    }
+
     /// Performs the SSH handshake and metadata exchange over an existing P2P connection.
     ///
     /// # Errors
@@ -313,7 +364,7 @@ impl Client {
             iroh::endpoint::Connection,
             iroh::Endpoint,
             iroh_blobs::store::fs::FsStore,
-            iroh::endpoint::Connection,
+            Option<iroh::endpoint::Connection>,
         ),
     ) -> Result<Session> {
         let endpoint_id = EndpointId::new(connection.remote_id().to_string());
@@ -500,7 +551,7 @@ impl Client {
                     handler,
                     channel: tokio::sync::Mutex::new(None),
                     connection: Some(connection),
-                    blobs_connection: Some(blobs_connection),
+                    blobs_connection,
                     endpoint: Some(endpoint),
                     remote_metadata,
                     state,
@@ -572,3 +623,34 @@ fn lock_or_recover<T>(mutex: &Arc<StdMutex<T>>) -> MutexGuard<'_, T> {
 }
 
 use std::sync::MutexGuard;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dial_blobs_optional_swallows_a_connect_error() {
+        // A blobs dial error must degrade to "no blobs connection" and must
+        // never propagate. Before the fix, this error aborted the whole
+        // connection and closed the healthy SSH connection.
+        let result = Client::dial_blobs_optional(async {
+            Err(iroh::endpoint::ConnectError::from(
+                iroh::endpoint::ConnectionError::Reset,
+            ))
+        })
+        .await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn dial_blobs_optional_swallows_a_timeout() {
+        // A blobs dial that never completes must time out into "no blobs
+        // connection" rather than hanging the connect forever.
+        let result = Client::dial_blobs_optional_with_timeout(Duration::from_millis(50), async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            unreachable!("the dial future must be dropped by the timeout")
+        })
+        .await;
+        assert!(result.is_none());
+    }
+}

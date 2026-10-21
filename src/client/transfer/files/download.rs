@@ -147,7 +147,9 @@ impl Session {
             .blobs_connection
             .clone()
             .ok_or_else(|| ClientError::DownloadFailed {
-                details: "no blobs connection available".to_string(),
+                details: "no blobs connection available; the peer does not offer the blobs \
+                          protocol, so content-addressed downloads are unavailable"
+                    .to_string(),
             })?;
 
         let mut fetch_stream = self.blobs.remote().fetch(conn, hash).stream();

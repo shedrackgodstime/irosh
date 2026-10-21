@@ -326,17 +326,33 @@ impl ShellContext {
         }
     }
 
+    /// Resolves the home directory of the server process.
+    ///
+    /// An empty or whitespace-only `HOME`/`USERPROFILE` is treated as *unset*
+    /// rather than as the current directory. Otherwise `~` and `~/x` would
+    /// resolve to a *relative* path, which the server would then interpret
+    /// against its own working directory — an unpredictable location that is
+    /// not the user's home at all.
     #[cfg_attr(unix, allow(unused_variables))]
     fn home_dir(shell_state: &ConnectionShellState) -> Option<PathBuf> {
+        /// Returns the value of an environment variable as an absolute path,
+        /// treating a blank or relative value as unset.
+        ///
+        /// A relative `HOME` is just as broken as an empty one: `~/x` would
+        /// resolve against the server's own working directory.
+        fn non_blank_env(key: &str) -> Option<PathBuf> {
+            usable_home(std::env::var_os(key))
+        }
+
         #[cfg(unix)]
         {
-            std::env::var_os("HOME").map(PathBuf::from)
+            non_blank_env("HOME")
         }
         #[cfg(windows)]
         {
             // If running as a service, USERPROFILE points to systemprofile.
             // We can infer the actual user home by looking at the state directory.
-            let profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
+            let profile = usable_home(std::env::var_os("USERPROFILE"));
             if let Some(p) = &profile {
                 if p.to_string_lossy().to_lowercase().contains("systemprofile") {
                     // We are likely a service. Deriving home from state_root.
@@ -351,9 +367,28 @@ impl ShellContext {
                     }
                 }
             }
-            profile.or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            profile.or_else(|| non_blank_env("HOME"))
         }
     }
+}
+
+/// Converts a raw `HOME`-style environment value into a usable home path.
+///
+/// A blank value is treated as *unset* rather than as the current directory.
+/// Otherwise `~` and `~/x` would resolve to a *relative* path, which the
+/// server would then interpret against its own working directory — an
+/// unpredictable location that is not the user's home at all.
+///
+/// A relative value is rejected for the same reason: it would silently
+/// redirect home-relative transfers into the server's working directory.
+#[must_use]
+fn usable_home(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let value = value?;
+    if value.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(value);
+    if path.is_absolute() { Some(path) } else { None }
 }
 
 impl ShellContext {
@@ -481,5 +516,43 @@ mod send_sync_tests {
     #[test]
     fn connection_shell_state_is_send_sync() {
         assert_send_sync::<ConnectionShellState>();
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn os(value: &str) -> Option<OsString> {
+        Some(OsString::from(value))
+    }
+
+    #[test]
+    fn usable_home_accepts_an_absolute_path() {
+        assert_eq!(
+            usable_home(os("/home/user")),
+            Some(PathBuf::from("/home/user"))
+        );
+    }
+
+    #[test]
+    fn usable_home_rejects_an_empty_value() {
+        // An empty HOME must be treated as unset, not as the current
+        // directory: otherwise `~` would resolve to a relative path and
+        // home-relative transfers would land in the server's CWD.
+        assert_eq!(usable_home(os("")), None);
+    }
+
+    #[test]
+    fn usable_home_rejects_a_missing_value() {
+        assert_eq!(usable_home(None), None);
+    }
+
+    #[test]
+    fn usable_home_rejects_a_relative_value() {
+        // A relative HOME is just as broken as an empty one.
+        assert_eq!(usable_home(os("relative/path")), None);
+        assert_eq!(usable_home(os(".")), None);
     }
 }

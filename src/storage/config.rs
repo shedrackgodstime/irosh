@@ -28,9 +28,16 @@ pub fn load_config(state: &StateConfig) -> Result<AppConfig> {
         source,
     })?;
 
-    serde_json::from_str(&data)
-        .map_err(|source| StorageError::PeerProfileParse { source })
-        .map_err(Into::into)
+    let mut config: AppConfig =
+        serde_json::from_str(&data).map_err(|source| StorageError::PeerProfileParse { source })?;
+
+    // A blank stealth secret in a hand-edited or imported config file is
+    // meaningless: it would enable "stealth" while providing none (see
+    // `derive_alpn`). Normalize it to "no secret" so the rest of the code
+    // only ever sees a usable secret.
+    config.stealth_secret = config.stealth_secret.filter(|s| !s.trim().is_empty());
+
+    Ok(config)
 }
 
 /// Saves the persistent application configuration to disk atomically.
@@ -83,6 +90,10 @@ pub fn import_config(state: &StateConfig, src: &Path) -> Result<()> {
     })?;
     let imported: AppConfig = serde_json::from_slice(&data)
         .map_err(|source| StorageError::PeerProfileParse { source })?;
+    // Normalize a blank stealth secret to "no secret" before persisting, so
+    // the imported file cannot enable a zero-secrecy "stealth" mode.
+    let mut imported = imported;
+    imported.stealth_secret = imported.stealth_secret.filter(|s| !s.trim().is_empty());
     save_config(state, &imported)
 }
 
@@ -186,6 +197,55 @@ mod tests {
         assert_eq!(load_config(&state).unwrap(), AppConfig::default());
 
         let _ = std::fs::remove_file(&bad);
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn load_config_normalizes_a_blank_stealth_secret_to_none() {
+        // A hand-edited config file with `"stealth_secret": ""` must not
+        // enable a zero-secrecy "stealth" mode.
+        let state = temp_state("blank-secret");
+        std::fs::create_dir_all(state.root()).unwrap();
+        std::fs::write(
+            state.root().join(CONFIG_FILE),
+            br#"{"stealth_secret":"","log_level":"info"}"#,
+        )
+        .unwrap();
+
+        let config = load_config(&state).unwrap();
+        assert_eq!(config.stealth_secret, None);
+
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn load_config_normalizes_a_whitespace_stealth_secret_to_none() {
+        let state = temp_state("blank-secret-ws");
+        std::fs::create_dir_all(state.root()).unwrap();
+        std::fs::write(
+            state.root().join(CONFIG_FILE),
+            br#"{"stealth_secret":"   "}"#,
+        )
+        .unwrap();
+
+        let config = load_config(&state).unwrap();
+        assert_eq!(config.stealth_secret, None);
+
+        let _ = std::fs::remove_dir_all(state.root());
+    }
+
+    #[test]
+    fn import_config_normalizes_a_blank_stealth_secret() {
+        let state = temp_state("import-blank-secret");
+        let src =
+            std::env::temp_dir().join(format!("irosh-config-blank-{}.json", rand::random::<u32>()));
+        std::fs::write(&src, br#"{"stealth_secret":""}"#).unwrap();
+
+        import_config(&state, &src).unwrap();
+        let loaded = load_config(&state).unwrap();
+        assert_eq!(loaded.stealth_secret, None);
+
+        let _ = std::fs::remove_file(&src);
         let _ = std::fs::remove_dir_all(state.root());
     }
 

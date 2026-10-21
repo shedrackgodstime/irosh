@@ -116,8 +116,20 @@ impl ServerOptions {
     }
 
     /// Configures an optional shared secret for stealth connections.
+    ///
+    /// An empty or whitespace-only secret is treated as "no secret" rather
+    /// than as a stealth secret. A degenerate secret would still derive a
+    /// secret-specific ALPN, but the secrecy it buys is zero: any observer
+    /// that sees the derived ALPN in the QUIC ClientHello can reproduce it
+    /// trivially, so the peer would *look* hidden while being fully
+    /// discoverable.
     pub fn secret(mut self, secret: impl Into<String>) -> Self {
-        self.secret = Some(secret.into());
+        let secret = secret.into();
+        self.secret = if secret.trim().is_empty() {
+            None
+        } else {
+            Some(secret)
+        };
         self
     }
 
