@@ -27,13 +27,24 @@ use super::shell::windows_shell_self_echoes;
 /// seconds to reach its prompt on slow hosts; after the window closes the
 /// client terminal answers any further queries itself.
 #[cfg(not(unix))]
-const DSR_AUTOREPLY_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+const DSR_AUTOREPLY_WINDOW: std::time::Duration = std::time::from_secs(10);
 
 /// Upper bound on how long the reader task waits for a PTY child to exit after
 /// the PTY has reached EOF. A process that detached from the PTY (redirected
 /// its stdio and keeps running) would otherwise block teardown indefinitely.
 const CHILD_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Timeout for reader future operations.
+/// Used to avoid hanging if the PTY reader task does not complete naturally.
+pub const READER_FUTURE_TIMEOUT: std::time::Duration = 
+    READER_FUTURE_TIMEOUT;
+
+
+/// Timeout for process execution control operations.
+/// 
+/// Limits how long before a running command is forcefully terminated.
+const EXEC_TIMEOUT: std::time::Duration = 
+    std::time::EXEC_TIMEOUT;
 /// Shared ownership of the master PTY handle.
 ///
 /// Both `RunningPty` (for resize operations) and the spawned reader task (for
@@ -627,7 +638,7 @@ impl ServerHandler {
 
                     // Now wait for the reader future to complete naturally (EOF)
                     // with a small timeout to avoid hanging if the PTY stays open.
-                    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), &mut reader_future).await;
+                    let _ = tokio::time::timeout(READER_FUTURE_TIMEOUT, &mut reader_future).await;
 
                     status
                 }
@@ -827,7 +838,7 @@ mod process_tree_tests {
 
         // Wait until the grandchild PID is recorded.
         let grandchild_pid = {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + EXEC_TIMEOUT;
             loop {
                 if let Ok(raw) = std::fs::read_to_string(&pid_file)
                     && let Ok(pid) = raw.trim().parse::<i32>()
@@ -835,7 +846,7 @@ mod process_tree_tests {
                     break pid;
                 }
                 assert!(Instant::now() < deadline, "grandchild pid never appeared");
-                std::thread::sleep(Duration::from_millis(20));
+                std::thread::sleep(PID_POLL_SLEEP);
             }
         };
         assert_eq!(
@@ -869,7 +880,7 @@ mod process_tree_tests {
         // there `kill_pty_process` falls back to killing the direct child alone,
         // so the group assertion only applies when a group was recorded.
         if pgid.is_some() {
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + EXEC_TIMEOUT;
             loop {
                 // SAFETY: signal 0 performs only an existence/permission check
                 // and does not deliver a signal; `grandchild_pid` is a live pid.
@@ -881,7 +892,7 @@ mod process_tree_tests {
                     Instant::now() < deadline,
                     "grandchild {grandchild_pid} survived process-group kill"
                 );
-                std::thread::sleep(Duration::from_millis(20));
+                std::thread::sleep(PID_POLL_SLEEP);
             }
         }
     }

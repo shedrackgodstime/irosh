@@ -448,7 +448,7 @@ where
     };
 
     let response = if control_tx.send(internal_cmd).await.is_ok() {
-        match tokio::time::timeout(std::time::Duration::from_secs(10), res_rx).await {
+        match tokio::time::timeout(IPC_COMMAND_TIMEOUT, res_rx).await {
             Ok(result) => result.unwrap_or(IpcResponse::Error(
                 "Server failed to provide a response".to_string(),
             )),

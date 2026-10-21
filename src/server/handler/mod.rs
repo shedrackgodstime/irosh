@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 use crate::auth::{AuthMethod, Authenticator};
 use crate::metrics::Metrics;
 use crate::server::ConnectionShellState;
+use crate::timeout::config;
 
 use self::pty::ChannelState;
 
@@ -154,8 +155,8 @@ impl ServerHandler {
         let timeout = self.idle_timeout;
         tokio::spawn(async move {
             let period = (timeout / 4).clamp(
-                std::time::Duration::from_millis(10),
-                std::time::Duration::from_secs(60),
+                IDLE_TICK_PERIOD_MIN,
+                IDLE_TICK_PERIOD_MAX,
             );
             let mut ticker = tokio::time::interval(period);
             loop {
@@ -286,7 +287,7 @@ impl server::Handler for ServerHandler {
         let target = format!("{host_to_connect}:{port_to_connect}");
         let connect = tokio::net::TcpStream::connect(&target);
         let mut stream =
-            match tokio::time::timeout(std::time::Duration::from_secs(15), connect).await {
+            match tokio::time::timeout(CONNECTION_TIMEOUT, connect).await {
                 Ok(Ok(stream)) => stream,
                 Ok(Err(err)) => {
                     warn!(

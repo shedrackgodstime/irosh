@@ -223,7 +223,7 @@ impl AsyncStdin {
         tokio::spawn(async move {
             let mut last_size = current_terminal_size();
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(tokio::time::PTY_POLL_SLEEP).await;
                 let size = current_terminal_size();
                 if size.cols != last_size.cols || size.rows != last_size.rows {
                     last_size = size;

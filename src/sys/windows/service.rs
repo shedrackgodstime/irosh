@@ -279,7 +279,7 @@ pub async fn view_logs(follow: bool, state: Option<PathBuf>) -> Result<()> {
                 if !follow {
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(std::time::SERVICE_POLL_SLEEP).await;
             }
             Ok(_) => {
                 tracing::info!("{}", line);

@@ -14,6 +14,13 @@ use tracing::{debug, info, warn};
 /// The salt used to ensure irosh wormhole topics are distinct from other pkarr applications.
 const WORMHOLE_PKARR_SALT: &[u8] = b"irosh-wormhole-v1";
 
+/// Sleep interval between wormhole discovery attempts.
+///
+/// Used to prevent overwhelming the network with discovery requests.
+/// Peers will retry at this interval until a connection is established.
+pub const WORMHOLE_DISCOVERY_SLEEP: std::time::Duration = 
+    std::time::Duration::from_secs(5);
+
 /// The ALPN used for the one-time "Trust-Seed" pairing handshake.
 pub const PAIRING_ALPN: &[u8] = b"irosh/pairing/v1";
 
@@ -67,7 +74,12 @@ pub async fn listen_for_ticket(_endpoint: &iroh::Endpoint, code: &str) -> Result
             info!("... still searching for wormhole: {} (attempt {})", code, i);
         }
 
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(WORMHOLE_DISCOVERY_SLEEP).await;
+
+/// Sleep interval after wormhole discovery cycle.
+/// Used between discovery rounds to prevent network flooding.
+pub const WORMHOLE_POST_DISCOVERY_SLEEP: std::time::Duration = 
+    std::time::WORMHOLE_POST_DISCOVERY_SLEEP;
     }
 
     Err(TransportError::ProtocolError {
@@ -122,7 +134,7 @@ pub async fn broadcast_ticket_loop(code: &str, ticket: Ticket) -> Result<()> {
             Err(e) => warn!("Failed to publish to Pkarr rendezvous: {}", e),
         }
 
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        tokio::time::sleep(WORMHOLE_POST_DISCOVERY_SLEEP).await;
     }
 }
 

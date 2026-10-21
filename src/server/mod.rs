@@ -2,6 +2,16 @@
 //!
 //! This module provides the [`Server`] struct, which orchestrates the
 //! life-cycle of an Irosh host. It handles incoming QUIC connections,
+/// Timeout for wormhole expiration.
+/// 
+/// After this duration, a wormhole is considered expired and cleaned up.
+pub const WORMHOLE_EXPIRY_TIMEOUT: std::time::Duration = 
+
+/// Sleep interval for server session wait loops.
+/// Used when waiting for active sessions to finish.
+pub const SLEEP_INTERVAL_SESSION_WAIT: std::time::Duration = 
+    SLEEP_INTERVAL_SESSION_WAIT;
+    WORMHOLE_EXPIRY_TIMEOUT;
 //! manages SSH channel multiplexing, and provides an IPC interface
 //! for background control.
 //!
@@ -518,7 +528,7 @@ impl Server {
 
                                 let expiry_control = self.control_tx.clone();
                                 let expiry_task = tokio::spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60))
+                                    tokio::time::sleep(WORMHOLE_EXPIRY_TIMEOUT)
                                         .await;
                                     info!("Wormhole expired after 24 hours.");
                                     let (res_tx, _) = tokio::sync::oneshot::channel();
@@ -631,7 +641,7 @@ impl Server {
 
         tracing::debug!("Server loop exiting, waiting for sessions to finish");
         while active_sessions.load(std::sync::atomic::Ordering::Relaxed) > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(SLEEP_INTERVAL_SESSION_WAIT).await;
         }
 
         // Abort any still-running wormhole broadcast/expiry tasks and unpublish

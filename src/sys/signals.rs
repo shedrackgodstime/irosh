@@ -121,13 +121,13 @@ mod tests {
 
         // Give the spawned task time to register the signal handlers before we
         // raise SIGTERM against our own process.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(SIGNAL_REGISTRATION_SLEEP).await;
 
         // SAFETY: `kill` with a valid, positive signal number is a plain libc call.
         let rc = unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
         assert_eq!(rc, 0, "kill(SIGTERM) should succeed");
 
-        let resolved = tokio::time::timeout(Duration::from_secs(10), task)
+        let resolved = tokio::time::timeout(SIGNAL_TIMEOUT, task)
             .await
             .expect("wait_for_shutdown_signal should resolve before the timeout")
             .expect("signal-waiting task should not panic");

@@ -43,7 +43,7 @@ impl IpcClient {
             let token = tokio::fs::read_to_string(self.socket_path.with_file_name("ipc.token"))
                 .await
                 .map_err(|e| {
-                    crate::error::IroshError::Io(std::io::Error::new(
+                    crate::error::IroshError::Io(std::io::Error::other(
                         std::io::ErrorKind::PermissionDenied,
                         format!(
                             "IPC auth token unavailable (is an older irosh daemon running?): {e}"
@@ -55,7 +55,7 @@ impl IpcClient {
                 command,
             };
             serde_json::to_vec(&envelope).map_err(|e| {
-                crate::error::IroshError::Io(std::io::Error::new(
+                crate::error::IroshError::Io(std::io::Error::other(
                     std::io::ErrorKind::InvalidData,
                     e,
                 ))
@@ -64,7 +64,7 @@ impl IpcClient {
 
         #[cfg(unix)]
         let payload = serde_json::to_vec(&command).map_err(|e| {
-            crate::error::IroshError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            crate::error::IroshError::Io(std::io::Error::other(e))
         })?;
 
         stream.write_all(&payload).await?;
@@ -75,7 +75,7 @@ impl IpcClient {
         stream.read_to_end(&mut res_buf).await?;
 
         let response: IpcResponse = serde_json::from_slice(&res_buf).map_err(|e| {
-            crate::error::IroshError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            crate::error::IroshError::Io(std::io::Error::other(e))
         })?;
 
         Ok(response)
@@ -94,7 +94,7 @@ impl IpcClient {
             .await
             .map_err(crate::error::IroshError::Io)?;
         let port: u16 = port_str.trim().parse().map_err(|_| {
-            crate::error::IroshError::Io(std::io::Error::new(
+            crate::error::IroshError::Io(std::io::Error::other(
                 std::io::ErrorKind::InvalidData,
                 "invalid port in ipc.port file",
             ))
