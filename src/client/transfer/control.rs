@@ -92,6 +92,14 @@ impl Session {
             .open_bi()
             .await
             .map_err(|source| ClientError::StreamOpenFailed { source })?;
-        Ok(IrohDuplex::new(send, recv))
+        // Prepend the transfer protocol magic bytes so the server can identify
+        // the stream type. The server (side_streams.rs) expects IRFT magic bytes
+        // at the start of the stream before framing begins.
+        let stream = crate::transport::stream::IrohDuplex::with_prefix(
+            send,
+            recv,
+            crate::transport::transfer::codec::MAGIC.to_vec(),
+        );
+        Ok(stream)
     }
 }

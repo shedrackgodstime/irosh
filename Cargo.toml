@@ -31,27 +31,27 @@ storage   = ["dep:serde", "dep:serde_json"]
 transport = ["dep:iroh", "dep:iroh-gossip", "dep:iroh-tickets", "dep:iroh-blobs"]
 
 [dependencies]
-iroh = { version = "1.1.0", optional = true, default-features = false, features = ["tls-ring", "fast-apple-datapath"] }
+iroh = { version = "1.4.1", optional = true, default-features = false, features = ["tls-ring", "fast-apple-datapath"] }
 iroh-gossip = { version = "0.101.0", optional = true, default-features = false, features = ["net"] }
-iroh-blobs = { version = "0.103.0", optional = true, default-features = false, features = ["fs-store"] }
+iroh-blobs = { version = "0.103.1", optional = true, default-features = false, features = ["fs-store"] }
 iroh-tickets = { version = "1.0.0", optional = true }
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
-pkarr = { version = "8.0.1", default-features = false, features = ["dht", "relays"] }
+pkarr = { version = "8.1.0", default-features = false, features = ["dht", "relays"] }
 portable-pty = { version = "0.9.0", optional = true }
-russh = { version = "0.63.2", optional = true, default-features = false, features = ["ring"] }
+russh = { version = "0.63.3", optional = true, default-features = false, features = ["ring"] }
 serde = { version = "1.0.229", optional = true, features = ["derive"] }
-serde_json = { version = "1.0.151", optional = true }
+serde_json = { version = "1.0.154", optional = true }
 async-trait = "0.1.92"
-thiserror = "2.0.20"
-bytes = "1"
+thiserror = "2.0.21"
+bytes = "1.12.1"
 tracing = "0.1.44"
 secrecy = "0.10.3"
-tokio = { version = "1.53.1", features = ["io-util", "sync", "macros", "process", "net", "fs", "signal", "rt"] }
+tokio = { version = "1.54.0", features = ["io-util", "sync", "macros", "process", "net", "fs", "signal", "rt"] }
 tokio-util = { version = "0.7.19" }
 dirs = "7.0.0"
-rand = "0.10.2"
+rand = "0.10.3"
 hex = "0.4.3"
-sha2 = "0.11.0"
+sha2 = "0.11.1"
 walkdir = "2.5.0"
 argon2 = "0.6.0"
 chrono = { version = "0.4.45", features = ["serde"], optional = true }
